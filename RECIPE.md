@@ -1,4 +1,4 @@
-# Herdr T3, team edition
+# Herdr for Multirepo
 
 A calm T3 Code-style window for many coding agents on several machines, built around GitHub
 pull requests and multirepo projects: an Inbox of the agents that need you on the left, slim tabs
@@ -42,6 +42,7 @@ Left to right:
 ## Built from
 
 - `layouts/herdr-t3.json` (`cloned_from` Herdr's `main`): the tree above; `terminal_menu: t3-menu`.
+  The file and the `t3-*` mods keep the names of the Herdr T3 layout this builds on; keep them so.
 - Mods, all in `mods/`: `t3-actions`, `t3-agents`, `t3-chrome`, `t3-home`, `t3-inbox`, `t3-menu`,
   `t3-new-menu`, `t3-pane`, `t3-panels`, `t3-picker`, `t3-spaces`, `t3-tabs` (the layout);
   `prs`, `multirepo` (its `mr.py` is streamed to `python3` over ssh on each machine), `mr-pull`,

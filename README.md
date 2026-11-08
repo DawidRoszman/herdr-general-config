@@ -1,9 +1,9 @@
-# Herdr T3, team edition
+# Herdr for Multirepo
 
 A [Herdr](https://herdr.dev) desktop layout for working with many coding agents across several
 machines, on GitHub pull requests and multirepo projects (one feature branch spread over several
-sibling repositories). It is the [Herdr T3](https://github.com/JinJieBeWater/herdr-t3) layout
-with these added:
+sibling repositories). It builds on the [Herdr T3](https://github.com/JinJieBeWater/herdr-t3)
+layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and adds:
 
 - **Pull requests** in a side panel, with a review tab per branch across every repo of a
   multirepo project: overview, files (GitHub-style diff), checks, commits, approve, request
@@ -57,7 +57,7 @@ and the browser run there over ssh; nothing needs installing on them but the pro
 
 An agent never overwrites a mod, so adding the layout again would install second copies. Ask:
 
-> Update Herdr T3 from <this repo's URL>: replace my
+> Update Herdr for Multirepo from <this repo's URL>: replace my
 > layouts/herdr-t3.json and each of its mods with the bundle's, keep mods/jira/config.json, merge
 > its keys.json again, then run herdr-app check on every mod.
 
