@@ -8,7 +8,7 @@
           ["o / enter / l", "open the task's workspace (or go to it if it's open)"],
           ["v", "review the task's PRs in a tab"],
           ["p", "push and create / update the cross-linked PRs (a stacked task's go in its GitHub stack)"],
-          ["a", "add repos to the task"],
+          ["a", "add repos to the task (a repo without its branch takes its one branch for the same ticket, e.g. test/X-1)"],
           ["x", "remove the task (asks first)"],
           ["n", "new task: branch, then pick its repos"],
           ["s", "new task stacked on this one: its PRs target this task's branch, in a GitHub stack"],
@@ -40,7 +40,7 @@
           ["v", "review the task's PRs in a tab"],
           ["n", "new task: type its branch, then ↵ to pick its repos"],
           ["s", "new task stacked on this one (its repos come ticked; p then opens stacked PRs)"],
-          ["a", "add repos to the task: pick the ones it doesn't have yet"],
+          ["a", "add repos to the task: pick the ones it doesn't have yet (a repo without the task's branch takes its one branch for the same ticket, e.g. test/X-1)"],
           ["p", "push and create / update the cross-linked PRs"],
           ["x / shift-x", "remove the task (press twice) / even with unpushed work"]
         ] },

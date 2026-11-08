@@ -7,7 +7,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand } from "herdr";
-import { pickedRepos, changeBadge, prLabel } from "./view.js";
+import { pickedRepos, changeBadge, baseLabel, prLabel } from "./view.js";
 import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace } from "./remote.js";
 import { ProjectsView } from "./projects.js";
 
@@ -499,7 +499,7 @@ export default class Multirepo extends View {
       }
       case "repos": {
         const color = !item.pr ? t.dim : item.pr.state === "MERGED" ? t.done : item.pr.state === "CLOSED" ? t.blocked : t.accent;
-        return { mark: item.pr ? "◆" : "◇", color, label: this.short(item.name), detail: [changeBadge(item) || "clean", `vs ${item.base}`, prLabel(item.pr)].join(" · ") };
+        return { mark: item.pr ? "◆" : "◇", color, label: this.short(item.name), detail: [changeBadge(item) || "clean", baseLabel(item, this.task.branch), prLabel(item.pr)].join(" · ") };
       }
     }
   }

@@ -21,6 +21,11 @@ export function changeBadge(status) {
     .join(" ");
 }
 
+// "on test/X-1 · vs develop" for a repo on a branch of its own in the task, else "vs develop".
+export function baseLabel(repo, taskBranch) {
+  return [repo.branch && repo.branch !== taskBranch ? `on ${repo.branch}` : "", `vs ${repo.base}`].filter(Boolean).join(" · ");
+}
+
 export function prLabel(pr) {
   if (!pr) return "no PR";
   return `PR #${pr.number} ${pr.isDraft && pr.state === "OPEN" ? "draft" : pr.state.toLowerCase()}`;

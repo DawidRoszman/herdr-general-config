@@ -19,7 +19,9 @@ Commands (run `mr <command> -h` for options):
     new <branch> <repo>... [--on PARENT]
                                 create a task workspace; --on stacks it on another
                                 task's branch (its PRs target PARENT, in a GitHub stack)
-    add <repo>...               turn linked repos of this task into worktrees
+    add <repo>... [--branch B]  turn linked repos of this task into worktrees; a repo without the
+                                task's branch takes its one branch for the same ticket (test/X-1
+                                for feat/X-1), or B
     ls                          list a project's tasks
     status                      per-repo state of this task, with PRs
     push                        push repos that have commits
@@ -129,6 +131,20 @@ def branch_slug(branch: str) -> str:
     if not slug:
         raise MrError(f"Branch name {branch!r} has no usable characters.")
     return slug
+
+
+def ticket_key(branch: str) -> str | None:
+    """feat/SHOP-130-x -> SHOP-130: the ticket a branch is for, or None."""
+    match = re.search(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]*-\d+(?![A-Za-z0-9])", branch)
+    return match[0] if match else None
+
+
+def same_ticket_branches(branch: str, refs: list[str]) -> list[str]:
+    """Other branches for branch's ticket among refs (`refs/heads/...` and `refs/remotes/origin/...`),
+    as branch names: test/SHOP-130-x beside feat/SHOP-130-x. None without a ticket key."""
+    key = ticket_key(branch)
+    names = {re.sub(r"^refs/(heads|remotes/origin)/", "", ref) for ref in refs if ref != "refs/remotes/origin/HEAD"}
+    return sorted(name for name in names if key and name != branch and ticket_key(name) == key)
 
 
 def title_from_branch(branch: str) -> str:
@@ -424,16 +440,23 @@ class Task:
     # linked to that checkout, never removed by mr rm.
     borrowed: list[str] = field(default_factory=list)
     on: str | None = None  # the parent task's branch this one is stacked on (mr new --on)
+    # Repos on a branch of their own for the same ticket (an e2e repo's test/X-1 beside feat/X-1).
+    branches: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, root: Path) -> "Task":
         data = read_json(root / TASK_FILE)
         return cls(root=root, project=Project.load(Path(data["project"])), branch=data["branch"], repos=data["repos"],
-                   borrowed=data.get("borrowed", []), on=data.get("on"))
+                   borrowed=data.get("borrowed", []), on=data.get("on"), branches=data.get("branches", {}))
 
     def save(self) -> None:
         write_json(self.root / TASK_FILE, {"project": str(self.project.root), "branch": self.branch, "repos": self.repos,
-                                           "borrowed": self.borrowed, **({"on": self.on} if self.on else {})})
+                                           "borrowed": self.borrowed, **({"on": self.on} if self.on else {}),
+                                           **({"branches": self.branches} if self.branches else {})})
+
+    def branch_of(self, name: str) -> str:
+        """The branch a repo of this task is on: its own, else the task's."""
+        return self.branches.get(name, self.branch)
 
     def base(self, name: str) -> str:
         """The branch a repo of this task builds on: the parent's branch when stacked and the repo has
@@ -472,8 +495,23 @@ def current_project(path: str | None) -> Project:
     raise MrError("Which project? Run from inside one or pass --project <root>. Known: " + (", ".join(projects) or "none, run mr init"))
 
 
-def checkout_task_repo(task: Task, name: str) -> None:
-    """Make <task>/<name> a worktree on the task branch, from origin's base when the branch is new.
+def repo_branch(repo: Path, task_branch: str, chosen: str | None) -> str:
+    """The branch a repo takes in a task: the chosen one, else the task's when the repo has it, else the
+    repo's one branch for the same ticket (test/X-1 for feat/X-1), else the task's, made new."""
+    if chosen:
+        return chosen
+    if has_ref(repo, f"refs/heads/{task_branch}") or has_ref(repo, f"refs/remotes/origin/{task_branch}"):
+        return task_branch
+    refs = git(repo, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin").splitlines()
+    found = same_ticket_branches(task_branch, refs)
+    if len(found) > 1:
+        raise MrError(f"{repo.name} has several branches for {ticket_key(task_branch)}: {', '.join(found)}. "
+                      f"Pick one with mr add {repo.name} --branch <branch> (leave it out of mr new).")
+    return found[0] if found else task_branch
+
+
+def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None:
+    """Make <task>/<name> a worktree on its branch (repo_branch), from origin's base when the branch is new.
 
     Git keeps a branch in one worktree only: when another one (the project checkout, T3 Code's)
     already has it, <task>/<name> links to that checkout instead and the repo is marked borrowed."""
@@ -482,17 +520,21 @@ def checkout_task_repo(task: Task, name: str) -> None:
     if target.is_symlink():
         target.unlink()
     git(repo, "fetch", "--quiet", "origin")
-    existing = worktree_on_branch(git(repo, "worktree", "list", "--porcelain"), task.branch)
+    branch = repo_branch(repo, task.branch, chosen)
+    if branch != task.branch:
+        task.branches[name] = branch
+        print(f"{name}: on {branch}, its branch for this ticket", flush=True)
+    existing = worktree_on_branch(git(repo, "worktree", "list", "--porcelain"), branch)
     if existing:
         target.symlink_to(existing)
         task.borrowed.append(name)
-        print(f"{name}: {task.branch} is already checked out at {existing}; linked to it", flush=True)
-    elif has_ref(repo, f"refs/heads/{task.branch}"):
-        git(repo, "worktree", "add", str(target), task.branch)
-    elif has_ref(repo, f"refs/remotes/origin/{task.branch}"):
-        git(repo, "worktree", "add", "--track", "-b", task.branch, str(target), f"origin/{task.branch}")
+        print(f"{name}: {branch} is already checked out at {existing}; linked to it", flush=True)
+    elif has_ref(repo, f"refs/heads/{branch}"):
+        git(repo, "worktree", "add", str(target), branch)
+    elif has_ref(repo, f"refs/remotes/origin/{branch}"):
+        git(repo, "worktree", "add", "--track", "-b", branch, str(target), f"origin/{branch}")
     else:
-        git(repo, "worktree", "add", "--no-track", "-b", task.branch, str(target), tip_of(repo, task.base(name)))
+        git(repo, "worktree", "add", "--no-track", "-b", branch, str(target), tip_of(repo, task.base(name)))
 
 
 def repo_state(task: Task, name: str, with_pr: bool) -> dict:
@@ -503,15 +545,16 @@ def repo_state(task: Task, name: str, with_pr: bool) -> dict:
     has_upstream = git(path, "rev-parse", "--abbrev-ref", "@{u}", check=False) != ""
     unpushed = int(git(path, "rev-list", "--count", "@{u}..HEAD")) if has_upstream else ahead
     dirty = len([line for line in git(path, "status", "--porcelain").splitlines() if line.strip()])
-    state = {"name": name, "base": base, "ahead": ahead, "behind": behind, "dirty": dirty, "unpushed": unpushed, "pr": None}
+    state = {"name": name, "branch": task.branch_of(name), "base": base, "ahead": ahead, "behind": behind, "dirty": dirty,
+             "unpushed": unpushed, "pr": None}
     if with_pr:
-        raw = run(["gh", "pr", "view", task.branch, "--json", "number,state,url,isDraft,title"], cwd=path, check=False)
+        raw = run(["gh", "pr", "view", task.branch_of(name), "--json", "number,state,url,isDraft,title"], cwd=path, check=False)
         state["pr"] = json.loads(raw) if raw.startswith("{") else None
     return state
 
 
 def push(task: Task, name: str) -> None:
-    git(task.root / name, "push", "--quiet", "-u", "origin", task.branch)
+    git(task.root / name, "push", "--quiet", "-u", "origin", task.branch_of(name))
 
 
 # ------------------------------------------------------------------ commands
@@ -603,11 +646,13 @@ def cmd_new(args) -> None:
 def cmd_add(args) -> None:
     task = current_task(args.task)
     names = [n for n in match_repos(args.repos, [r["name"] for r in task.project.repos]) if n not in task.repos]
+    if args.branch and len(names) != 1:
+        raise MrError("--branch is for one repo at a time.")
     for name in names:
-        checkout_task_repo(task, name)
+        checkout_task_repo(task, name, args.branch)
         task.repos.append(name)
         task.save()
-        print(f"{name}: {task.branch}")
+        print(f"{name}: {task.branch_of(name)}")
 
 
 def task_summaries(project: Project, with_status: bool) -> list[dict]:
@@ -617,7 +662,7 @@ def task_summaries(project: Project, with_status: bool) -> list[dict]:
     for folder in sorted(project.workspaces.iterdir()):
         if (folder / TASK_FILE).exists():
             task = Task.load(folder)
-            summary = {"branch": task.branch, "root": str(folder), "repos": task.repos}
+            summary = {"branch": task.branch, "root": str(folder), "repos": task.repos, "branches": task.branches}
             if with_status:
                 summary["status"] = [repo_state(task, name, with_pr=False) for name in task.repos]
             tasks.append(summary)
@@ -645,7 +690,8 @@ def cmd_status(args) -> None:
     for r in repos:
         pr = r["pr"]
         pr_text = f"PR #{pr['number']} {pr['state'].lower()}{' draft' if pr['isDraft'] else ''}" if pr else "no PR"
-        print(f"  {r['name']}: +{r['ahead']} -{r['behind']} vs {r['base']}, {r['dirty']} dirty, {r['unpushed']} unpushed, {pr_text}")
+        own = f" on {r['branch']}" if r["branch"] != task.branch else ""
+        print(f"  {r['name']}{own}: +{r['ahead']} -{r['behind']} vs {r['base']}, {r['dirty']} dirty, {r['unpushed']} unpushed, {pr_text}")
 
 
 def cmd_push(args) -> None:
@@ -689,7 +735,7 @@ def cmd_pr(args) -> None:
             push(task, r["name"])
         if not r["pr"]:
             cwd = task.root / r["name"]
-            run(["gh", "pr", "create", "--base", r["base"], "--head", task.branch, "--title", title,
+            run(["gh", "pr", "create", "--base", r["base"], "--head", r["branch"], "--title", title,
                  "--body", args.body or "", *(["--draft"] if args.draft else [])], cwd=cwd)
             r["pr"] = repo_state(task, r["name"], with_pr=True)["pr"]
         print(f"{r['name']}: {r['pr']['url'] if r['pr'] else '(no PR)'}", flush=True)
@@ -705,7 +751,7 @@ def cmd_pr(args) -> None:
         for r in prs:
             others = [f"{o['name']}: {o['pr']['url']}" for o in prs if o is not r]
             cwd = task.root / r["name"]
-            body = json.loads(run(["gh", "pr", "view", task.branch, "--json", "body"], cwd=cwd))["body"]
+            body = json.loads(run(["gh", "pr", "view", r["branch"], "--json", "body"], cwd=cwd))["body"]
             run(["gh", "pr", "edit", str(r["pr"]["number"]), "--body-file", "-"], cwd=cwd, stdin=with_related_section(body, others))
         print(f"cross-linked {len(prs)} PRs")
 
@@ -753,10 +799,10 @@ def cmd_rm(args) -> None:
         git(repo, "worktree", "remove", *(["--force"] if args.force else []), str(task.root / s["name"]))
         # Squash merges leave the branch "unmerged" to git, so trust the PR's state instead.
         if s["pr"] and s["pr"]["state"] == "MERGED":
-            git(repo, "branch", "-D", task.branch, check=False)
+            git(repo, "branch", "-D", s["branch"], check=False)
             print(f"{s['name']}: removed worktree and merged branch")
         else:
-            print(f"{s['name']}: removed worktree, kept branch {task.branch}")
+            print(f"{s['name']}: removed worktree, kept branch {s['branch']}")
     for entry in task.root.iterdir():
         if entry.is_symlink():
             entry.unlink()
@@ -799,7 +845,8 @@ class PrScope:
     def task_for(self, branch: str) -> str | None:
         """Where branch is checked out: the project's task, or for a plain repo any of its worktrees."""
         if self.project:
-            return next((t["root"] for t in task_summaries(self.project, with_status=False) if t["branch"] == branch), None)
+            return next((t["root"] for t in task_summaries(self.project, with_status=False)
+                         if branch in (t["branch"], *t["branches"].values())), None)
         return worktree_on_branch(git(self.root, "worktree", "list", "--porcelain"), branch)
 
 
@@ -1075,6 +1122,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--on", metavar="PARENT", help="stack on another task's branch")
     p = command("add", cmd_add, "check out more repos in this task")
     p.add_argument("repos", nargs="+")
+    p.add_argument("--branch", help="the repo's own branch (default: the task's, else its one for the same ticket)")
     p.add_argument("--task")
     p = command("ls", cmd_ls, "list a project's tasks")
     p.add_argument("--project")

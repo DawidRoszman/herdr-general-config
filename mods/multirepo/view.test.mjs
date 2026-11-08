@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { pickedRepos, changeBadge, prLabel, remoteCommand } from "./view.js";
+import { pickedRepos, changeBadge, baseLabel, prLabel, remoteCommand } from "./view.js";
 
 const names = ["helper-scripts-shop", "acme-shop-backend", "acme-shop-portal"];
 const shorts = { "helper-scripts-shop": "helper-scripts-shop", "acme-shop-backend": "backend", "acme-shop-portal": "portal" };
@@ -8,6 +8,8 @@ assert.deepEqual(pickedRepos(["backend", "acme-shop-portal", "backend", "nope", 
 assert.deepEqual(pickedRepos([], names, shorts), { picked: [], unknown: [] });
 assert.equal(changeBadge({ ahead: 2, behind: 0, unpushed: 1, dirty: 3 }), "+2 ↑1 ●3");
 assert.equal(changeBadge({ ahead: 0, behind: 0, unpushed: 0, dirty: 0 }), "");
+assert.equal(baseLabel({ branch: "test/X-1", base: "develop" }, "feat/X-1"), "on test/X-1 · vs develop");
+assert.equal(baseLabel({ branch: "feat/X-1", base: "develop" }, "feat/X-1"), "vs develop");
 assert.equal(prLabel(null), "no PR");
 assert.equal(prLabel({ number: 7, state: "OPEN", isDraft: true }), "PR #7 draft");
 assert.equal(prLabel({ number: 7, state: "MERGED", isDraft: false }), "PR #7 merged");

@@ -37,6 +37,14 @@ os.environ["MR_TEST_GONE"] = "1"
 mr.apply_env({"MR_TEST_SET": "a", "MR_TEST_GONE": None})
 assert os.environ["MR_TEST_SET"] == "a" and "MR_TEST_GONE" not in os.environ
 
+# Branches for one ticket: test/X-1 beside feat/X-1, never X-10 or another ticket.
+assert mr.ticket_key("feat/SHOP-110-cart-page") == "SHOP-110" and mr.ticket_key("main") is None
+assert mr.ticket_key("feat/T-1b") is None, "a letter after the number makes it another name"
+refs = ["refs/heads/main", "refs/remotes/origin/HEAD", "refs/remotes/origin/test/SHOP-110-e2e", "refs/heads/test/SHOP-110-e2e",
+        "refs/remotes/origin/feat/SHOP-1100-x", "refs/heads/feat/SHOP-110-cart-page"]
+assert mr.same_ticket_branches("feat/SHOP-110-cart-page", refs) == ["test/SHOP-110-e2e"]
+assert mr.same_ticket_branches("main", refs) == []
+
 # A repo GitHub refuses comes back with gh's reason, even when gh printed no JSON.
 real_run = subprocess.run
 subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 1, "<html>502</html>", "HTTP 502: Bad Gateway\nmore")
@@ -180,6 +188,15 @@ with tempfile.TemporaryDirectory() as tmp:
     listed = json.loads(mrcmd("ls", "--json", "--project", str(project)).stdout)
     assert listed["tasks"][0]["repos"] == ["proj-backend", "proj-portal"]
     assert listed["shorts"] == {"helper": "helper", "proj-backend": "backend", "proj-portal": "portal"}
+
+    # A repo without the task's branch takes its one branch for the same ticket (test/ beside feat/).
+    sh("git", "-C", str(project / "helper"), "push", "-q", "origin", "main:test/T-1-e2e")
+    mrcmd("add", "helper", cwd=task)
+    assert sh("git", "-C", str(task / "helper"), "branch", "--show-current").stdout.strip() == "test/T-1-e2e"
+    saved = json.loads((task / ".mr-task.json").read_text())
+    assert saved.get("branches") == {"helper": "test/T-1-e2e"}, saved
+    own = {r["name"]: r["branch"] for r in json.loads(mrcmd("status", "--json", "--no-pr", cwd=task).stdout)["repos"]}
+    assert own == {"proj-backend": "feat/T-1-thing", "proj-portal": "feat/T-1-thing", "helper": "test/T-1-e2e"}, own
 
     # Cloning the project elsewhere from its manifest (the "new remote" path).
     clone_root = tmp / "elsewhere" / "Proj"

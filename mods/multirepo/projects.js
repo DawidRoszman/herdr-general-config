@@ -7,7 +7,7 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { theme, run, spaces, panes, openOverlay, settings } from "herdr";
 import { mrJsonOn, machinesWithThisMac, machineLabel, reviewTab, openWorkspace } from "./remote.js";
-import { changeBadge, prLabel } from "./view.js";
+import { changeBadge, baseLabel, prLabel } from "./view.js";
 
 const ICONS = "mods/prs/icons";
 const TASK_ROW = 58;
@@ -260,7 +260,7 @@ export class ProjectsView {
         .children(task.repos.map((name) => div().flex_none().px(6).h(16).flex().items_center().rounded(4).bg(t.raised).text_size(10.5).text_color(t.muted).child(this.short(name)))));
   }
 
-  repoRow(repo, t) {
+  repoRow(repo, task, t) {
     const pr = repo.pr;
     const prLook = !pr ? null : pr.state === "MERGED" ? ["merge", t.ansi5] : pr.state === "CLOSED" ? ["pull-request-closed", t.blocked] : pr.isDraft ? ["pull-request-draft", t.dim] : ["pull-request", t.done];
     const badge = changeBadge(repo);
@@ -268,7 +268,7 @@ export class ProjectsView {
       .child(icon("repo", 15, t.dim))
       .child(v_flex().w(170).flex_none().min_w(0)
         .child(div().truncate().text_size(13).font_semibold().text_color(t.foreground).child(this.short(repo.name)))
-        .child(div().truncate().text_size(11).text_color(t.dim).child(`vs ${repo.base}`)))
+        .child(div().truncate().text_size(11).text_color(t.dim).child(baseLabel(repo, task.branch))))
       .child(div().flex_1().min_w(0).truncate().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
         .text_color(badge ? (repo.dirty ? t.working : t.muted) : t.dim).child(badge || "clean"))
       .when(Boolean(pr), (el) => el.child(h_flex().id(`repo-pr-${repo.name}`).flex_none().h(26).px(8).gap(6).items_center().rounded(6).cursor_pointer()
@@ -298,7 +298,7 @@ export class ProjectsView {
       .child(h_flex().gap(6).items_center().child(icon("repo", 13, t.dim))
         .child(div().text_size(12).font_semibold().text_color(t.muted).child(`Repos on the branch · ${task.repos.length}`)))
       .child(detail.repos
-        ? v_flex().gap(6).children(detail.repos.map((repo) => this.repoRow(repo, t)))
+        ? v_flex().gap(6).children(detail.repos.map((repo) => this.repoRow(repo, task, t)))
         : div().text_size(12).text_color(detail.error ? t.blocked : t.dim).child(detail.error ?? "Loading each repo's state and PR…"))
       .when(linked.length > 0, (el) => el.child(v_flex().gap(4)
         .child(div().text_size(12).font_semibold().text_color(t.muted).child(`Linked in from the project · ${linked.length}`))
