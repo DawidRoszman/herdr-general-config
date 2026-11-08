@@ -1,0 +1,23 @@
+{
+  "views": [
+    {
+      "id": "pane", "title": "Blueprint",
+      "sections": [
+        { "title": "Canvas", "rows": [
+          ["click a box", "light up its flow; click empty canvas to clear"],
+          ["e", "ask the agent (or headless Claude) for a change at the picked box"],
+          ["drag", "move the drawing"],
+          ["cmd + scroll", "zoom"],
+          ["f", "fit the drawing"],
+          ["0 / = / -", "100% / zoom in / zoom out"],
+          ["1-9", "show that diagram tab"],
+          ["esc", "close the request box, stop editing, then unpick the box"]
+        ] },
+        { "title": "Open it", "rows": [
+          ["cmd-shift-b", "Blueprint beside the focused pane"],
+          ["b (PR review tab)", "Blueprint of the PR's branch, drawn by headless Claude"]
+        ] }
+      ]
+    }
+  ]
+}

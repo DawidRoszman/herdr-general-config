@@ -1,0 +1,57 @@
+{
+  "views": [
+    {
+      "id": "projects", "title": "Projects tab (cmd-shift-m)",
+      "sections": [
+        { "title": "Tasks", "rows": [
+          ["j / k, click", "next / previous task (its repos and PRs show on the right)"],
+          ["o / enter / l", "open the task's workspace (or go to it if it's open)"],
+          ["v", "review the task's PRs in a tab"],
+          ["p", "push and create / update the cross-linked PRs (a stacked task's go in its GitHub stack)"],
+          ["a", "add repos to the task"],
+          ["x", "remove the task (asks first)"],
+          ["n", "new task: branch, then pick its repos"],
+          ["s", "new task stacked on this one: its PRs target this task's branch, in a GitHub stack"],
+          ["[ / ]", "previous / next project"],
+          ["/", "search"],
+          ["r", "refresh"],
+          ["esc", "leave search, clear it, then close the tab"]
+        ] }
+      ]
+    },
+    {
+      "id": "dialog", "title": "Multirepo dialog",
+      "sections": [
+        { "title": "Everywhere", "rows": [
+          ["j / k", "next / previous"],
+          ["l / enter", "go in (repos: open the PR)"],
+          ["h", "back"],
+          ["/", "search; esc leaves it, esc again clears it, then closes"],
+          ["r", "refresh"],
+          ["?", "this list"]
+        ] },
+        { "title": "Projects", "rows": [
+          ["n", "new project from a folder of repos"],
+          ["c", "clone a project from another machine"],
+          ["i", "install mr on this machine (~/.local/bin/mr)"]
+        ] },
+        { "title": "Tasks and repos", "rows": [
+          ["o", "open the task's workspace (Claude + Blueprint, terminal, nvim)"],
+          ["v", "review the task's PRs in a tab"],
+          ["n", "new task: type its branch, then ↵ to pick its repos"],
+          ["s", "new task stacked on this one (its repos come ticked; p then opens stacked PRs)"],
+          ["a", "add repos to the task: pick the ones it doesn't have yet"],
+          ["p", "push and create / update the cross-linked PRs"],
+          ["x / shift-x", "remove the task (press twice) / even with unpushed work"]
+        ] },
+        { "title": "Picking repos (new task, add repos)", "rows": [
+          ["space / x / l, click", "tick or untick the repo"],
+          ["a", "tick all shown (again: untick them)"],
+          ["/", "search; ↵ in the search ticks the match"],
+          ["enter", "create the task / add the ticked repos"],
+          ["h / esc", "back without changes"]
+        ] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# Written by Herdr in every mod folder, or by running the mods' checks
+gpui-kit.d.ts
+jsconfig.json
+__pycache__/
+*.error
+.DS_Store
+# Each person's own, from config.example.json
+mods/jira/config.json

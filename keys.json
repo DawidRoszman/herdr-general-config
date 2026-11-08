@@ -1,0 +1,114 @@
+{
+  "global": {
+    "cmd-shift-p": "mod.open:command-palette",
+    "cmd-shift-n": "mod.open:wt-new",
+    "cmd-shift-o": "mod.open:wt-open",
+    "cmd-shift-x": "mod.open:wt-remove",
+    "cmd-shift-f": "mod.open:port-forward",
+    "cmd-shift-m": {
+      "command": "tab.new",
+      "args": {
+        "name": "Projects",
+        "mod": "multirepo",
+        "props": {
+          "view": "projects"
+        }
+      }
+    },
+    "cmd-shift-b": {
+      "command": "pane.split",
+      "args": {
+        "direction": "right",
+        "mod": "blueprint"
+      }
+    },
+    "cmd-shift-j": {
+      "command": "tab.new",
+      "args": {
+        "name": "Jira",
+        "mod": "jira"
+      }
+    },
+    "cmd-shift-i": {
+      "command": "pane.split",
+      "args": {
+        "direction": "right",
+        "mod": "browser"
+      }
+    },
+    "cmd-alt-i": {
+      "command": "tab.new",
+      "args": {
+        "name": "Browser",
+        "mod": "browser"
+      }
+    },
+    "cmd-shift-k": "mod.open:walkthrough",
+    "cmd-shift-g": "mod.open:prs"
+  },
+  "layout:herdr-t3": {
+    "cmd-shift-b": "t3-tabs.sidebar",
+    "cmd-shift-s": "t3-tabs.settle",
+    "cmd-p": "mod.open:t3-picker",
+    "cmd-]": "t3-tabs.next",
+    "cmd-[": "t3-tabs.prev",
+    "cmd-w": "t3-tabs.close-tab",
+    "ctrl-alt-shift-x": "t3-tabs.close-tab",
+    "cmd-shift-w": "t3-tabs.close-pane",
+    "ctrl-alt-x": "t3-tabs.close-pane",
+    "cmd-shift-h": "t3-tabs.home",
+    "cmd-t": "t3-tabs.new",
+    "ctrl-alt-c": "t3-tabs.new",
+    "ctrl-1": "t3-tabs.space:1",
+    "ctrl-alt-shift-1": "t3-tabs.space:1",
+    "ctrl-2": "t3-tabs.space:2",
+    "ctrl-alt-shift-2": "t3-tabs.space:2",
+    "ctrl-3": "t3-tabs.space:3",
+    "ctrl-alt-shift-3": "t3-tabs.space:3",
+    "ctrl-4": "t3-tabs.space:4",
+    "ctrl-alt-shift-4": "t3-tabs.space:4",
+    "ctrl-5": "t3-tabs.space:5",
+    "ctrl-alt-shift-5": "t3-tabs.space:5",
+    "ctrl-6": "t3-tabs.space:6",
+    "ctrl-alt-shift-6": "t3-tabs.space:6",
+    "ctrl-7": "t3-tabs.space:7",
+    "ctrl-alt-shift-7": "t3-tabs.space:7",
+    "ctrl-8": "t3-tabs.space:8",
+    "ctrl-alt-shift-8": "t3-tabs.space:8",
+    "ctrl-9": "t3-tabs.space:9",
+    "ctrl-alt-shift-9": "t3-tabs.space:9",
+    "cmd-alt-]": "t3-tabs.space-next",
+    "cmd-alt-[": "t3-tabs.space-prev",
+    "ctrl-alt-shift-]": "t3-tabs.space-next",
+    "ctrl-alt-shift-[": "t3-tabs.space-prev",
+    "cmd-1": "t3-tabs.tab:1",
+    "ctrl-alt-1": "t3-tabs.tab:1",
+    "cmd-2": "t3-tabs.tab:2",
+    "ctrl-alt-2": "t3-tabs.tab:2",
+    "cmd-3": "t3-tabs.tab:3",
+    "ctrl-alt-3": "t3-tabs.tab:3",
+    "cmd-4": "t3-tabs.tab:4",
+    "ctrl-alt-4": "t3-tabs.tab:4",
+    "cmd-5": "t3-tabs.tab:5",
+    "ctrl-alt-5": "t3-tabs.tab:5",
+    "cmd-6": "t3-tabs.tab:6",
+    "ctrl-alt-6": "t3-tabs.tab:6",
+    "cmd-7": "t3-tabs.tab:7",
+    "ctrl-alt-7": "t3-tabs.tab:7",
+    "cmd-8": "t3-tabs.tab:8",
+    "ctrl-alt-8": "t3-tabs.tab:8",
+    "cmd-9": "t3-tabs.tab:9",
+    "ctrl-alt-9": "t3-tabs.tab:9",
+    "ctrl-tab": "t3-tabs.tab-next",
+    "cmd-shift-]": "t3-tabs.tab-next",
+    "ctrl-alt-]": "t3-tabs.tab-next",
+    "ctrl-shift-tab": "t3-tabs.tab-prev",
+    "cmd-shift-[": "t3-tabs.tab-prev",
+    "ctrl-alt-[": "t3-tabs.tab-prev",
+    "cmd-alt-f": "t3-panels.files",
+    "cmd-alt-c": "t3-panels.changes",
+    "cmd-alt-p": "t3-panels.prs",
+    "cmd-n": "t3-panels.new-space",
+    "cmd-shift-t": "t3-panels.new-tab"
+  }
+}

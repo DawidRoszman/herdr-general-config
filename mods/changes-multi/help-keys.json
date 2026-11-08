@@ -1,0 +1,26 @@
+{
+  "views": [
+    {
+      "id": "panel", "title": "Changes panel",
+      "sections": [
+        { "title": "Files", "rows": [
+          ["j / k", "next / previous file (its diff shows)"],
+          ["g / G", "first / last file"],
+          ["h / l", "previous / next repo (All, then each repo of the task)"],
+          ["/", "filter files by path; esc leaves the box, esc again clears it"],
+          ["r", "refresh"]
+        ] },
+        { "title": "Diff", "rows": [
+          ["ctrl-d / ctrl-u", "half a page down / up"],
+          ["shift-j / shift-k", "one line down / up"],
+          ["e", "expand all: every file's diff under its header, the headers are the list (click one to fold it) / one file at a time"]
+        ] },
+        { "title": "Commit", "rows": [
+          ["c / i", "write the commit message (enter commits the repos shown)"],
+          ["esc", "leave the message"],
+          ["?", "this list"]
+        ] }
+      ]
+    }
+  ]
+}

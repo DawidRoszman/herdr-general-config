@@ -1,0 +1,22 @@
+{
+  "views": [
+    {
+      "id": "board", "title": "Jira board",
+      "sections": [
+        { "title": "Board", "rows": [
+          ["h / l", "previous / next column"],
+          ["j / k", "next / previous issue"],
+          ["click / enter", "details of the issue (j/k and h/l keep browsing, the panel follows)"],
+          ["esc", "close the details"],
+          ["o", "open the issue in Jira"],
+          ["s", "start work: the multirepo dialog with the task branch filled in"],
+          ["/", "search"],
+          ["esc", "leave search, then clear it, then close the tab"],
+          ["a", "show / hide the statuses hidden in config.json (waiting for QA)"],
+          ["r", "refresh (it refreshes every 5 minutes)"],
+          ["?", "this list"]
+        ] }
+      ]
+    }
+  ]
+}

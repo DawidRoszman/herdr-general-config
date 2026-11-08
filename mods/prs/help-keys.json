@@ -1,0 +1,184 @@
+{
+  "views": [
+    {
+      "id": "monitor",
+      "title": "Pull requests sidebar",
+      "sections": [
+        {
+          "title": "List",
+          "rows": [
+            [
+              "j / k",
+              "next / previous row"
+            ],
+            [
+              "l / enter, click",
+              "a branch: open its PR review · a section header: fold or unfold it"
+            ],
+            [
+              "/",
+              "search"
+            ],
+            [
+              "r",
+              "refresh now (it refreshes every minute)"
+            ],
+            [
+              "h / esc",
+              "give the keyboard back to the work area"
+            ]
+          ]
+        },
+        {
+          "title": "Filters (shift: previous value)",
+          "rows": [
+            [
+              "f",
+              "show / hide the filters (the filter button counts the ones changed)"
+            ],
+            [
+              "a",
+              "author: any, me, each author"
+            ],
+            [
+              "s",
+              "status: active, open, draft, merged, closed, all"
+            ],
+            [
+              "v",
+              "review: requested from me, changes requested, …"
+            ],
+            [
+              "c",
+              "checks: failed, running, passed, none"
+            ],
+            [
+              "p",
+              "repo"
+            ],
+            [
+              "o",
+              "project (with several)"
+            ],
+            [
+              "x",
+              "reset filters"
+            ],
+            [
+              "click / right-click",
+              "a chip: next / previous value"
+            ],
+            [
+              "?",
+              "this list"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "title": "PR review tab",
+      "sections": [
+        {
+          "title": "Move",
+          "rows": [
+            [
+              "j / k",
+              "next / previous item; in Files, the diff jumps to that file"
+            ],
+            [
+              "shift-j / shift-k",
+              "15 items down / up"
+            ],
+            [
+              "l / enter",
+              "open the item (a commit: its diff in Files; a check or comment: on GitHub); in Files, go into the diff"
+            ],
+            [
+              "h",
+              "back from the diff to the file list"
+            ],
+            [
+              "tab / shift-tab, 1-4",
+              "Overview, Files, Checks, Commits"
+            ],
+            [
+              "[ / ]",
+              "previous / next linked repo (or click its chip)"
+            ],
+            [
+              "{ / }",
+              "the PR below / above this one in its GitHub stack, in its own tab (or click its chip in the Stack row)"
+            ],
+            [
+              "/",
+              "search this tab"
+            ],
+            [
+              "esc",
+              "leave search, then clear it, then leave a commit's diff, then close the tab"
+            ],
+            [
+              "r",
+              "refresh"
+            ]
+          ]
+        },
+        {
+          "title": "Act on the shown PR",
+          "rows": [
+            [
+              "a",
+              "approve (optional comment)"
+            ],
+            [
+              "x",
+              "request changes"
+            ],
+            [
+              "c",
+              "comment (a, x and c open a Markdown box: enter is a new line, cmd-enter sends, ctrl-shift-p switches Write / Preview, esc cancels)"
+            ],
+            [
+              "m, m",
+              "merge with a merge commit (press twice); a stacked PR merges with the open PRs below it"
+            ],
+            [
+              "s",
+              "restack (press twice): rebase each open PR of the stack onto the one below, the bottom onto the base, and force-push what moved; a ⚠ on a stack chip marks a PR that needs it"
+            ],
+            [
+              "d",
+              "ready for review / back to draft"
+            ],
+            [
+              "shift-r, click ✎ by Reviewers",
+              "pick reviewers: space/x tick, / search, enter save, esc cancel (who reviewed already comes after the requested; tick them to re-request)"
+            ],
+            [
+              "click ↻ by a review",
+              "re-request that reviewer's review (Overview, Reviewers)"
+            ],
+            [
+              "o",
+              "open on GitHub"
+            ],
+            [
+              "b",
+              "Blueprint of this branch beside the review"
+            ],
+            [
+              "w",
+              "walkthrough of this PR, or of every linked PR as one change (Claude explains the diff step by step, in reading order)"
+            ],
+            [
+              "?",
+              "this list"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "site": "your-company.atlassian.net",
+  "projects": {
+    "PROJ": {
+      "machine": null,
+      "root": "/Users/you/git/your-multirepo-project"
+    }
+  },
+  "hiddenStatuses": []
+}
