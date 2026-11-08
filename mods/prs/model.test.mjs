@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, spaceAt, parsePlace, worktreeOf,
+  remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, spaceAt, preferredCopy, parsePlace, worktreeOf,
   parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, commitItems, diffFiles,
 } from "./model.js";
 
@@ -44,6 +44,15 @@ assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt-other" }], n
 const besides = [{ id: "main", machine: "buildbox", folder: "/h/webapp/webapp", branch: "develop" }, { id: "dep", machine: "buildbox", folder: "/h/webapp/webapp.dep", branch: null }];
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "dependabot/x", checkout: "/h/webapp/webapp.dep" }).id, "dep");
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "develop", checkout: "/h/webapp/webapp" }).id, "main");
+// A project on two machines: its PR's copy comes from where you work on it.
+const copies = [
+  { machine: "devbox", root: "/home/u/git/Shop", project: "Shop", branch: "feat/SHOP-1" },
+  { machine: null, root: "/Users/me/Shop", project: "Shop", branch: "feat/SHOP-1" },
+];
+const onMac = [{ machine: null, folder: "/Users/me/.herdr/projects/Shop/feat-SHOP-1", branch: null }];
+assert.equal(preferredCopy(copies, onMac, "devbox").machine, null, "a space on the branch wins over focus");
+assert.equal(preferredCopy(copies, [{ machine: null, folder: "/Users/me/Shop", branch: "develop" }], "devbox").machine, "devbox", "else the focused machine");
+assert.equal(preferredCopy(copies, [], "elsewhere").machine, "devbox", "else the first by name");
 // The focused space's place, as here.js reads it.
 assert.deepEqual(parsePlace('task\n{"project": "/h/git/Shop", "branch": "feat/SHOP-1"}\n'), { root: "/h/git/Shop", branch: "feat/SHOP-1", isRepo: false, name: "Shop" });
 assert.deepEqual(parsePlace("repo\n/h/webapp\nfeat/x\n"), { root: "/h/webapp", branch: "feat/x", isRepo: true, name: "webapp" });

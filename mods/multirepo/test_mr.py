@@ -28,6 +28,22 @@ assert body.startswith("Fixes the thing.\n\n" + mr.RELATED_START) and "- portal:
 again = mr.with_related_section(body, ["portal: https://x/2", "app: https://x/3"])
 assert again.count(mr.RELATED_START) == 1 and "- app: https://x/3" in again and again.startswith("Fixes the thing.")
 assert mr.is_unsafe_to_remove({"dirty": 0, "unpushed": 2}) == "2 commit(s) not pushed"
+
+# gh runs in the project's direnv environment: --in wins, then --repo; a slug-only command has none.
+assert mr.gh_folder(mr.parser().parse_args(["--in", "/x/Proj", "pr-diff", "acme/api", "3"])) == Path("/x/Proj")
+assert mr.gh_folder(mr.parser().parse_args(["prs", "--repo", "/x/repo"])) == Path("/x/repo")
+assert mr.gh_folder(mr.parser().parse_args(["pr-diff", "acme/api", "3"])) is None
+os.environ["MR_TEST_GONE"] = "1"
+mr.apply_env({"MR_TEST_SET": "a", "MR_TEST_GONE": None})
+assert os.environ["MR_TEST_SET"] == "a" and "MR_TEST_GONE" not in os.environ
+
+# A repo GitHub refuses comes back with gh's reason, even when gh printed no JSON.
+real_run = subprocess.run
+subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 1, "<html>502</html>", "HTTP 502: Bad Gateway\nmore")
+try:
+    assert mr.repo_prs("api", "acme/api", None) == ("", None, "HTTP 502: Bad Gateway")
+finally:
+    subprocess.run = real_run
 assert mr.is_unsafe_to_remove({"dirty": 0, "unpushed": 0}) == ""
 assert mr.short_names(["acme-shop-backend", "acme-shop-portal", "helper-scripts-shop"])["helper-scripts-shop"] == "helper-scripts-shop"
 assert mr.short_names(["acme-shop-backend", "acme-shop-mobile-app"]) == {

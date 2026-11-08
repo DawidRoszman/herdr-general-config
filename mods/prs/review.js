@@ -88,6 +88,12 @@ export class Review {
     return mrJson(this.target, ["pr-view", ...(this.props.branches ?? [this.props.branch]), this.props.isRepo ? "--repo" : "--project", this.props.project]);
   }
 
+  // An mr command that names only a repo slug, run with the project's direnv environment (mr --in), so
+  // gh acts as the account the project's .envrc picks, as pr-view does with --project.
+  inProject(args) {
+    return ["--in", this.props.project, ...args];
+  }
+
   // Shows what pr-view answered, on the same PR as before. A change's reload keeps the diffs: actions
   // here don't change code, and loading them again would blank the Files tab.
   showView(data, { isKeepingDiffs = false } = {}) {
@@ -124,7 +130,7 @@ export class Review {
     const key = this.diffKey();
     if (!this.diffLoads.has(key)) {
       const args = this.commit ? ["commit-diff", pr.slug, this.commit.oid] : ["pr-diff", pr.slug, String(pr.number)];
-      this.diffLoads.set(key, mr(this.target, args)
+      this.diffLoads.set(key, mr(this.target, this.inProject(args))
         .then((text) => this.diffs.set(key, parseDiff(text)), (error) => this.diffs.set(key, error)));
     }
     return this.diffLoads.get(key);
@@ -216,7 +222,7 @@ export class Review {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        await mr(this.target, mrArgs);
+        await mr(this.target, this.inProject(mrArgs));
         this.notice = `${name}: ${label} done.`;
       } catch (error) {
         this.notice = "";
@@ -251,7 +257,7 @@ export class Review {
     if (this.reviewerCandidates.has(pr.slug)) return picker.setCandidates(this.reviewerCandidates.get(pr.slug));
     cx.spawn(async (cx) => {
       try {
-        const candidates = await mrJson(this.target, ["pr-candidates", pr.slug]);
+        const candidates = await mrJson(this.target, this.inProject(["pr-candidates", pr.slug]));
         this.reviewerCandidates.set(pr.slug, candidates);
         picker.setCandidates(candidates);
       } catch (error) {
@@ -407,7 +413,7 @@ export class Review {
     const { machine, project, branch, isRepo } = this.props;
     const prs = this.data.prs.map((pr) => ({
       number: pr.number, title: pr.title, body: pr.body ?? "", head: pr.headRefName, base: pr.baseRefName,
-      prefix: isRepo ? "" : pr.short, diff: mrArgv(this.target, ["pr-diff", pr.slug, String(pr.number)]),
+      prefix: isRepo ? "" : pr.short, diff: mrArgv(this.target, this.inProject(["pr-diff", pr.slug, String(pr.number)])),
     }));
     openOverlay({
       mod: "walkthrough", kind: "dialog", modal: true, width: 0.74, height: 0.8,

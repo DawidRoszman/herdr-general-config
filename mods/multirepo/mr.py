@@ -770,16 +770,21 @@ def github_repos(project: Project) -> list[tuple[str, str]]:
     return [(r["name"], slug) for r in project.repos if (slug := github_slug(r["url"]))]
 
 
-def repo_prs(name: str, slug: str, now: datetime) -> tuple[str, list[dict] | None]:
-    """(viewer login, watched PRs) of one repo; PRs None for a repo GitHub refused (reported on stderr)."""
+def repo_prs(name: str, slug: str, now: datetime) -> tuple[str, list[dict] | None, str]:
+    """(viewer login, watched PRs, why not) of one repo: PRs None and the reason for a repo GitHub refused."""
     result = subprocess.run(["gh", "api", "graphql", "-f", "query=" + prs_query(slug)], capture_output=True, text=True)
-    data = json.loads(result.stdout or "{}").get("data") or {}
+    try:
+        data = json.loads(result.stdout or "{}").get("data") or {}
+    except json.JSONDecodeError:  # an HTML error page from a proxy or GitHub itself
+        data = {}
     if result.returncode != 0 or not data.get("repository"):
-        print(f"mr: {slug} skipped: {(result.stderr or result.stdout).strip()}", file=sys.stderr)
-        return (data.get("viewer") or {}).get("login", ""), None
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        reason = lines[0][:200] if lines else f"gh exited with {result.returncode}"
+        print(f"mr: {slug} skipped: {reason}", file=sys.stderr)
+        return (data.get("viewer") or {}).get("login", ""), None, reason
     viewer = data["viewer"]["login"]
     nodes = data["repository"]["open"]["nodes"] + data["repository"]["closed"]["nodes"]
-    return viewer, [pr for node in nodes if is_worth_watching(pr := summarize_pr(node, name, slug, viewer), now)]
+    return viewer, [pr for node in nodes if is_worth_watching(pr := summarize_pr(node, name, slug, viewer), now)], ""
 
 
 @dataclass
@@ -820,13 +825,14 @@ def cmd_prs(args) -> None:
     now = datetime.now(timezone.utc)
     with ThreadPoolExecutor(max_workers=len(scope.repos)) as pool:
         results = list(pool.map(lambda repo: repo_prs(*repo, now), scope.repos))
-    viewers = [viewer for viewer, _ in results if viewer]
+    viewers = [viewer for viewer, _, _ in results if viewer]
+    # Repos GitHub refused this time, with why: the watcher keeps what it last knew of them instead of
+    # seeing their PRs vanish, and says why.
+    failed = {slug: reason for (_, slug), (_, repo_list, reason) in zip(scope.repos, results) if repo_list is None}
     if not viewers:
-        raise MrError("GitHub answered for none of the repos; is gh logged in here?")
-    prs = [{**pr, "short": scope.shorts[pr["repo"]]} for _, repo_list in results if repo_list for pr in repo_list]
-    # Repos GitHub refused this time: the watcher keeps what it last knew of them instead of seeing their PRs vanish.
-    failed = [slug for (_, slug), (_, repo_list) in zip(scope.repos, results) if repo_list is None]
-    print(json.dumps({**header, "viewer": viewers[0], "prs": prs, "failed": failed}))
+        raise MrError(f"GitHub answered for none of the repos ({next(iter(failed.values()), 'no reason given')}); is gh logged in here?")
+    prs = [{**pr, "short": scope.shorts[pr["repo"]]} for _, repo_list, _ in results if repo_list for pr in repo_list]
+    print(json.dumps({**header, "viewer": viewers[0], "prs": prs, "failed": list(failed), "failedWhy": failed}))
 
 
 def graphql(query: str, **variables: str | int) -> dict:
@@ -1043,6 +1049,8 @@ def cmd_pr_reviewers(args) -> None:
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="mr", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     top.add_argument("--version", action="version", version=VERSION)
+    top.add_argument("--in", dest="within", metavar="DIR",
+                     help="run gh with DIR's direnv environment (for commands that name only a repo slug)")
     sub = top.add_subparsers(dest="command", required=True)
 
     def command(name, handler, help_text):
@@ -1124,9 +1132,49 @@ def parser() -> argparse.ArgumentParser:
     return top
 
 
+def gh_folder(args) -> Path | None:
+    """The folder whose direnv environment gh runs in: --in, the plain repo, else the project (a task's
+    folder sits under ~/.herdr, outside the project's .envrc). None for commands that name none."""
+    if args.within:
+        return Path(args.within).expanduser()
+    if getattr(args, "repo", None):
+        return Path(args.repo).expanduser()
+    if not (hasattr(args, "project") or hasattr(args, "task")):
+        return None
+    try:
+        return current_project(getattr(args, "task", None) or getattr(args, "project", None)).root
+    except MrError:
+        return None  # the command itself says what is missing
+
+
+def direnv_changes(folder: Path) -> dict[str, str | None]:
+    """What direnv sets for a shell in folder (a GH_TOKEN for the account its repos belong to, say).
+
+    mr runs from Herdr, not from a shell in the folder, so without this gh acts as the machine's
+    active account and can't see another account's private repos. {} without direnv or an .envrc."""
+    if not folder.is_dir() or not shutil.which("direnv"):
+        return {}
+    result = subprocess.run(["direnv", "export", "json"], cwd=folder, capture_output=True, text=True)
+    if result.returncode != 0:  # a blocked .envrc: say so, and go on as the active account
+        print(f"mr: direnv in {folder}: {result.stderr.strip()}", file=sys.stderr)
+        return {}
+    return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def apply_env(changes: dict[str, str | None]) -> None:
+    for name, value in changes.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
 def main(argv: list[str]) -> int:
     args = parser().parse_args(argv)
     try:
+        folder = gh_folder(args)
+        if folder:
+            apply_env(direnv_changes(folder))
         args.handler(args)
     except MrError as error:
         print(f"mr: {error}", file=sys.stderr)

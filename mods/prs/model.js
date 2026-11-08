@@ -46,16 +46,11 @@ export function reviewKey(machine, project, branch) {
 // space is also on the branch when it sits in that branch's task or worktree folder, named by branchSlug.
 // `checkout`: where git has the branch checked out (a worktree anywhere, from worktreeOf), whose space is first.
 export function projectSpace(spaces, { machine, root, name, branch, checkout = null }) {
-  const isInside = (folder) => Boolean(folder) && (folder === root || folder.startsWith(`${root}/`)
-    || (Boolean(name) && (folder.includes(`/.herdr/projects/${name}/`) || folder.includes(`/.herdr/worktrees/${name}/`))));
-  const branchFolders = name ? [`/.herdr/projects/${name}/${branchSlug(branch)}`, `/.herdr/worktrees/${name}/${branchSlug(branch)}`] : [];
-  const isOnBranch = (s) => s.branch === branch
-    || branchFolders.some((f) => s.folder?.endsWith(f) || s.folder?.includes(`${f}/`));
   const here = spaces.filter((s) => (s.machine ?? null) === (machine ?? null));
   const atCheckout = checkout && checkout !== root ? spaceAt(here, machine, checkout) : null;
   if (atCheckout) return atCheckout;
-  const own = here.filter((s) => isInside(s.folder));
-  return own.find(isOnBranch) ?? own.find((s) => s.folder === root)
+  const own = here.filter((s) => isInsideProject(s.folder, root, name));
+  return own.find((s) => isOnBranch(s, name, branch)) ?? own.find((s) => s.folder === root)
     ?? (name ? here.find((s) => s.name === name) : null)
     ?? own.find((s) => s.folder === root || s.folder.startsWith(`${root}/`)) ?? null;
 }
@@ -63,6 +58,28 @@ export function projectSpace(spaces, { machine, root, name, branch, checkout = n
 // The space on a machine whose folder is folder or inside it, or null.
 export function spaceAt(spaces, machine, folder) {
   return spaces.find((s) => (s.machine ?? null) === (machine ?? null) && (s.folder === folder || Boolean(s.folder?.startsWith(`${folder}/`)))) ?? null;
+}
+
+// A folder in a project (or plain repo), or in one of its multirepo tasks or worktrees.
+function isInsideProject(folder, root, name) {
+  return Boolean(folder) && (folder === root || folder.startsWith(`${root}/`)
+    || (Boolean(name) && (folder.includes(`/.herdr/projects/${name}/`) || folder.includes(`/.herdr/worktrees/${name}/`))));
+}
+
+// A space on a branch: git says so, or it sits in that branch's task or worktree folder (named by branchSlug).
+function isOnBranch(space, name, branch) {
+  const branchFolders = name ? [`/.herdr/projects/${name}/${branchSlug(branch)}`, `/.herdr/worktrees/${name}/${branchSlug(branch)}`] : [];
+  return space.branch === branch || branchFolders.some((f) => space.folder?.endsWith(f) || space.folder?.includes(`${f}/`));
+}
+
+// Which machine's copy of a PR the list shows when its project is on several machines (copies sorted by
+// machine name, each with machine, root, project and branch): where you work on it, so a click and g go
+// there. The machine with a space on the PR's branch in that project, else the focused space's machine,
+// else the first by name.
+export function preferredCopy(copies, spaces, focusedMachine) {
+  const hasBranchSpace = (c) => spaces.some((s) => (s.machine ?? null) === (c.machine ?? null)
+    && isInsideProject(s.folder, c.root, c.project) && isOnBranch(s, c.project, c.branch));
+  return copies.find(hasBranchSpace) ?? copies.find((c) => (c.machine ?? null) === (focusedMachine ?? null)) ?? copies[0];
 }
 
 // Where `git worktree list --porcelain` has a branch checked out, or null.

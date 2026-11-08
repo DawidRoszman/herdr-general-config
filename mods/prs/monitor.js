@@ -4,14 +4,14 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input } from "gpui-base";
-import { theme, run, shared, setShared, exec, spaces, panes } from "herdr";
+import { theme, run, shared, setShared, exec, spaces, panes, focused } from "herdr";
 import { notifyAndLog } from "./notifylog.js";
 // Every notification also goes in the bell's history (notifylog.js).
 const notify = (n) => notifyAndLog(n, "Pull requests");
 import { THIS_MAC, connectedMachines, mrJson, openReview, reviewCommand, openBranchCheckout } from "./host.js";
 import {
   groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, prKey, prState, matches, isCoveredByProject, machineLabel,
-  DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionRows, groupTitle, prStateIcon, checksIcon, age,
+  DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionRows, groupTitle, prStateIcon, checksIcon, age, preferredCopy,
 } from "./model.js";
 import { Search } from "./search.js";
 import { isHelpKey, keyHelp, loadKeys } from "./keyhelp.js";
@@ -108,7 +108,9 @@ export class Monitor {
         // A repo GitHub refused this time keeps its last PRs: gone and back would read as new.
         const failed = new Set(data.failed ?? []);
         const kept = failed.size ? (this.projects.get(key)?.prs ?? []).filter((pr) => failed.has(pr.slug)) : [];
-        if (failed.size) errors.push(`${[...failed].join(", ")} on ${where}: GitHub didn't answer (last PRs kept)`);
+        // The reason first: the line is cut to the sidebar's width (its tooltip has it all).
+        const why = [...new Set(Object.values(data.failedWhy ?? {}))].join(" · ") || "no reason given";
+        if (failed.size) errors.push(`${where}: GitHub didn't answer (${why}); last PRs kept for ${[...failed].join(", ")}`);
         next.set(key, { machine: machine.name, project: data.project, root: scope.root, isRepo: Boolean(data.isRepo), viewer: data.viewer, prs: [...data.prs, ...kept] });
       } catch (error) {
         errors.push(`${scope.name} on ${where}: ${error.message}`);
@@ -132,18 +134,19 @@ export class Monitor {
     return [...byRepo.values()];
   }
 
-  // One entry per PR: a project cloned on two machines lists its PRs once, from the first machine.
+  // One entry per PR: a project cloned on several machines lists its PRs once, from the machine you
+  // work on it on (preferredCopy), so a click and g go there.
   allPrs() {
-    const seen = new Set();
-    const prs = [];
+    const copies = new Map(); // prKey -> the PR on each machine that has its project, by machine name
     for (const p of [...this.projects.values()].sort((a, b) => machineLabel(a.machine).localeCompare(machineLabel(b.machine)))) {
       for (const pr of p.prs) {
-        if (seen.has(prKey(pr))) continue;
-        seen.add(prKey(pr));
-        prs.push({ ...pr, machine: p.machine, project: p.project, root: p.root, isRepo: p.isRepo, viewer: p.viewer });
+        if (!copies.has(prKey(pr))) copies.set(prKey(pr), []);
+        copies.get(prKey(pr)).push({ ...pr, machine: p.machine, project: p.project, root: p.root, isRepo: p.isRepo, viewer: p.viewer });
       }
     }
-    return prs;
+    const all = spaces();
+    const focusedMachine = all.find((s) => s.id === focused()?.space)?.machine ?? null;
+    return [...copies.values()].map((list) => (list.length === 1 ? list[0] : preferredCopy(list, all, focusedMachine)));
   }
 
   // A scope not listed last time (a machine that was disconnected, a space just opened) is learnt
