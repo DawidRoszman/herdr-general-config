@@ -5,7 +5,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, exec, hc, appHome, focused, spaces, theme } from "herdr";
+import { props, closeOverlay, exec, hc, appHome, focused, spaces, theme, window } from "herdr";
 
 const MR = `${appHome()}/mods/multirepo/mr.py`;
 
@@ -22,11 +22,17 @@ async function sshTarget(machineName) {
   return machine.target;
 }
 
+// Python 3 here: Windows has the py launcher (its python3 can be the Store's stub), elsewhere python3.
+function python() {
+  return window()?.platform === "windows" ? ["py", "-3"] : ["python3"];
+}
+
 // mr's output even when it fails: the lines say which repo did not pull.
 async function mrPull(target, folder) {
   const args = ["pull", "--task", folder];
+  const [command, ...pythonArgs] = python();
   const r = target === null
-    ? await exec("python3", [MR, ...args])
+    ? await exec(command, [...pythonArgs, MR, ...args])
     : await exec("sh", ["-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", target, remoteCommand(args), MR]);
   const lines = `${r.stdout}\n${r.stderr}`.split("\n").map((l) => l.replace(/^mr: /, "").trim()).filter(Boolean);
   return { lines, isOk: r.code === 0 };

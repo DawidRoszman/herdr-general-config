@@ -282,6 +282,19 @@
           }
         },
         {
+          "id": "accounts-watch",
+          "type": "block",
+          "size": {
+            "px": 0
+          },
+          "content": {
+            "mod": "status-accounts",
+            "props": {
+              "publish": true
+            }
+          }
+        },
+        {
           "id": "walkthrough-watch",
           "type": "block",
           "size": {

@@ -24,6 +24,10 @@
               "refresh now (it refreshes every minute)"
             ],
             [
+              "g",
+              "open the branch's checkout in a space, as g in its review does"
+            ],
+            [
               "h / esc",
               "give the keyboard back to the work area"
             ]
@@ -121,7 +125,7 @@
             ],
             [
               "r",
-              "refresh"
+              "refresh (it refreshes itself every 30 s while checks run, when the tab shows)"
             ]
           ]
         },
@@ -163,6 +167,10 @@
             [
               "o",
               "open on GitHub"
+            ],
+            [
+              "g",
+              "open the branch's checkout in a space (gone to when open): the multirepo task, made when missing; a plain repo's worktree, made by the worktree dialog when missing"
             ],
             [
               "b",

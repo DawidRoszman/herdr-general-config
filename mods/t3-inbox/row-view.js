@@ -9,6 +9,7 @@ import { programIcon, detailsLive, detailsFor, detailsLine, detailsCard } from "
 import { stop, within } from "./focus.js";
 import { snoozeButton } from "./snooze.js";
 import { SLIM } from "./list-view.js";
+import { accountChip } from "./account.js";
 
 const icon = programIcon;
 
@@ -91,7 +92,9 @@ export function inboxRowView(view, t, model, actions, drag) {
     const over = !dragging && !view.sweep?.moved && (menu || view.hovered === a.address || within(view, [`card-${a.address}`, `settle-${a.address}`, `snooze-${a.address}`, `woke-${a.address}`]));
     // As T3's rows: what you're on or what wants you leads; the rest recede until hovered, in color only so nothing reflows.
     const leads = on || ghost || st === "blocked" || st === "done" || woke(a);
-    const marks = machine || pic ? h_flex().gap(4).flex_none().items_center()
+    const account = a.mod ? null : accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address);
+    const marks = machine || pic || account ? h_flex().gap(4).flex_none().items_center()
+      .when(Boolean(account), (el) => el.child(account))
       // Another machine's agent: a server mark and the machine's name, readable without hovering.
       .when(Boolean(machine), (el) => el.child(h_flex().when(!ghost, (m) => m.id(`machine-${a.address}`).accessibility_label(`On ${machine}`))
         .gap(3).flex_none().items_center().text_size(11).text_color(t.dim)

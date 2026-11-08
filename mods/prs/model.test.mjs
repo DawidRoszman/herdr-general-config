@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
-  remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, parsePlace, worktreeOf,
-  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, checkItems, checkMark, commitItems, diffFiles,
+  remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, spaceAt, parsePlace, worktreeOf,
+  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, commitItems, diffFiles,
 } from "./model.js";
 
 const pr = (over = {}) => ({
@@ -39,6 +39,8 @@ assert.equal(projectSpace(placeSpaces, { machine: null, root: "/Users/me/x", nam
 const porcelain = "worktree /h/webapp/webapp\nHEAD 1\nbranch refs/heads/develop\n\nworktree /h/webapp/webapp.dep\nHEAD 2\nbranch refs/heads/dependabot/x\n";
 assert.equal(worktreeOf(porcelain, "dependabot/x"), "/h/webapp/webapp.dep");
 assert.equal(worktreeOf(porcelain, "nope"), null);
+assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt" }, { id: "b", machine: "box", folder: "/x/repo.wt/sub" }], "box", "/x/repo.wt").id, "b");
+assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt-other" }], null, "/x/repo.wt"), null);
 const besides = [{ id: "main", machine: "buildbox", folder: "/h/webapp/webapp", branch: "develop" }, { id: "dep", machine: "buildbox", folder: "/h/webapp/webapp.dep", branch: null }];
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "dependabot/x", checkout: "/h/webapp/webapp.dep" }).id, "dep");
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "develop", checkout: "/h/webapp/webapp" }).id, "main");
@@ -186,6 +188,16 @@ assert.equal(mergeStatus(reviewed).text, "Blocked: review required");
 assert.equal(mergeStatus({ ...reviewed, mergeStateStatus: "DIRTY" }).text, "Conflicts with its base");
 assert.equal(mergeStatus({ ...reviewed, state: "MERGED" }).text, "Merged");
 assert.equal(mergeStatus({ ...reviewed, mergeStateStatus: "UNKNOWN" }).color, "dim");
+const running = { ...reviewed, reviewDecision: "APPROVED", statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "IN_PROGRESS", conclusion: "" }] };
+assert.equal(mergeStatus({ ...running, mergeStateStatus: "UNSTABLE" }).text, "Mergeable once checks finish");
+assert.equal(mergeStatus(running).text, "Blocked: checks running");
+assert.equal(isSettling(running), true);
+assert.equal(isSettling({ ...running, state: "MERGED" }), false);
+assert.equal(isSettling({ ...reviewed, statusCheckRollup: [], mergeStateStatus: "CLEAN" }), false);
+assert.equal(isSettling({ ...reviewed, statusCheckRollup: [], mergeStateStatus: "UNKNOWN" }), true);
+const headed = (oid) => [{ ...reviewed, commits: [{ oid: "a" }, { oid }] }];
+assert.equal(hasSameHeads(headed("b"), headed("b")), true);
+assert.equal(hasSameHeads(headed("b"), headed("c")), false);
 assert.deepEqual(prActions(reviewed, "me"), { canReview: true, hasApproved: false, canComment: true, canMerge: true, canToggleDraft: false, isPrimaryApprove: true, isPrimaryMerge: false });
 assert.equal(prActions(reviewed, "carol").hasApproved, true);
 assert.equal(prActions({ ...reviewed, reviewRequests: [{ login: "carol" }] }, "carol").hasApproved, false); // asked again

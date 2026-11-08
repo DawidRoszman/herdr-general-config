@@ -8,7 +8,7 @@ import { theme, run, shared, setShared, exec, spaces, panes } from "herdr";
 import { notifyAndLog } from "./notifylog.js";
 // Every notification also goes in the bell's history (notifylog.js).
 const notify = (n) => notifyAndLog(n, "Pull requests");
-import { THIS_MAC, connectedMachines, mrJson, openReview, reviewCommand } from "./host.js";
+import { THIS_MAC, connectedMachines, mrJson, openReview, reviewCommand, openBranchCheckout } from "./host.js";
 import {
   groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, prKey, prState, matches, isCoveredByProject, machineLabel,
   DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionRows, groupTitle, prStateIcon, checksIcon, age,
@@ -20,6 +20,9 @@ const REFRESH_MS = 60000;
 // Row heights by kind (the virtual list places rows by these).
 const HEIGHTS = { section: 30, place: 22, group: 64 };
 const ICONS = "mods/prs/icons";
+// The checkout button sits at a branch row's right edge. Rows of a virtual list can't hold handlers,
+// so a press this close to the list's right edge (its padding, the row's, the button) counts as on it.
+const CHECKOUT_BUTTON_ZONE = 40;
 const MAX_NOTIFICATIONS = 5;
 // Open review requests, shown as a badge on the sidebar's Pull requests tab (sidebar-tabs mod).
 const BADGE_KEY = "prs.reviewRequested";
@@ -52,6 +55,7 @@ export class Monitor {
     this.filters = { ...DEFAULT_FILTERS, ...JSON.parse(localStorage.getItem("filters") ?? "{}") };
     this.isRefreshing = false;
     this.refreshedAt = null;
+    this.isPressOnCheckout = false; // the last press in the list was on a row's checkout button
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
     this.refresh(cx);
   }
@@ -202,6 +206,25 @@ export class Monitor {
     cx.notify();
   }
 
+  clickRow(cx, index) {
+    if (this.isPressOnCheckout && this.rows()[index]?.kind === "group") {
+      this.moveTo(index);
+      this.openCheckout(index);
+      return cx.notify();
+    }
+    this.open(cx, index);
+  }
+
+  // The selected branch's checkout in a space (openBranchCheckout); slow steps and failures are notifications.
+  openCheckout(index = this.at) {
+    const group = this.rows()[index]?.group;
+    if (!group) return;
+    const { machine, root, branch, isRepo, prs } = group;
+    const repos = prs.filter((pr) => pr.branch === branch).map((pr) => pr.short);
+    openBranchCheckout({ machine, project: root, branch, isRepo, repos }, (line) => notify({ title: "Pull requests", body: line, level: "info" }))
+      .catch((error) => notify({ title: `Could not open ${branch}`, body: String(error.message ?? error), level: "warning" }));
+  }
+
   toggleSection(id) {
     if (this.toggledSections.has(id)) this.toggledSections.delete(id);
     else this.toggledSections.add(id);
@@ -231,6 +254,7 @@ export class Monitor {
     else if (stroke === "l" || stroke === "enter") this.open(cx);
     else if (stroke === "h") run("pane.go", { direction: "right" });
     else if (stroke === "r") this.refresh(cx);
+    else if (stroke === "g") this.openCheckout();
     else if (stroke === "x") this.resetFilters();
     else if (stroke === "f") this.isShowingFilters = !this.isShowingFilters;
     else if (FILTERS.some((f) => stroke === f.key || stroke === `shift-${f.key}`)) {
@@ -269,8 +293,10 @@ export class Monitor {
 
   sectionRow(row, isSelected, t) {
     const isReview = row.section.id === "review";
-    return h_flex().flex_none().h(HEIGHTS.section).px(6).gap(6).items_center().rounded(6).cursor_pointer()
+    // An id: this UI kit applies hover styles only to elements that have one.
+    return h_flex().id(row.id).flex_none().h(HEIGHTS.section).px(6).gap(6).items_center().rounded(6).cursor_pointer()
       .when(isSelected, (el) => el.bg(t.selected))
+      .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
       .child(this.icon(row.isFolded ? "chevron-right" : "chevron-down", 12, t.dim))
       .child(this.icon(row.section.icon, 13, isReview ? t.accent : t.muted))
       .child(div().text_size(11.5).font_semibold().text_color(isReview ? t.accent : t.muted).child(row.section.title))
@@ -295,9 +321,7 @@ export class Monitor {
       approved: { icon: "check-circle", color: t.done, text: "Approved" },
       "review required": { icon: "clock", color: t.dim, text: "Review required" },
     }[review];
-    return v_flex().flex_none().h(HEIGHTS.group).pl(8).pr(8).py(6).gap(3).rounded(7).cursor_pointer()
-      .when(isSelected, (el) => el.bg(t.selected))
-      .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
+    const details = v_flex().flex_1().min_w(0).gap(3)
       // Title, with the lead PR's state.
       .child(h_flex().h(18).flex_none().gap(6).items_center().min_w(0)
         .child(this.icon(state.icon, 13, t[state.color]))
@@ -319,6 +343,15 @@ export class Monitor {
           .child(div().text_size(11).text_color(reviewLook.color).child(reviewLook.text)))
         .child(div().flex_1())
         .when(comments > 0, (el) => el.child(this.icon("comment", 11, t.dim)).child(div().text_size(11).text_color(t.dim).child(String(comments)))));
+    // Ids: this UI kit applies hover styles only to elements that have one.
+    return h_flex().id(group.key).flex_none().h(HEIGHTS.group).pl(8).pr(8).py(6).gap(6).items_center().rounded(7).cursor_pointer()
+      .when(isSelected, (el) => el.bg(t.selected))
+      .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
+      .child(details)
+      // Clicked through the list's on_item_click (see CHECKOUT_BUTTON_ZONE).
+      .child(div().id(`checkout-${group.key}`).flex_none().size(24).flex().items_center().justify_center().rounded(5)
+        .hover((s) => s.bg(t.raised)).tooltip("Open the checkout in a space · g")
+        .child(this.icon("terminal", 13, t.dim)));
   }
 
   render() {
@@ -355,6 +388,10 @@ export class Monitor {
         Input.new(this.search.input).h(28).px(8).items_center().rounded(6).border(1)
           .border_color(this.search.isTyping ? t.accent : t.input).bg(t.background).text_color(t.foreground).text_size(12))))
       .child(v_flex().relative().flex_1().min_h(0).px(6)
+        // Fires before the row's click: where the press was decides between the row and its checkout button.
+        .on_mouse_down("left", (e) => {
+          this.isPressOnCheckout = Boolean(e.local_position && e.bounds) && e.local_position.x >= e.bounds.width - CHECKOUT_BUTTON_ZONE;
+        })
         .child(isLoading || !rows.length
           ? div().px(8).text_size(12).text_color(t.dim).child(isLoading ? "Loading PRs…" : this.search.query ? `Nothing matches "${this.search.query}".` : "No PRs match these filters.")
           : v_virtual_list("pr-groups", rows.length, rows.map((r) => HEIGHTS[r.kind]), (i) => rows[i].id, (range) => rows.slice(range.start, range.end).map((row, k) => {
@@ -364,7 +401,7 @@ export class Monitor {
             return this.groupRow(row.group, index === this.at, t);
           }))
             // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
-            .on_item_click((key, cx) => this.open(cx, this.rows().findIndex((r) => r.id === key)))
+            .on_item_click((key, cx) => this.clickRow(cx, this.rows().findIndex((r) => r.id === key)))
             .track_scroll(this.listScroll)
             .size_full())
         .child(Scrollbar.vertical("pr-groups").absolute().inset_0()))

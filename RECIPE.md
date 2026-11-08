@@ -17,7 +17,9 @@ Left to right:
   Files, Changes, Pull requests toggles and a notification bell with an unread count), the shown
   tab's panes framed with `t3-pane` headers, and on the right a hidden 368px **panel** column whose
   `panel-body` stack holds `files`, `changes` (`changes-multi`) and `prs` (the PR monitor).
-- A zero-width block, `walkthrough-watch`, that draws nothing.
+- Two zero-width blocks that draw nothing: `walkthrough-watch`, and `accounts-watch`
+  (`status-accounts` with `{ publish: true }`), which finds each Claude agent's account for the
+  chips in pane headers, Agents and Inbox.
 
 ## How it behaves
 
@@ -47,7 +49,8 @@ Left to right:
   `t3-new-menu`, `t3-pane`, `t3-panels`, `t3-picker`, `t3-spaces`, `t3-tabs` (the layout);
   `prs`, `multirepo` (its `mr.py` is streamed to `python3` over ssh on each machine), `mr-pull`,
   `blueprint`, `changes-multi`, `walkthrough`, `notifications`, `jira`, `browser`,
-  `command-palette`, `keybinds`, `wt-dialog`, `wt-new`, `wt-open`, `wt-remove`, `port-forward`.
+  `command-palette`, `keybinds`, `wt-dialog`, `wt-new`, `wt-open`, `wt-remove`, `port-forward`,
+  `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine).
 - Herdr's shipped mods it uses: `files`, `workspace-status`, `confirm`, `prompt`, `menu`.
 - `keys.json`: a `layout:herdr-t3` section and the global keys that open the mods above.
 

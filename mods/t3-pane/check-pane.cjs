@@ -55,7 +55,7 @@ const env = {
 const ticks = [];
 const tick = () => ticks.filter((w) => !w.gone).forEach((w) => w.fn(cx));
 const cx = { notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every(_ms, fn) { const w = { fn, cancel() { w.gone = true; } }; ticks.push(w); return w; } } };
-// name.js, tree.js, tip.js and focus.js are inlined as the mod's own copies are.
+// name.js, tree.js, tip.js, focus.js and account.js are inlined as the mod's own copies are.
 function load(...files) {
   const src = files.map((f) => fs.readFileSync(f, "utf8")).join("\n")
     .replace(/^import .*;\r?\n/gm, "").replace(/export (function|const) /g, "$1 ").replace("export default class", "globalThis.Mod = class");
@@ -63,8 +63,9 @@ function load(...files) {
   vm.runInContext(src, context, { filename: files.at(-1) });
   const mod = new context.Mod(); mod.init({}, cx); return mod;
 }
+const MOD_FILES = ["name.js", "tree.js", "tip.js", "focus.js", "account.js", "main.js"].map((f) => path.join(__dirname, f));
 const take = () => JSON.parse(JSON.stringify(calls.splice(0)));
-const header = load(path.join(__dirname, "name.js"), path.join(__dirname, "tree.js"), path.join(__dirname, "tip.js"), path.join(__dirname, "focus.js"), path.join(__dirname, "main.js"));
+const header = load(...MOD_FILES);
 header.hovered = true;
 find(header.render(), "pane-head-p2").handlers.click({}, cx);
 assert.deepEqual(take(), [["pane.focus", { pane: "p2" }]]);
@@ -102,6 +103,16 @@ pane.title = "✳ Review PR";
 assert.equal(named(), "Review PR");
 pane.title = "pi";
 assert.equal(named(), "Pi");
+// An agent goes by what it works on: its branch, else the multirepo task its folder is in.
+pane.branch = "feat/SHOP-1-x";
+assert.equal(named(), "feat/SHOP-1-x");
+delete pane.branch; pane.cwd = "/home/me/.herdr/projects/Shop/feat-SHOP-2-y/backend";
+assert.equal(named(), "feat-SHOP-2-y");
+pane.cwd = "/home/me/project";
+// The Claude account its agent runs as, as status-accounts publishes it.
+sharedValues["accounts.agents"] = { t2: { email: "me@acme.io", kind: "work", org: "acme", configDir: "~/.claude-acme" } };
+assert.ok(texts(header.render()).includes("acme"), "the account chip");
+delete sharedValues["accounts.agents"];
 terms[0].labels["pi.session"] = "Fix login"; pane.title = "π - Fix login - project";
 pane.program = { name: "Git Changes", key: "lazygit", agent: false };
 assert.equal(named(), "Git Changes", "lazygit after Pi in the same shell: Pi's session and title are left behind");
@@ -152,7 +163,7 @@ delete terms[0].labels.settled; delete terms[0].turn;
 
 // The buttons go with the pointer, even when the header's leave never comes (tip.js).
 {
-  const hover = load(path.join(__dirname, "name.js"), path.join(__dirname, "tree.js"), path.join(__dirname, "tip.js"), path.join(__dirname, "focus.js"), path.join(__dirname, "main.js"));
+  const hover = load(...MOD_FILES);
   const head = () => find(hover.render(), "pane-head-p2");
   head().handlers.on_hover(true, cx);
   head().handlers.on_mouse_move({ position: pointer, bounds: { x: 0, y: 0, width: 100, height: 30 } });
@@ -172,7 +183,7 @@ delete terms[0].labels.settled; delete terms[0].turn;
 
 // The mode's owner closing ends the mode: a pane's × can close the pane it's on, and its timers go with it.
 {
-  const owner = load(path.join(__dirname, "name.js"), path.join(__dirname, "tree.js"), path.join(__dirname, "tip.js"), path.join(__dirname, "focus.js"), path.join(__dirname, "main.js"));
+  const owner = load(...MOD_FILES);
   sharedValues["t3-focus"] = owner.fs.me;
   owner.close();
   assert.equal(sharedValues["t3-focus"], null);
@@ -180,7 +191,7 @@ delete terms[0].labels.settled; delete terms[0].turn;
 
 // The buttons come with the keyboard on the header, the stop that gets there, and only in keyboard mode.
 {
-  const quiet = load(path.join(__dirname, "name.js"), path.join(__dirname, "tree.js"), path.join(__dirname, "tip.js"), path.join(__dirname, "focus.js"), path.join(__dirname, "main.js"));
+  const quiet = load(...MOD_FILES);
   props = { pane: "p2" };
   assert.equal(find(quiet.render(), "ph-x-p2"), null);
   assert.equal(find(quiet.render(), "pane-head-p2").style?.tab_index, undefined);
@@ -193,4 +204,4 @@ delete terms[0].labels.settled; delete terms[0].turn;
 
 props = { pane: "missing" };
 assert.equal(find(header.render(), "pane-head-p2"), null);
-console.log("ok: a lone pane keeps zoom and close; focus, both splits and close target their own pane; names follow the shared rule, a mod pane's its own title and icon; quiet done dots hide in both modes; a missing pane renders nothing.");
+console.log("ok: a lone pane keeps zoom and close; focus, both splits and close target their own pane; names follow the shared rule (an agent's branch or task too), the account chip shows, a mod pane's its own title and icon; quiet done dots hide in both modes; a missing pane renders nothing.");

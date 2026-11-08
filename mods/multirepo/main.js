@@ -1,14 +1,14 @@
 // Multirepo: props { view: "projects" } is the Projects tab (projects.js); otherwise this dialog.
 // Multirepo dialog: projects -> tasks -> repos, over the `mr` CLI (mr.py next to
-// this file). Every call streams this copy of mr.py to python3 over ssh, so the
-// dialog never depends on what is installed on the machine; `i` installs it there
-// for terminals and agents.
+// this file). Every call runs this copy of mr.py with python3 (here, or streamed over
+// ssh), so the dialog never depends on what is installed on the machine; `i` installs
+// it there for terminals and agents.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand } from "herdr";
-import { pickedRepos, changeBadge, prLabel, remoteCommand } from "./view.js";
-import { MR, mrOn, herdrDo, hcJson, reviewTab, openWorkspace } from "./remote.js";
+import { pickedRepos, changeBadge, prLabel } from "./view.js";
+import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace } from "./remote.js";
 import { ProjectsView } from "./projects.js";
 
 
@@ -39,9 +39,11 @@ function keyHelp(id, title, sections, t, keyWidth = 120) {
 }
 
 // Copies mr.py to ~/.local/bin/mr and puts ~/.local/bin on PATH in the shells' rc files (once, marked).
+// An empty target is this Mac: the same commands run here instead of over ssh.
 const INSTALL_SCRIPT = `target="$1"; source="$2"
-ssh "$target" "mkdir -p ~/.local/bin && cat > ~/.local/bin/mr && chmod +x ~/.local/bin/mr" < "$source" || exit 1
-ssh "$target" 'for rc in ~/.zshrc ~/.bashrc; do [ -f "$rc" ] || continue; grep -q "mr: local bin" "$rc" && continue; printf "\\n# mr: local bin\\ncase \\":\\$PATH:\\" in *\\":\\$HOME/.local/bin:\\"*) ;; *) export PATH=\\"\\$HOME/.local/bin:\\$PATH\\" ;; esac\\n" >> "$rc"; done; ~/.local/bin/mr --version'`;
+on() { if [ -n "$target" ]; then ssh "$target" "$1"; else sh -c "$1"; fi; }
+on "mkdir -p ~/.local/bin && cat > ~/.local/bin/mr && chmod +x ~/.local/bin/mr" < "$source" || exit 1
+on 'for rc in ~/.zshrc ~/.bashrc; do [ -f "$rc" ] || continue; grep -q "mr: local bin" "$rc" && continue; printf "\\n# mr: local bin\\ncase \\":\\$PATH:\\" in *\\":\\$HOME/.local/bin:\\"*) ;; *) export PATH=\\"\\$HOME/.local/bin:\\$PATH\\" ;; esac\\n" >> "$rc"; done; ~/.local/bin/mr --version'`;
 
 export default class Multirepo extends View {
   init(_props, cx) {
@@ -101,9 +103,11 @@ export default class Multirepo extends View {
     //   removeTask: task root  that task selected with its remove confirmation asked
     const given = props() ?? {};
     this.act(cx, async (cx) => {
-      this.machines = (await hcJson(["machine", "ls", "--json"])).machines.filter((m) => !m.temporary);
+      this.machines = await machinesWithThisMac();
       const space = spaces().find((s) => s.id === focused()?.space);
-      const current = this.machines.find((m) => m.name === (given.machine ?? space?.machine));
+      // machine null is this Mac, so only a missing prop falls back to the focused space's machine.
+      const wanted = "machine" in given ? given.machine : space?.machine ?? null;
+      const current = this.machines.find((m) => m.name === wanted);
       if (given.machine && !current) return `${given.machine} is not a Herdr machine.`;
       if (current) await this.openMachine(current);
       if (!given.project) return "";
@@ -142,7 +146,7 @@ export default class Multirepo extends View {
   async startJob(label, args, machine = this.machine) {
     if (this.job) return "Another mr command is still running.";
     const name = `mr-job-${Date.now() % 100000}`;
-    await hcJson(["run", "--json", "--name", name, "--no-parent", "--bg", "--", "sh", "-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", machine.target, remoteCommand(args), MR]);
+    await hcJson(["run", "--json", "--name", name, "--no-parent", "--bg", "--", ...mrArgv(machine.target, args)]);
     this.job = { name, label };
     this.notice = `${label}…`;
     return "";
@@ -205,7 +209,8 @@ export default class Multirepo extends View {
     this.moveTo(0);
     const others = this.machines.filter((m) => m.name !== this.machine.name && m.state === "connected");
     const lists = await Promise.all(others.map(async (m) => {
-      const r = await exec("sh", ["-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", m.target, remoteCommand(["projects", "--json"]), MR]);
+      const [command, ...argv] = mrArgv(m.target, ["projects", "--json"]);
+      const r = await exec(command, argv);
       return r.code === 0 ? JSON.parse(r.stdout).projects.map((p) => ({ ...p, machine: m })) : [];
     }));
     this.cloneSources = lists.flat();
@@ -311,16 +316,16 @@ export default class Multirepo extends View {
     return this.startJob(`Removing ${task.branch}`, ["rm", "--task", task.root, ...(isForced ? ["--force"] : [])]);
   }
 
-  async openPr(repo) {
+  openPr(cx, repo) {
     if (!repo.pr) return `${this.short(repo.name)} has no PR yet. Press p to open PRs for the task.`;
-    const r = await exec("open", [repo.pr.url]);
-    return r.code === 0 ? "" : `Could not open ${repo.pr.url}`;
+    cx.open_url(repo.pr.url);
+    return "";
   }
 
   async install() {
-    const r = await exec("sh", ["-c", INSTALL_SCRIPT, "sh", this.machine.target, MR]);
-    if (r.code !== 0) return `Install on ${this.machine.name} failed: ${(r.stderr || r.stdout).trim()}`;
-    this.notice = `mr ${r.stdout.trim()} installed on ${this.machine.name} as ~/.local/bin/mr (new shells have it on PATH).`;
+    const r = await exec("sh", ["-c", INSTALL_SCRIPT, "sh", this.machine.target ?? "", MR]);
+    if (r.code !== 0) return `Install on ${machineLabel(this.machine)} failed: ${(r.stderr || r.stdout).trim()}`;
+    this.notice = `mr ${r.stdout.trim()} installed on ${machineLabel(this.machine)} as ~/.local/bin/mr (new shells have it on PATH).`;
     return "";
   }
 
@@ -346,8 +351,9 @@ export default class Multirepo extends View {
     } else if (mode === "clone-root") {
       const source = this.cloneSource;
       this.act(cx, async () => {
-        const manifest = await exec("sh", ["-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", source.machine.target, remoteCommand(["manifest", "--project", source.root]), MR]);
-        if (manifest.code !== 0) return `Could not read ${source.name} on ${source.machine.name}: ${manifest.stderr.trim()}`;
+        const [command, ...argv] = mrArgv(source.machine.target, ["manifest", "--project", source.root]);
+        const manifest = await exec(command, argv);
+        if (manifest.code !== 0) return `Could not read ${source.name} on ${machineLabel(source.machine)}: ${manifest.stderr.trim()}`;
         this.level = "projects";
         return this.startJob(`Cloning ${source.name} into ${text}`, ["clone", manifest.stdout.trim(), text]);
       });
@@ -406,7 +412,7 @@ export default class Multirepo extends View {
     if (this.level === "machines") this.act(cx, async () => { await this.openMachine(item); return ""; });
     else if (this.level === "projects") this.act(cx, async () => { await this.openProject(item); return ""; });
     else if (this.level === "tasks") this.act(cx, async () => { await this.openTask(item); return ""; });
-    else if (this.level === "repos") this.act(cx, () => this.openPr(item));
+    else if (this.level === "repos") this.error = this.openPr(cx, item);
     else if (this.level === "pick") this.togglePick(item);
     else if (this.level === "clone") {
       this.cloneSource = item;
@@ -476,11 +482,11 @@ export default class Multirepo extends View {
     const repoNames = (names) => names.map((n) => this.short(n)).join(", ");
     switch (this.level) {
       case "machines":
-        return { mark: "›", color: t.dim, label: item.name, detail: `${item.target} · ${item.state}` };
+        return { mark: "›", color: t.dim, label: machineLabel(item), detail: `${item.target ?? "local"} · ${item.state}` };
       case "projects":
         return { mark: "›", color: t.dim, label: item.name, detail: `${item.repos.length} repos · ${item.root}` };
       case "clone":
-        return { mark: "⇣", color: t.dim, label: item.name, detail: `from ${item.machine.name} · ${item.root}` };
+        return { mark: "⇣", color: t.dim, label: item.name, detail: `from ${machineLabel(item.machine)} · ${item.root}` };
       case "tasks": {
         const status = item.status ?? [];
         const isDirty = status.some((s) => s.dirty || s.unpushed);

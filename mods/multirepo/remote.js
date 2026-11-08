@@ -1,14 +1,39 @@
 // IO shared by the multirepo dialog and the Projects tab: the `mr` CLI on a machine (this mod's
-// mr.py streamed to python3 over ssh, so nothing has to be installed there), Herdr commands that
-// answer with ids, hc's JSON, and opening a task's workspace.
+// mr.py run by python3 here, or streamed to python3 over ssh, so nothing has to be installed there),
+// Herdr commands that answer with ids, hc's JSON, and opening a task's workspace.
 
-import { exec, hc, appHome } from "herdr";
+import { exec, hc, appHome, window } from "herdr";
 import { remoteCommand } from "./view.js";
 
 export const MR = `${appHome()}/mods/multirepo/mr.py`;
 
+// This Mac as a machine: its spaces have machine null, and mr runs here without ssh.
+export const THIS_MAC = { name: null, label: "This Mac", target: null, state: "connected" };
+
+// Herdr's ssh machines, this Mac first.
+export async function machinesWithThisMac() {
+  return [THIS_MAC, ...(await hcJson(["machine", "ls", "--json"])).machines.filter((m) => !m.temporary)];
+}
+
+export function machineLabel(machine) {
+  return machine.label ?? machine.name;
+}
+
+// Python 3 here: Windows has the py launcher (its python3 can be the Store's stub), elsewhere python3.
+export function python() {
+  return window()?.platform === "windows" ? ["py", "-3"] : ["python3"];
+}
+
+// The command line that runs `mr <args>` on target: python3 on this copy here when null, else over ssh.
+export function mrArgv(target, args) {
+  return target === null
+    ? [...python(), MR, ...args]
+    : ["sh", "-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", target, remoteCommand(args), MR];
+}
+
 export async function mrOn(target, args) {
-  const r = await exec("sh", ["-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", target, remoteCommand(args), MR]);
+  const [command, ...argv] = mrArgv(target, args);
+  const r = await exec(command, argv);
   if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/^mr: /, "") || `mr ${args[0]} failed`);
   return r.stdout;
 }

@@ -4,8 +4,8 @@
 import { div, list, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { theme, run, settings, panes, focused, spaces, exec, shared, setShared, openOverlay } from "herdr";
-import { sshTarget, mr, mrArgv, mrJson, openUrl, openReview } from "./host.js";
-import { prKey, prState, overviewItems, checkItems, checkMark, commitItems, diffFiles, parseDiff, stackDiffs, optimisticPr, stackNeighbor, mergedWith, shortBranch, canReRequest, reviewKey, OPEN_REVIEWS, requestedLogins, shortTime, matches, machineLabel, prStateIcon, checksStatus, reviewStatus, mergeStatus, prActions, checksIcon, checkState } from "./model.js";
+import { sshTarget, mr, mrArgv, mrJson, openReview, ensureTaskFolder, openBranchCheckout } from "./host.js";
+import { prKey, prState, overviewItems, checkItems, checkMark, commitItems, diffFiles, parseDiff, stackDiffs, optimisticPr, stackNeighbor, mergedWith, shortBranch, canReRequest, reviewKey, OPEN_REVIEWS, requestedLogins, shortTime, matches, machineLabel, prStateIcon, checksStatus, reviewStatus, mergeStatus, prActions, checksIcon, checkState, isSettling, hasSameHeads } from "./model.js";
 import { Search } from "./search.js";
 import { ReviewerPicker } from "./reviewers.js";
 import { highlightDiff } from "./delta.js";
@@ -16,6 +16,8 @@ const TAB_LABELS = { overview: "Overview", files: "Files", checks: "Checks", com
 const ROW_HEIGHT = 30;
 const DIFF_ROW_HEIGHT = 20;
 const FILE_HEADER_HEIGHT = 34;
+const AUTO_REFRESH_MS = 30000;
+const REFRESH_FAILED = "Could not refresh";
 const COMPOSE = {
   approve: { label: "Approve", hint: "optional comment", isBodyRequired: false },
   "request-changes": { label: "Request changes", hint: "what has to change", isBodyRequired: true },
@@ -33,6 +35,8 @@ export class Review {
     this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
     // focus() can't run in render, so a light timer does the claiming (no redraw).
     cx.timer.every(400, (cx) => this.claimKeyboard(cx));
+    cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
+    this.isAutoRefreshing = false;
     this.scrolls = Object.fromEntries([...TABS, "diff"].map((name) => [name, VirtualListScrollHandle.new()]));
     this.search = new Search({ onChange: () => this.moveTo(0), onSubmit: (cx) => this.openItem(cx) });
     this.compose = null; // the action whose body is being written
@@ -154,6 +158,32 @@ export class Review {
     });
     this.stackedDiff = { diff, query: this.search.query, version: this.highlightVersion, view };
     return view;
+  }
+
+  // While a PR's checks run (or GitHub works out whether it can merge), reloads quietly. Only while
+  // this tab shows, so open tabs in the background don't each poll GitHub; a hidden one catches up
+  // at its first tick once shown. Diffs are kept unless a head commit moved.
+  autoRefresh(cx) {
+    if (!this.data?.prs.some(isSettling) || this.isBusy || this.pendingChanges || this.isAutoRefreshing || !this.isTabShown()) return;
+    this.isAutoRefreshing = true;
+    cx.spawn(async (cx) => {
+      try {
+        const data = await this.fetchView();
+        if (!this.isBusy && !this.pendingChanges) {
+          this.showView(data, { isKeepingDiffs: hasSameHeads(this.data.prs, data.prs) });
+          this.loadDiff();
+          if (this.error.startsWith(REFRESH_FAILED)) this.error = "";
+        }
+      } catch (error) {
+        this.error ||= `${REFRESH_FAILED}: ${error.message ?? error}`;
+      }
+      this.isAutoRefreshing = false;
+      cx.notify();
+    });
+  }
+
+  isTabShown() {
+    return Boolean(this.ownTab) && spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id === this.ownTab;
   }
 
   // ---------------------------------------------------------------- actions
@@ -331,19 +361,27 @@ export class Review {
     openReview(machine, project, entry.headRefName, isRepo, this.data?.project);
   }
 
-  // Blueprint beside this review, on the branch's checkout (the multirepo task, made quietly
-  // when missing; a branch another tool already has checked out is linked, not checked out
-  // again). With no agent in this tab, Blueprint has a headless Claude draw it.
+  // The multirepo task's folder, the task made quietly when missing (ensureTaskFolder).
+  async ensureTask() {
+    if (this.data.task) return this.data.task;
+    const { machine, project, branch } = this.props;
+    await ensureTaskFolder(machine, project, branch, this.repoShorts(), (line) => { this.notice = line; });
+    await this.load();
+    if (!this.data.task) throw new Error(`pr-view lists no task for ${branch} after making it.`);
+    return this.data.task;
+  }
+
+  repoShorts() {
+    return this.data.prs.map((pr) => pr.short);
+  }
+
+  // Blueprint beside this review, on the branch's checkout (the multirepo task, ensureTask).
+  // With no agent in this tab, Blueprint has a headless Claude draw it.
   async showBlueprint(tab, pane) {
     const { machine, project, branch, isRepo } = this.props;
     // A plain repo has no task to make: Blueprint uses whichever of its worktrees has the branch.
     if (!this.data.task && isRepo) return `Blueprint needs ${branch} checked out in ${project} (or one of its worktrees) on ${machineLabel(machine)}.`;
-    if (!this.data.task) {
-      this.notice = `Checking out ${branch} on ${machineLabel(machine)} for Blueprint…`;
-      await mr(this.target, ["new", branch, ...this.data.prs.map((pr) => pr.short), "--project", project]);
-      await this.load();
-      if (!this.data.task) return `mr new did not make a task for ${branch}.`;
-    }
+    await this.ensureTask();
     const existing = panes().find((p) => p.mod === "blueprint" && p.tab === tab);
     if (existing) run("pane.focus", { pane: existing.pane });
     else {
@@ -353,6 +391,13 @@ export class Review {
     }
     this.notice = "";
     return "";
+  }
+
+  // The branch's checkout in a space (openBranchCheckout).
+  async openCheckout() {
+    const { machine, project, branch, isRepo } = this.props;
+    await openBranchCheckout({ machine, project, branch, isRepo, repos: this.repoShorts() }, (line) => { this.notice = line; });
+    this.notice = "";
   }
 
   // The walkthrough mod over every PR of this review, read as one change: a plain repo's PR, or
@@ -445,8 +490,7 @@ export class Review {
       this.selectTab(cx, "files", { oid: item.key, headline: item.headline });
       return cx.notify();
     }
-    const url = item.url ?? this.pr.url;
-    this.act(cx, async () => { await openUrl(url); return ""; });
+    cx.open_url(item.url ?? this.pr.url);
   }
 
   key(e, cx) {
@@ -505,8 +549,9 @@ export class Review {
       this.act(cx, () => this.showBlueprint(tab, pane));
     }
     else if (stroke === "w" && this.data?.prs.length) this.openWalkthrough();
+    else if (stroke === "g" && this.data) this.act(cx, () => this.openCheckout());
     else if (!pr || this.isBusy) return;
-    else if (stroke === "o") this.act(cx, async () => { await openUrl(pr.url); return ""; });
+    else if (stroke === "o") cx.open_url(pr.url);
     else if (stroke === "a" && !prActions(pr, this.data.viewer).hasApproved) this.startCompose(cx, "approve");
     else if (stroke === "x") this.startCompose(cx, "request-changes");
     else if (stroke === "c") this.startCompose(cx, "comment");
@@ -566,7 +611,9 @@ export class Review {
           tooltip: `s: rebase the stack's PRs onto each other and force-push${isStackBehind ? " (a layer is behind the one below)" : ""}` })))
       .when(can.canToggleDraft, (el) => el.child(this.actionButton("act-draft", pr.isDraft ? "pull-request" : "pull-request-draft", pr.isDraft ? "Ready for review" : "To draft",
         (cx) => this.runAction(cx, pr.isDraft ? "ready" : "draft"), t, { tooltip: "d" })))
-      .child(this.actionButton("act-github", "external", "", (cx) => this.act(cx, async () => { await openUrl(pr.url); return ""; }), t, { tooltip: "Open on GitHub · o" }))
+      .child(this.actionButton("act-github", "external", "", (cx) => cx.open_url(pr.url), t, { tooltip: "Open on GitHub · o" }))
+      .child(this.actionButton("act-checkout", "terminal", "", (cx) => this.act(cx, () => this.openCheckout()), t,
+        { tooltip: `Open ${this.props.isRepo ? "the branch's worktree" : "the multirepo task"} in a space · g` }))
       .child(this.actionButton("act-blueprint", "edit", "", (cx) => {
         const { tab, pane } = focused() ?? {};
         this.act(cx, () => this.showBlueprint(tab, pane));
@@ -886,7 +933,7 @@ export class Review {
         : this.search.isTyping
           ? "↵ open · ↑↓ choose · esc keep filter"
           : this.tab === "files"
-            ? "j/k file · l/↵ diff · h files · ⇥ tabs · [ ] repo · { } stack · a approve · x changes · c comment · m merge · s restack · d draft · R reviewers · o GitHub · b Blueprint · w Walkthrough"
+            ? "j/k file · l/↵ diff · h files · ⇥ tabs · [ ] repo · { } stack · a approve · x changes · c comment · m merge · s restack · d draft · R reviewers · o GitHub · g checkout · b Blueprint · w Walkthrough"
             : "j/k move · l/↵ open · ⇥ / 1-4 tabs · [ ] repo · / search · r refresh · ? all keys";
     const action = this.compose && COMPOSE[this.compose];
     return v_flex().flex_none().px(16).py(8).gap(6).border_t(1).border_color(t.border)

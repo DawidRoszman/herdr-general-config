@@ -179,10 +179,7 @@ export default class Jira extends View {
 
   openIssue(cx, key = this.selected()?.key) {
     if (!key) return;
-    cx.spawn(async (cx) => {
-      const r = await exec("open", [`https://${this.config.site}/browse/${key}`]);
-      if (r.code !== 0) { this.error = `Could not open ${key} in the browser.`; cx.notify(); }
-    });
+    cx.open_url(`https://${this.config.site}/browse/${key}`);
   }
 
   startWork() {

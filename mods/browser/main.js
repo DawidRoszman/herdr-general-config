@@ -321,9 +321,9 @@ export default class Browser extends View {
     });
   }
 
-  async paste() {
-    const r = await exec("pbpaste", []);
-    if (r.code === 0 && r.stdout) this.send("Input.insertText", { text: r.stdout });
+  paste(cx) {
+    const text = cx.read_from_clipboard();
+    if (text) this.send("Input.insertText", { text });
   }
 
   key(e, cx) {
@@ -334,7 +334,7 @@ export default class Browser extends View {
     else if (chord === "r") this.send("Page.reload", {});
     else if (chord === "[") this.goHistory(-1).catch(() => {});
     else if (chord === "]") this.goHistory(1).catch(() => {});
-    else if (chord === "v") this.paste().catch(() => {});
+    else if (chord === "v") this.paste(cx);
     else if (chord === "t") cx.spawn(async (cx) => this.newTab(cx));
     else {
       const input = keyToCdp(e, true);

@@ -52,13 +52,17 @@ export function projectSpace(spaces, { machine, root, name, branch, checkout = n
   const isOnBranch = (s) => s.branch === branch
     || branchFolders.some((f) => s.folder?.endsWith(f) || s.folder?.includes(`${f}/`));
   const here = spaces.filter((s) => (s.machine ?? null) === (machine ?? null));
-  const atCheckout = checkout && checkout !== root
-    ? here.find((s) => s.folder === checkout || s.folder?.startsWith(`${checkout}/`)) : null;
+  const atCheckout = checkout && checkout !== root ? spaceAt(here, machine, checkout) : null;
   if (atCheckout) return atCheckout;
   const own = here.filter((s) => isInside(s.folder));
   return own.find(isOnBranch) ?? own.find((s) => s.folder === root)
     ?? (name ? here.find((s) => s.name === name) : null)
     ?? own.find((s) => s.folder === root || s.folder.startsWith(`${root}/`)) ?? null;
+}
+
+// The space on a machine whose folder is folder or inside it, or null.
+export function spaceAt(spaces, machine, folder) {
+  return spaces.find((s) => (s.machine ?? null) === (machine ?? null) && (s.folder === folder || Boolean(s.folder?.startsWith(`${folder}/`)))) ?? null;
 }
 
 // Where `git worktree list --porcelain` has a branch checked out, or null.
@@ -216,6 +220,17 @@ export function checkState(pr) {
   return marks.includes("✗") ? "failed" : marks.includes("●") ? "pending" : marks.length ? "passed" : "none";
 }
 
+// An open PR whose checks GitHub is still running, or whose mergeability it is still working out.
+export function isSettling(pr) {
+  return pr.state === "OPEN" && (checkState(pr) === "pending" || !pr.mergeStateStatus || pr.mergeStateStatus === "UNKNOWN");
+}
+
+// Whether the same PRs still point at the same head commits, so diffs already loaded stay right.
+export function hasSameHeads(before, after) {
+  const head = (pr) => `${prKey(pr)}@${pr.commits.at(-1)?.oid ?? ""}`;
+  return before.length === after.length && before.every((pr, i) => head(pr) === head(after[i]));
+}
+
 export function checksStatus(pr) {
   const marks = checkItems(pr).map((c) => checkMark(c.outcome));
   const failing = marks.filter((m) => m === "✗").length;
@@ -243,12 +258,16 @@ export function mergeStatus(pr) {
   if (state === "merged") return { icon: "merge", color: "ansi5", text: "Merged" };
   if (state === "closed") return { icon: "pull-request-closed", color: "blocked", text: "Closed" };
   if (state === "draft") return { icon: "pull-request-draft", color: "dim", text: "Draft: not ready to merge" };
+  // GitHub's UNSTABLE means checks are not all passing yet: failing, or still running.
+  const checks = checkState(pr);
   const why = pr.reviewDecision === "REVIEW_REQUIRED" ? "review required" : pr.reviewDecision === "CHANGES_REQUESTED" ? "changes requested"
-    : checksStatus(pr).color === "blocked" ? "checks failing" : "branch protection";
+    : checks === "failed" ? "checks failing" : checks === "pending" ? "checks running" : "branch protection";
   return {
     CLEAN: { icon: "check-circle", color: "done", text: "Ready to merge" },
     HAS_HOOKS: { icon: "check-circle", color: "done", text: "Ready to merge" },
-    UNSTABLE: { icon: "alert", color: "working", text: "Mergeable, but checks are failing" },
+    UNSTABLE: checks === "pending"
+      ? { icon: "clock", color: "working", text: "Mergeable once checks finish" }
+      : { icon: "alert", color: "working", text: "Mergeable, but checks are failing" },
     BEHIND: { icon: "alert", color: "working", text: "Behind its base: update the branch" },
     DIRTY: { icon: "alert", color: "blocked", text: "Conflicts with its base" },
     BLOCKED: { icon: "alert", color: "blocked", text: `Blocked: ${why}` },

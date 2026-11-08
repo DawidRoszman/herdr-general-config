@@ -5,8 +5,8 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
-import { theme, run, spaces, panes, openOverlay, settings, exec } from "herdr";
-import { mrJsonOn, hcJson, reviewTab, openWorkspace } from "./remote.js";
+import { theme, run, spaces, panes, openOverlay, settings } from "herdr";
+import { mrJsonOn, machinesWithThisMac, machineLabel, reviewTab, openWorkspace } from "./remote.js";
 import { changeBadge, prLabel } from "./view.js";
 
 const ICONS = "mods/prs/icons";
@@ -62,7 +62,7 @@ export class ProjectsView {
 
   loadPlaces(cx) {
     this.act(cx, async (cx) => {
-      const machines = (await hcJson(["machine", "ls", "--json"])).machines.filter((m) => !m.temporary && m.state === "connected");
+      const machines = (await machinesWithThisMac()).filter((m) => m.state === "connected");
       const lists = await Promise.all(machines.map(async (m) => {
         try {
           return (await mrJsonOn(m.target, ["projects", "--json"])).projects.map((project) => ({ key: `${m.name}|${project.root}`, machine: m, project }));
@@ -150,8 +150,8 @@ export class ProjectsView {
     openOverlay({ ...DIALOG, props: { machine: place.machine.name, project: place.project.root, ...extra } });
   }
 
-  openPr(repo) {
-    if (repo.pr?.url) exec("open", [repo.pr.url]);
+  openPr(cx, repo) {
+    if (repo.pr?.url) cx.open_url(repo.pr.url);
   }
 
   selectPlace(cx, key) {
@@ -273,7 +273,7 @@ export class ProjectsView {
         .text_color(badge ? (repo.dirty ? t.working : t.muted) : t.dim).child(badge || "clean"))
       .when(Boolean(pr), (el) => el.child(h_flex().id(`repo-pr-${repo.name}`).flex_none().h(26).px(8).gap(6).items_center().rounded(6).cursor_pointer()
         .bg(t.raised).hover((s) => s.bg(t.hover)).tooltip(`${pr.title} · open on GitHub`)
-        .on_click(() => this.openPr(repo))
+        .on_click((_e, cx) => this.openPr(cx, repo))
         .child(icon(prLook[0], 13, prLook[1]))
         .child(div().text_size(12).text_color(t.foreground).child(prLabel(pr).replace(/^PR /, "")))
         .child(icon("external", 11, t.dim))))
@@ -287,7 +287,7 @@ export class ProjectsView {
     return v_flex().id("projects-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(16).gap(14)
       .child(v_flex().gap(4)
         .child(div().text_size(17).font_semibold().text_color(t.foreground).truncate().child(task.branch))
-        .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${task.root} · ${place.machine.name}`)))
+        .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${task.root} · ${machineLabel(place.machine)}`)))
       .child(h_flex().gap(6).flex_wrap()
         .child(this.button("act-open", "terminal", "Open workspace", (cx) => this.openTask(cx, task), t, { isPrimary: true, tooltip: "o / enter" }))
         .child(this.button("act-review", "eye", "Review PRs", () => this.review(task), t, { tooltip: "v" }))
@@ -322,7 +322,7 @@ export class ProjectsView {
             .border_color(isOn ? t.accent : t.border).bg(isOn ? t.selected : t.background).hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => this.selectPlace(cx, p.key))
             .child(div().text_size(12.5).font_medium().text_color(isOn ? t.foreground : t.muted).child(p.project.name))
-            .child(div().text_size(11).text_color(t.dim).child(p.machine.name));
+            .child(div().text_size(11).text_color(t.dim).child(machineLabel(p.machine)));
         })))
         .when(Boolean(place), (el) => el.child(this.button("act-new", "plus", "New task", () => this.dialog({ newTask: "" }), t, { isPrimary: true, tooltip: "n" })))
         .child(this.button("act-refresh", "refresh", "", (cx) => { this.details.clear(); this.loadTasks(cx); }, t, { tooltip: "r" })))

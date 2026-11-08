@@ -10,6 +10,7 @@ import { glow, hoverKept, tip, tipMark } from "./tip.js";
 import { programIcon, detailsFor, detailsAt, detailsLine, detailsCard } from "./details.js";
 import { stop, within } from "./focus.js";
 import { MOTION, foldArrow } from "./motion.js";
+import { accountChip } from "./account.js";
 
 // T3's one-line row and shelf or folder header, its folders 8 apart and its list's 1px between items (gap-px).
 const ROW = 36, HEAD = 32, HEAD_GAP = 8;
@@ -220,6 +221,7 @@ export function agentEntries(view, t, { list, all, shown, ps, now, viewing, byPr
     const when = view.since(a);
     const lead = h_flex().size(16).flex_none().items_center().justify_center().when(Boolean(pic), el => el.child(pic));
     const server = svg("mods/t3-agents/icons/server.svg").size(14).flex_none().text_color(t.dim);
+    const account = accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address);
     const time = div().flex_none().text_size(12).text_color(t.dim).opacity(offer ? 0 : 1).transition("opacity", MOTION).when(Boolean(when), el => el.child(duration(now - when)));
     const base = h_flex()
       .relative()
@@ -240,6 +242,7 @@ export function agentEntries(view, t, { list, all, shown, ps, now, viewing, byPr
       .child(h_flex().flex_1().min_w(0).gap(10).items_center()
         .child(div().min_w(0).truncate().when(on || st === "blocked" || st === "done", (el) => el.font_medium()).text_color(leads ? t.foreground : t.muted).child(name))
         .when(Boolean(where), el => el.child(div().flex_1().flex_shrink(1000).min_w(0).truncate().text_size(12).text_color(t.dim).child(where))))
+      .when(Boolean(account), el => el.child(account))
       // As Inbox's cards and T3's: a server mark, the machine named on hover.
       .when(Boolean(machine), el => el.child(ghost ? server : tipMark(view, t, `machine-${a.address}`, machine, server)))
       .child(h_flex().when(!ghost, el => el.id(`controls-${a.address}`)).flex_none().items_center().gap(4)

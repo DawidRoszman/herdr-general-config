@@ -15,6 +15,10 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
 - **Side panels** for Files, Changes (multirepo-aware) and Pull requests, toggled from the tab bar
   or `cmd-alt-f` / `cmd-alt-c` / `cmd-alt-p`, and a notification bell with a history.
 - **Inbox** with machine names on each card and `ctrl-1…9` to jump between its items.
+- **Agents you can tell apart:** each is named after its branch or multirepo task, with a chip
+  for the Claude Code account it really runs as (work or personal, from its `CLAUDE_CONFIG_DIR`).
+- **Checkouts from PRs:** `g` in a PR review or the PR list opens the branch's multirepo task or
+  worktree in a space, making it when missing.
 - **Jira** board (`cmd-shift-j`), a **browser** pane shared with your agents (`cmd-shift-i`),
   **Blueprint** flowcharts, **worktree** dialogs, **port forwarding**, a **command palette**
   (`cmd-shift-p`).
@@ -41,6 +45,9 @@ to the layout. Your own settings, theme and layouts stay as they are; `cmd-shift
 | Walkthrough | Claude Code (`claude`, logged in) | this computer |
 | Jira | Atlassian's `acli` (`acli jira auth login --web`) | this computer |
 | Browser | Chrome or Chromium, Node.js | each machine you browse from |
+
+On Windows, install [Git for Windows](https://gitforwindows.org) with its `usr\bin` on `PATH`
+(the mods run helper scripts with `sh`) and Python's `py` launcher.
 
 Other machines: add them in Herdr (Settings → Machines, or `hc machine add`). The PR list, `mr`
 and the browser run there over ssh; nothing needs installing on them but the programs above.

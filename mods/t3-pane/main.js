@@ -11,6 +11,7 @@ import { modStatus, namer, programOf } from "./name.js";
 import { notNews, ownStatus, subAgents, treeStatus } from "./tree.js";
 import { tip, tipMark, glow, POINTER_WATCH, pointerAt, pointerGone, pointerMoved } from "./tip.js";
 import { stopsInit, stopsEnd, stop, focusRoot, within } from "./focus.js";
+import { accountChip } from "./account.js";
 
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -86,6 +87,7 @@ export default class Pane extends View {
     const kids = subAgents(agents(), all)(p.terminal);
     const st = p.mod ? modStatus(p) : treeStatus(ownStatus(p.status, p.terminal, all), kids);
     const pane = p.pane;
+    const account = p.terminal ? accountChip(this, t, `ph-acct-${pane}`, p.terminal) : null;
     // A mark takes the last button's 24px, so it, the × and the tab bar's + share one column: this header's pr(2), the frame's 2 and the block's 8 are the bar's 12.
     const slot = (mark) => div().w(24).flex_none().flex().items_center().justify_center().child(mark);
     // The buttons show with the keyboard on the header or one of them, as they do hovered: the header's the stop that gets there.
@@ -106,6 +108,7 @@ export default class Pane extends View {
       .child(div().size(16).mr(-10).flex_none().flex().items_center().justify_center().when(Boolean(pic), (el) => el.child(pic)))
       .when(Boolean(p.terminal) && name !== p.terminal, (el) => el.child(div().flex_none().text_color(t.dim).child(p.terminal)))
       .child(div().min_w(0).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))
+      .when(Boolean(account), (el) => el.child(account))
       .child(div().relative().flex_1().min_w(0).h_full().flex().items_center()
         .child(div().flex_1().min_w(0).truncate().pr(12).text_color(t.dim).child(folder(p.cwd)))
         // Over the folder's end, so hovering moves nothing else, as in the agents list and the inbox.
