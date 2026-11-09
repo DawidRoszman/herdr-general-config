@@ -3,8 +3,7 @@
 import { adfToMarkdown } from "./adf.js";
 
 export const JQL = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
-// acli refuses project and updated: the project comes from the key, the order from the JQL.
-export const FIELDS = ["key", "summary", "status", "priority", "issuetype"];
+export const FIELDS = ["summary", "status", "priority", "issuetype", "project", "updated"];
 const CATEGORY_ORDER = { new: 0, indeterminate: 1, done: 2 };
 const PRIORITY_ORDER = { Highest: 0, High: 1, Medium: 2, Low: 3, Lowest: 4 };
 
@@ -70,7 +69,7 @@ export function isShown(card, hiddenStatuses, isShowingHidden) {
   return isShowingHidden || !hiddenStatuses.includes(card.status);
 }
 
-// What the details panel asks acli for, and the issue shaped for it.
+// What the details panel asks Jira for, and the issue shaped for it.
 export const DETAIL_FIELDS = ["summary", "status", "assignee", "reporter", "priority", "issuetype", "parent", "labels", "description", "comment", "subtasks", "issuelinks", "created", "updated"];
 
 const person = (user) => user?.displayName ?? "Unassigned";

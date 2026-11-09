@@ -62,11 +62,12 @@ Left to right:
 ## Watch out
 
 - **Before adding, tell the person:** mods run programs (`git`, `gh`, `python3`, `ssh`, `hc`,
-  `claude -p` for walkthroughs, `acli` for Jira, Chrome for the browser), on this computer and,
+  `claude -p` for walkthroughs, Chrome for the browser), on this computer and,
   through ssh and `hc exec`, on the machines Herdr knows. Walkthroughs read Claude Code
-  transcripts in `~/.claude/projects` and write `~/.herdr/walkthrough`. No mod reaches the
-  internet itself: the browser talks only to its own Chrome on 127.0.0.1, and Blueprint's
-  update check is off in this fork.
+  transcripts in `~/.claude/projects` and write `~/.herdr/walkthrough`. Only Jira reaches the
+  internet itself: it calls the Atlassian site in `mods/jira/config.json` with the API token it
+  reads from `ATLASSIAN_API_KEY` in `~/.profile` (it sources that file). The browser talks only
+  to its own Chrome on 127.0.0.1, and Blueprint's update check is off in this fork.
 - **Names matter.** Mods refer to each other by folder name (`mods/multirepo/mr.py`,
   `mod.open:prs`, `mods/notifications/icons/…`, the `t3-*` names in the layout). If a name is
   taken, don't install under a new name: ask the person, since a renamed mod breaks the others.

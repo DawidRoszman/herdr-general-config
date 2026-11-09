@@ -24,7 +24,7 @@ assert.equal(branchFor({ key: "SHOP-7", summary: "Błąd: zła data (PL)!", type
 assert.equal(branchFor({ key: "SHOP-8", summary: "a very long summary that keeps going well past forty characters", type: "Task" }), "feat/SHOP-8-a-very-long-summary-that-keeps-going");
 assert.equal(branchFor({ key: "SHOP-9", summary: "ąę", type: "Task" }), "feat/SHOP-9-ae");
 assert.ok(matches(card, "shop-1") && !matches(card, "nope") && matches(card, ""));
-// acli's shape: no project or updated field.
+// An issue without project or updated fields.
 const fromAcli = toCard({ key: "SHOP-3", fields: { summary: "s", status: { name: "To Do", statusCategory: { key: "new" } }, priority: null, issuetype: { name: "Task" } } });
 assert.deepEqual([fromAcli.project, fromAcli.updated, fromAcli.priority], ["SHOP", "", ""]);
 assert.deepEqual(columns([fromAcli, { ...fromAcli, key: "SHOP-4" }])[0].cards.map((c) => c.key), ["SHOP-3", "SHOP-4"]);

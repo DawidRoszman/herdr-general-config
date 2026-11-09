@@ -2,8 +2,8 @@
 // s starts work on an issue: the multirepo dialog opens on the issue's project with
 // the task branch filled in (config.json maps Jira project keys to multirepo projects).
 //
-// Issues come from Atlassian's CLI, signed in with OAuth (some organizations block API tokens):
-//   brew tap atlassian/homebrew-acli && brew install acli && acli jira auth login --web
+// Issues come from Jira's REST API, signed in with config.json "email" and an API token
+// (https://id.atlassian.com/manage-profile/security/api-tokens) set as ATLASSIAN_API_KEY in ~/.profile.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input, TextView } from "gpui-base";
@@ -48,22 +48,54 @@ async function readConfig() {
   if (!text) throw new Error(`${path} is missing: copy config.example.json beside it to config.json and fill in your Jira site and projects.`);
   const config = JSON.parse(text);
   if (!config.site) throw new Error(`${path} needs "site", e.g. "your-company.atlassian.net".`);
+  if (!config.email) throw new Error(`${path} needs "email": the Atlassian account the API token belongs to.`);
   return { projects: {}, hiddenStatuses: [], statusStages: {}, ...config };
 }
 
-async function searchIssues() {
-  let r;
+// Read from ~/.profile on every call: an app opened from the Dock doesn't get the login shell's
+// variables, and a changed token works without restarting.
+const READ_CREDENTIAL = '[ -f "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null; [ -n "$ATLASSIAN_API_KEY" ] || exit 3; printf "%s:%s" "$1" "$ATLASSIAN_API_KEY" | base64 | tr -d "\\n"';
+
+async function authorization(email) {
+  const r = await exec("sh", ["-c", READ_CREDENTIAL, "sh", email]);
+  if (r.code === 3) throw new Error("ATLASSIAN_API_KEY is not set: add ATLASSIAN_API_KEY=<token> to ~/.profile (make one at https://id.atlassian.com/manage-profile/security/api-tokens).");
+  if (r.code !== 0) throw new Error(`Could not read ATLASSIAN_API_KEY from ~/.profile: ${r.stderr.trim() || `sh exit ${r.code}`}`);
+  return `Basic ${r.stdout.trim()}`;
+}
+
+// Jira answers errors as { errorMessages: [], errors: { field: message } }.
+function jiraError(text) {
   try {
-    r = await exec("acli", ["jira", "workitem", "search", "--jql", JQL, "--fields", FIELDS.join(","), "--json", "--paginate"]);
+    const body = JSON.parse(text);
+    return [...(body.errorMessages ?? []), ...Object.values(body.errors ?? {})].join("; ") || text;
+  } catch {
+    return text;
+  }
+}
+
+async function jira(config, path) {
+  const url = `https://${config.site}/rest/api/3/${path}`;
+  let response;
+  try {
+    response = await fetch(url, { headers: { Authorization: await authorization(config.email), Accept: "application/json" } });
   } catch (error) {
-    // exec rejects both when acli is missing and when it outlives the timeout: say which.
-    throw new Error(`acli did not answer (${error.message ?? error}). Not installed? brew tap atlassian/homebrew-acli && brew install acli, then acli jira auth login --web`);
+    throw new Error(`Could not reach ${config.site}: ${error.message ?? error}`);
   }
-  if (r.code !== 0 || !r.stdout.trim().startsWith("[")) {
-    const why = (r.stderr || r.stdout).trim().replace(/^✗ Error: /, "");
-    throw new Error(`acli could not search Jira: ${why}. Signed out? Run: acli jira auth login --web`);
-  }
-  return JSON.parse(r.stdout).map(toCard);
+  const text = await response.text();
+  if (response.status === 401) throw new Error(`Jira refused the token (401): check ATLASSIAN_API_KEY in ~/.profile and "email" in mods/jira/config.json.`);
+  if (!response.ok) throw new Error(`Jira answered ${response.status}: ${jiraError(text).trim()}`);
+  return JSON.parse(text);
+}
+
+async function searchIssues(config) {
+  const issues = [];
+  let pageToken = "";
+  do {
+    const page = await jira(config, `search/jql?jql=${encodeURIComponent(JQL)}&fields=${FIELDS.join(",")}&maxResults=100${pageToken ? `&nextPageToken=${encodeURIComponent(pageToken)}` : ""}`);
+    issues.push(...page.issues);
+    pageToken = page.nextPageToken ?? "";
+  } while (pageToken);
+  return issues.map(toCard);
 }
 
 export default class Jira extends View {
@@ -115,7 +147,7 @@ export default class Jira extends View {
     cx.spawn(async (cx) => {
       try {
         this.config = await readConfig();
-        this.cards = await searchIssues();
+        this.cards = await searchIssues(this.config);
         this.details.clear();
         if (this.isShowingDetails && this.detailKey) this.loadDetails(cx, this.detailKey);
         for (const column of columns(this.cards)) if (!this.scrolls.has(column.name)) this.scrolls.set(column.name, VirtualListScrollHandle.new());
@@ -200,9 +232,8 @@ export default class Jira extends View {
     this.details.set(key, { isLoading: true });
     cx.spawn(async (cx) => {
       try {
-        const r = await exec("acli", ["jira", "workitem", "view", key, "--json", "--fields", DETAIL_FIELDS.join(",")]);
-        if (r.code !== 0 || !r.stdout.trim().startsWith("{")) throw new Error((r.stderr || r.stdout).trim().replace(/^✗ Error: /, "") || `acli exit ${r.code}`);
-        this.details.set(key, { issue: toDetails(JSON.parse(r.stdout)) });
+        const issue = await jira(this.config, `issue/${encodeURIComponent(key)}?fields=${DETAIL_FIELDS.join(",")}`);
+        this.details.set(key, { issue: toDetails(issue) });
       } catch (error) {
         this.details.set(key, { error: `Could not load ${key}: ${error.message ?? error}` });
       }

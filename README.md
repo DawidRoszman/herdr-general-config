@@ -49,7 +49,7 @@ to the layout. Your own settings, theme and layouts stay as they are; `cmd-shift
 | Pull requests, multirepo | `gh` (logged in), `git`, `python3` | every machine with projects |
 | Coloured diffs (optional) | [`delta`](https://github.com/dandavison/delta) | this computer |
 | Walkthrough | Claude Code (`claude`, logged in) | this computer |
-| Jira | Atlassian's `acli` (`acli jira auth login --web`) | this computer |
+| Jira | An [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens) as `ATLASSIAN_API_KEY=` in `~/.profile` | this computer |
 | Browser | Chrome or Chromium, Node.js | each machine you browse from |
 
 On Windows, install [Git for Windows](https://gitforwindows.org) with its `usr\bin` on `PATH`
@@ -61,7 +61,8 @@ and the browser run there over ssh; nothing needs installing on them but the pro
 ### Your own settings
 
 - **Jira:** copy `mods/jira/config.example.json` to `mods/jira/config.json` and fill in your
-  Atlassian site, your project keys and, for each, the multirepo project it starts tasks in
+  Atlassian site, the email of the account the API token belongs to, your project keys and, for
+  each, the multirepo project it starts tasks in
   (`machine`: a Herdr machine name, or null for this computer; `root`: the project's folder; a
   list of them when it's checked out on several computers, the first starting tasks).
   `statusStages` names your statuses `todo`, `progress`, `review` or `testing`, for the warnings.

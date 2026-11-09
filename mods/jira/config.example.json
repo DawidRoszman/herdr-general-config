@@ -1,4 +1,5 @@
 {
+  "email": "you@your-company.com",
   "site": "your-company.atlassian.net",
   "projects": {
     "PROJ": {
