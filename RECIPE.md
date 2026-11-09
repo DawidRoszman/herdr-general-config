@@ -16,7 +16,7 @@ Left to right:
 - **Work column**: a 40px tab bar (`t3-tabs`, then `t3-actions`' Add action, then `t3-panels`:
   Files, Changes, Pull requests toggles and a notification bell with an unread count), the shown
   tab's panes framed with `t3-pane` headers, and on the right a hidden 368px **panel** column whose
-  `panel-body` stack holds `files`, `changes` (`changes-multi`) and `prs` (the PR monitor).
+  `panel-body` stack holds `files` (`t3-files`), `changes` (`changes-multi`) and `prs` (the PR monitor).
 - Two zero-width blocks that draw nothing: `walkthrough-watch`, and `accounts-watch`
   (`status-accounts` with `{ publish: true }`), which finds each Claude agent's account for the
   chips in pane headers, Agents and Inbox.
