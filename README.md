@@ -7,7 +7,8 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
 
 - **Pull requests** in a side panel, with a review tab per branch across every repo of a
   multirepo project: overview, files (GitHub-style diff), checks, commits, approve, request
-  changes, merge, reviewers, GitHub stacks. `cmd-shift-g` opens the PR of the space you're in.
+  changes, merge, reviewers, GitHub stacks. `cmd-shift-g` opens the PR of the space you're in;
+  a review tab reloads whenever you come back to it.
 - **Multirepo projects** (`mr`, `cmd-shift-m`): tasks are one branch across several repos,
   checked out together as worktrees; task spaces sit under their project's space in the sidebar.
 - **Walkthrough** (`cmd-shift-k`, or `w` in a PR review): Claude explains a diff step by step,
@@ -22,7 +23,7 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
   for the Claude Code account it really runs as (work or personal, from its `CLAUDE_CONFIG_DIR`).
 - **Checkouts from PRs:** `g` in a PR review or the PR list opens the branch's multirepo task or
   worktree in a space, making it when missing.
-- **Jira** board (`cmd-shift-j`), a **browser** pane shared with your agents (`cmd-shift-i`),
+- **Jira** board (`cmd-shift-j`) whose status columns drag into your own order, a **browser** pane shared with your agents (`cmd-shift-i`),
   **Blueprint** flowcharts, **worktree** dialogs, **port forwarding**, a **command palette**
   (`cmd-shift-p`).
 

@@ -121,19 +121,19 @@ export async function openBranchCheckout({ machine, project, branch, isRepo, rep
   openOverlay({ mod: "wt-dialog", kind: "dialog", width: 460, height: 280, props: { folder: project, machine, branch, action: "new" } });
 }
 
-// The branch's review tab: the one already open in any space (it goes there), else a new one in the
-// project's space (projectSpace: name is the project's or repo's name), else in the shown space.
-export async function openReview(machine, project, branch, isRepo = false, name = "", branches = [branch]) {
+// The branch's review tab open in any space (review tabs publish theirs), or undefined.
+function openReviewTab(machine, project, branch) {
   const key = reviewKey(machine, project, branch);
   const published = shared(OPEN_REVIEWS) ?? {};
-  for (const space of spaces()) {
-    const open = space.tabs.find((t) => published[t.id] === key);
-    if (open) {
-      run("space.select", { id: space.id });
-      run("tab.select", { id: open.id });
-      return;
-    }
-  }
+  return spaces().flatMap((s) => s.tabs).find((t) => published[t.id] === key);
+}
+
+// The branch's review tab: the one already open in any space (tab.select goes to its space too), else a
+// new one in the project's space (projectSpace: name is the project's or repo's name), else in the shown space.
+export async function openReview(machine, project, branch, isRepo = false, name = "", branches = [branch]) {
+  const open = openReviewTab(machine, project, branch);
+  if (open) return run("tab.select", { id: open.id });
+  const published = shared(OPEN_REVIEWS) ?? {};
   const tab = reviewTab(machine, project, branch, isRepo, branches);
   const checkout = isRepo ? await checkoutOf(machine, project, branch) : null;
   const home = projectSpace(spaces(), { machine, root: project, name, branch, checkout }) ?? spaces().find((s) => s.id === focused()?.space);
@@ -145,8 +145,11 @@ export async function openReview(machine, project, branch, isRepo = false, name 
   else run("tab.new", { ...tab, ...(home ? { space: home.id } : {}) });
 }
 
-// The command that opens a PR's review in its project's space (for a notification's action).
+// The command that opens a PR's review (a notification's action): its open tab, as it is when the
+// notification goes out, else a new one in its project's space.
 export function reviewCommand(machine, project, branch, isRepo = false, name = "") {
+  const open = openReviewTab(machine, project, branch);
+  if (open) return { name: "tab.select", args: { id: open.id } };
   const home = projectSpace(spaces(), { machine, root: project, name, branch });
   return { name: "tab.new", args: { ...reviewTab(machine, project, branch, isRepo), ...(home ? { space: home.id } : {}) } };
 }

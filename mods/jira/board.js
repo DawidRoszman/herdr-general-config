@@ -36,6 +36,21 @@ export function columns(cards) {
     .map((column) => ({ ...column, cards: column.cards.sort((a, b) => rank(a.priority) - rank(b.priority) || b.updated.localeCompare(a.updated)) }));
 }
 
+// The columns in the order the person dragged them into (status names); a status not in it yet
+// goes after them, where columns() put it.
+export function inOrder(board, order) {
+  const at = (name) => (order.includes(name) ? order.indexOf(name) : order.length);
+  return [...board].sort((a, b) => at(a.name) - at(b.name));
+}
+
+// The order once `from` is dropped on `to`, among the shown columns: past it going right, before it
+// going left, as a tab lands. Statuses not shown now keep their place after them.
+export function movedOrder(shown, order, from, to) {
+  const names = shown.filter((name) => name !== from);
+  names.splice(names.indexOf(to) + (shown.indexOf(from) < shown.indexOf(to) ? 1 : 0), 0, from);
+  return [...names, ...order.filter((name) => !shown.includes(name))];
+}
+
 // SHOP-110 "Search filters" -> feat/SHOP-110-search-filters (fix/ for bugs), as mr titles PRs from it.
 export function branchFor(card) {
   const ascii = card.summary.replace(/[łŁ]/g, "l").normalize("NFD").replace(/[̀-ͯ]/g, "");

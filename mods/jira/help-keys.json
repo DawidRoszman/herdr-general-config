@@ -5,6 +5,7 @@
       "sections": [
         { "title": "Board", "rows": [
           ["h / l", "previous / next column"],
+          ["shift-h / shift-l", "move the column left / right (or drag its header); the order is kept"],
           ["j / k", "next / previous issue"],
           ["click / enter", "details of the issue (j/k and h/l keep browsing, the panel follows)"],
           ["esc", "close the details"],

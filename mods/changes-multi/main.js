@@ -124,6 +124,8 @@ export default class Changes extends View {
     // Expand all: every shown file's diff stacked under its header, instead of the picked file's.
     this.isExpanded = localStorage.getItem("changes.expanded") === "1";
     this.diffCache = new Map(); // diffSignature(file) -> { shown, rows }; a changed file gets a new signature
+    // root|rel -> the file's last diff: shown while a changed file's new one loads, so a refresh never blanks it
+    this.lastDiffs = new Map();
     this.cacheVersion = 0; // counts cache writes, so the stacked rows are rebuilt only then
     this.stacked = null; // { key, rows, heights, starts, width }: stackedRows()'s last answer
     this.isLoadingAll = false;
@@ -170,7 +172,7 @@ export default class Changes extends View {
     const { cwd, on } = location(), context = key();
     if (context !== this.context) {
       this.context = context; this.root = null; this.files = []; this.open = null; this.repoFilter = "";
-      this.diffCache.clear(); this.cacheVersion++;
+      this.diffCache.clear(); this.lastDiffs.clear(); this.cacheVersion++;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note = null; this.watched = null; this.closed = false; this.limited = false;
     }
     if (!cwd) return;
@@ -206,6 +208,8 @@ export default class Changes extends View {
         // (an untracked file keeps its signature while it is edited).
         const signatures = new Set(this.files.map(diffSignature));
         for (const signature of this.diffCache.keys()) if (!signatures.has(signature)) this.diffCache.delete(signature);
+        const paths = new Set(this.files.map((f) => `${f.root}|${f.rel}`));
+        for (const path of this.lastDiffs.keys()) if (!paths.has(path)) this.lastDiffs.delete(path);
         const openFile = this.files.find((f) => f.path === this.open);
         if (this.isExpanded && openFile) { this.diffCache.delete(diffSignature(openFile)); this.cacheVersion++; }
         if (this.open && !this.isExpanded) {
@@ -228,7 +232,7 @@ export default class Changes extends View {
   // Another view, or Branch's base: its files and diffs are another list.
   showView(cx) {
     this.files = []; this.open = null; this.closed = false; this.note = null; this.error = null; this.bases = [];
-    this.setLines([]); this.diffCache.clear(); this.cacheVersion++;
+    this.setLines([]); this.diffCache.clear(); this.lastDiffs.clear(); this.cacheVersion++;
     this.refresh(cx);
     cx.notify();
   }
@@ -342,6 +346,7 @@ export default class Changes extends View {
           try { diff = await this.diffOf(file); }
           catch (e) { diff = { shown: [], rows: [{ kind: "", text: `Cannot preview this diff (too large or unreadable): ${e}` }] }; }
           this.diffCache.set(signature, diff);
+          this.lastDiffs.set(`${file.root}|${file.rel}`, diff);
           this.cacheVersion++;
           cx.notify();
         }
@@ -361,7 +366,7 @@ export default class Changes extends View {
       const isFolded = this.folded.has(f.path);
       rows.push({ kind: "file", text: f.path, status: f.status, add: f.add, del: f.del, path: f.path, isFolded });
       if (isFolded) continue;
-      const diff = this.diffCache.get(diffSignature(f));
+      const diff = this.diffCache.get(diffSignature(f)) ?? this.lastDiffs.get(`${f.root}|${f.rel}`);
       if (!diff) { rows.push({ kind: "", text: "Loading…", path: f.path }); continue; }
       for (const row of diff.rows) rows.push({ ...row, path: f.path });
       width = Math.max(width, ...diff.shown.map((line) => line.length * 7 + 50));

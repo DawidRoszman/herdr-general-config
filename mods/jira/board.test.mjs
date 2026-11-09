@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { toCard, columns, branchFor, matches, isShown, toDetails } from "./board.js";
+import { toCard, columns, branchFor, matches, isShown, toDetails, inOrder, movedOrder } from "./board.js";
 import { adfToMarkdown } from "./adf.js";
 
 const issue = (key, status, category, priority = "Medium", updated = "2026-11-01T00:00:00.000+0000", type = "Story") => ({
@@ -77,3 +77,10 @@ assert.deepEqual(details.links, [{ relation: "is blocked by", key: "SHOP-1", sum
 assert.equal(details.description, "d");
 assert.deepEqual(details.comments, [{ id: "1", author: "Ala", created: "2026-11-05T10:00:00.000+0100", body: "c" }]);
 console.log("board.js ok");
+
+// Columns in the dragged order; a status new to it goes after.
+assert.deepEqual(inOrder(board, ["In Progress", "To Do"]).map((c) => c.name), ["In Progress", "To Do", "Code Review"]);
+assert.deepEqual(inOrder(board, []).map((c) => c.name), ["To Do", "Code Review", "In Progress"]);
+const shown = ["To Do", "Code Review", "In Progress"];
+assert.deepEqual(movedOrder(shown, ["Blocked"], "To Do", "In Progress"), ["Code Review", "In Progress", "To Do", "Blocked"], "right: past the target");
+assert.deepEqual(movedOrder(shown, [], "In Progress", "To Do"), ["In Progress", "To Do", "Code Review"], "left: before it");

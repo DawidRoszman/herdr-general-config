@@ -37,7 +37,7 @@ export class Review {
     this.handle.focus();
     this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
     // focus() can't run in render, so a light timer does the claiming (no redraw).
-    cx.timer.every(400, (cx) => this.claimKeyboard(cx));
+    cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.refreshOnEnter(cx); });
     cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
     cx.timer.every(10000, (cx) => this.retryLostLoad(cx));
     this.isAutoRefreshing = false;
@@ -174,7 +174,19 @@ export class Review {
   // this tab shows, so open tabs in the background don't each poll GitHub; a hidden one catches up
   // at its first tick once shown. Diffs are kept unless a head commit moved.
   autoRefresh(cx) {
-    if (!this.data?.prs.some(isSettling) || this.isBusy || this.pendingChanges || this.isAutoRefreshing || !this.isTabShown()) return;
+    if (this.data?.prs.some(isSettling)) this.quietRefresh(cx);
+  }
+
+  // Coming back to the tab (switched to it, or to its space) reloads quietly: it may be stale.
+  refreshOnEnter(cx) {
+    const isShown = this.isTabShown();
+    const isEntered = isShown && !this.wasTabShown;
+    this.wasTabShown = isShown;
+    if (isEntered) this.quietRefresh(cx);
+  }
+
+  quietRefresh(cx) {
+    if (!this.data || this.isBusy || this.pendingChanges || this.isAutoRefreshing || !this.isTabShown()) return;
     this.isAutoRefreshing = true;
     cx.spawn(async (cx) => {
       try {

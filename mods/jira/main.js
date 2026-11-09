@@ -7,8 +7,10 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input, TextView } from "gpui-base";
-import { theme, exec, run, appHome, readTextFile, openOverlay, panes, spaces } from "herdr";
-import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown } from "./board.js";
+import { theme, exec, run, appHome, readTextFile, openOverlay, panes, spaces, settings } from "herdr";
+import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown, inOrder, movedOrder } from "./board.js";
+
+const ORDER_KEY = "columns.order"; // localStorage: the status names in the order they were dragged into
 
 const REFRESH_MS = 5 * 60000;
 const CARD_HEIGHT = 90;
@@ -79,6 +81,10 @@ export default class Jira extends View {
     this.config = null;
     this.column = 0;
     this.at = 0;
+    this.order = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
+    // A column's header pressed (its status) and, once it moved 6px, the column it's over: dragged as a tab is.
+    this.pressedColumn = null;
+    this.overColumn = null;
     this.error = "";
     this.isLoading = false;
     this.loadedAt = null;
@@ -121,7 +127,28 @@ export default class Jira extends View {
 
   board() {
     const hidden = this.config?.hiddenStatuses ?? [];
-    return columns((this.cards ?? []).filter((card) => isShown(card, hidden, this.isShowingHidden) && matches(card, this.query)));
+    return inOrder(columns((this.cards ?? []).filter((card) => isShown(card, hidden, this.isShowingHidden) && matches(card, this.query))), this.order);
+  }
+
+  // Drops column `from` on `to`; the selection stays on the column it was on.
+  reorder(from, to) {
+    const board = this.board(), selected = board[this.column]?.name;
+    if (from === to || !board.some((c) => c.name === from) || !board.some((c) => c.name === to)) return;
+    this.order = movedOrder(board.map((c) => c.name), this.order, from, to);
+    localStorage.setItem(ORDER_KEY, JSON.stringify(this.order));
+    this.column = Math.max(0, this.board().findIndex((c) => c.name === selected));
+  }
+
+  // shift-h / shift-l: the selected column one place left or right.
+  shiftColumn(step) {
+    const board = this.board(), from = board[this.column]?.name, to = board[this.column + step]?.name;
+    if (from && to) this.reorder(from, to);
+  }
+
+  endDrag(cx) {
+    if (this.pressedColumn === null) return;
+    this.pressedColumn = this.overColumn = null;
+    cx.notify();
   }
 
   hiddenCount() {
@@ -213,6 +240,8 @@ export default class Jira extends View {
       cx.timer.after(0, () => this.input.focus());
     } else if (stroke === "j" || stroke === "down") this.move(1);
     else if (stroke === "k" || stroke === "up") this.move(-1);
+    else if (stroke === "shift-h") this.shiftColumn(-1);
+    else if (stroke === "shift-l") this.shiftColumn(1);
     else if (stroke === "h" || stroke === "left") this.moveColumn(-1);
     else if (stroke === "l" || stroke === "right") this.moveColumn(1);
     else if (stroke === "enter") this.showDetails(cx);
@@ -326,6 +355,9 @@ export default class Jira extends View {
     const isEmpty = this.cards !== undefined && !board.length;
     return v_flex().id("jira").on_size_change((_size, cx) => this.learnTab(cx)).track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .on_mouse_down("left", () => this.handle.focus())
+      // A release anywhere ends a drag; Herdr reports none outside the pane, so leaving it does too.
+      .on_mouse_up("left", (_e, cx) => this.endDrag(cx))
+      .on_hover((isOver, cx) => { if (!isOver) this.endDrag(cx); })
       .size_full().min_h(0).relative().bg(t.surface).text_size(13).text_color(t.foreground)
       .child(h_flex().flex_none().px(16).h(48).gap(10).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child(title))
@@ -356,8 +388,25 @@ export default class Jira extends View {
               })
               .size_full();
             const scroll = this.scrolls.get(column.name);
-            return v_flex().flex_1().min_w(260).max_w(420).h_full().gap(8)
-              .child(h_flex().flex_none().gap(6).items_center().px(2)
+            const pressedAt = board.findIndex((c) => c.name === this.pressedColumn);
+            const isDropTarget = pressedAt >= 0 && this.overColumn === column.name && pressedAt !== columnIndex;
+            return v_flex().id(`jira-column-${column.name}`).relative().flex_1().min_w(260).max_w(420).h_full().gap(8)
+              // Dragged as a tab is: the source fades, a line on the side it lands shows where.
+              .when(pressedAt === columnIndex && this.overColumn !== null && this.overColumn !== column.name, (el) => el.opacity(0.5))
+              .when(isDropTarget, (el) => el.child(div().absolute().top(0).bottom(0).w(2).rounded(1).bg(t.accent)
+                .when(pressedAt < columnIndex, (line) => line.right(-7)).when(pressedAt > columnIndex, (line) => line.left(-7))))
+              .on_mouse_move((e, cx) => {
+                if (this.pressedColumn === null || this.overColumn === column.name) return;
+                if (this.overColumn === null && Math.hypot(e.position.x - this.pressAt.x, e.position.y - this.pressAt.y) < 6 * settings().zoom) return;
+                this.overColumn = column.name;
+                cx.notify();
+              })
+              .on_mouse_up("left", (_e, cx) => {
+                if (this.overColumn !== null) this.reorder(this.pressedColumn, this.overColumn);
+                this.endDrag(cx);
+              })
+              .child(h_flex().id(`jira-head-${column.name}`).flex_none().gap(6).items_center().px(2).cursor_pointer()
+                .on_mouse_down("left", (e) => { this.pressedColumn = column.name; this.overColumn = null; this.pressAt = e.position; })
                 .child(div().text_size(12).font_semibold().text_color(isColumnSelected ? t.foreground : t.muted).child(column.name))
                 .child(div().text_size(11).text_color(t.dim).child(String(column.cards.length))))
               .child(v_flex().relative().flex_1().min_h(0)
@@ -367,7 +416,7 @@ export default class Jira extends View {
           .when(this.isShowingDetails && Boolean(this.detailKey), (el) => el.child(this.detailsPanel(t)))))
       .when(Boolean(this.error), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.blocked).child(this.error)))
       .child(div().flex_none().px(16).py(8).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
-        .child("? keys · h/l column · j/k issue · click/↵ details · o open in Jira · s start work (multirepo task) · a hidden statuses · / search · r refresh"))
+        .child("? keys · h/l column · drag a header or H/L to move it · j/k issue · click/↵ details · o open in Jira · s start work (multirepo task) · a hidden statuses · / search · r refresh"))
       .when(this.isShowingKeys, (el) => el.child(keyHelp("jira-keys", "Jira board keys", this.keySections, t)));
   }
 }
