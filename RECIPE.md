@@ -29,7 +29,9 @@ Left to right:
   with Lists, to the nth space.
 - `cmd-alt-f` / `cmd-alt-c` / `cmd-alt-p` toggle the panel on Files / Changes / Pull requests (the
   tab bar buttons do the same); `cmd-n` is T3's New space (asks the machine), `cmd-shift-t` its
-  New tab (asks the space), `cmd-t` a tab here. New tabs go to the end of their space.
+  New tab (asks the space), `cmd-t` a tab here. New tabs go to the end of their space; a restart keeps
+  each space's tab order.
+- `cmd-alt-g` opens the focused pane's repo on GitHub (its `origin`, ssh aliases for github.com included).
 - The bell opens the notification history; a second click closes it. Blocked agents, PR changes,
   finished walkthroughs, Blueprint and worktree messages are kept there.
 - PR monitor: open and recently closed PRs grouped by branch topic; a click opens the branch's

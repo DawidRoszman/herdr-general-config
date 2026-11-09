@@ -13,7 +13,8 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
 - **Walkthrough** (`cmd-shift-k`, or `w` in a PR review): Claude explains a diff step by step,
   a PR or every linked PR of a multirepo branch read as one change.
 - **Side panels** for Files, Changes (multirepo-aware) and Pull requests, toggled from the tab bar
-  or `cmd-alt-f` / `cmd-alt-c` / `cmd-alt-p`, and a notification bell with a history.
+  or `cmd-alt-f` / `cmd-alt-c` / `cmd-alt-p`, and a notification bell with a history. `cmd-alt-g` opens
+  the focused pane's repo on GitHub.
 - **Inbox** with machine names on each card and `ctrl-1…9` to jump between its items.
 - **Agents you can tell apart:** each is named after its branch or multirepo task, with a chip
   for the Claude Code account it really runs as (work or personal, from its `CLAUDE_CONFIG_DIR`).

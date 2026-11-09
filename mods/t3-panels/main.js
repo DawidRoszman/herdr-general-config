@@ -3,14 +3,16 @@
 // and the notification bell. The work layout's status bar keeps the bell's history there; this
 // layout has no status bar, so this mod does: blocked agents go into it, as status-accounts does.
 // Its block is always shown, so it also takes the layout's keys (keys.json `t3-panels.<command>`):
-// files, changes, prs (toggle that panel), new-space and new-tab (T3's pickers, as the sidebar's buttons).
+// files, changes, prs (toggle that panel), new-space and new-tab (T3's pickers, as the sidebar's buttons),
+// github (the focused pane's repo on GitHub, github.js).
 // And, as the work layout's tab bar does, it moves a new tab to the end of its space (tab-order.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, keys, layout, machines, nextCommand, openOverlay, run, spaces, theme } from "herdr";
+import { agents, keys, layout, machines, nextCommand, notify, openOverlay, run, spaces, theme } from "herdr";
 import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
 import { newTabsToEnd } from "./tab-order.js";
+import { openRepoOnGitHub } from "./github.js";
 
 const PANELS = [
   { id: "files", label: "Files", icon: "mods/files/file.svg" },
@@ -54,6 +56,7 @@ const COMMANDS = {
   ...Object.fromEntries(PANELS.map(({ id }) => [id, () => toggle(id, isPanelShown(id))])),
   "new-space": newSpace,
   "new-tab": () => run("mod.open", { name: NEW_MENU }), // pick the space, then a new tab there
+  github: (cx) => openRepoOnGitHub(cx).catch((error) => notify({ title: "Open on GitHub", body: String(error.message ?? error), level: "error" })),
 };
 
 function toggle(id, isShown) {
@@ -68,7 +71,7 @@ export default class T3Panels extends View {
     cx.timer.every(1500, () => { this.agentStatuses = logAgentAlerts(agents(), this.agentStatuses); });
     cx.spawn(async (cx) => {
       for (;;) {
-        COMMANDS[String(await nextCommand()).replace(/^t3-panels\./, "")]?.();
+        COMMANDS[String(await nextCommand()).replace(/^t3-panels\./, "")]?.(cx);
         cx.notify();
       }
     });
