@@ -9,7 +9,7 @@
 //   preferences.md         optional: the reader's own wishes, added to every prompt
 
 import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
-import { loadSections, sourceKey, describe, git, worthReading, ghError, turnsKey, snapshotTree } from "./lib/sources.js";
+import { loadSections, sourceKey, describe, git, worthReading, ghError, runGh, turnsKey, snapshotTree } from "./lib/sources.js";
 import { buildDigest } from "./lib/digest.js";
 import { buildPrompt } from "./lib/prompt.js";
 import { schemaFor, normalize, VERSION } from "./lib/walkthrough.js";
@@ -71,8 +71,7 @@ export async function postComment(top, number, text) {
   if (text.length > MAX_COMMENT_CHARS) throw new Error(`It's too long for a GitHub comment (${text.length.toLocaleString("en")} characters; the limit is ${MAX_COMMENT_CHARS.toLocaleString("en")}).`);
   const path = `${dataDir()}/pr-comment.md`;
   await write(path, text);
-  let r;
-  try { r = await exec("gh", ["pr", "comment", String(number), "--body-file", path], { cwd: top }); } catch { throw new Error("The GitHub CLI (gh) isn't installed."); }
+  const r = await runGh(exec, top, ["pr", "comment", String(number), "--body-file", path]);
   if (r.code !== 0) throw new Error(ghError(r.stderr || r.stdout));
   return (r.stdout ?? "").trim().split("\n").pop() ?? "";
 }

@@ -4,18 +4,19 @@
 // layout has no status bar, so this mod does: blocked agents go into it, as status-accounts does.
 // Its block is always shown, so it also takes the layout's keys (keys.json `t3-panels.<command>`):
 // files, changes, prs (toggle that panel), new-space and new-tab (T3's pickers, as the sidebar's buttons),
-// github (the focused pane's repo on GitHub, github.js).
+// github (the focused pane's repo on GitHub, github.js), reveal (its folder in Finder, reveal.js).
 // And, as the work layout's tab bar does, it moves a new tab to the end of its space (tab-order.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, keys, layout, machines, nextCommand, notify, openOverlay, run, spaces, theme } from "herdr";
+import { agents, focused, keys, layout, machines, nextCommand, notify, openOverlay, run, spaces, theme } from "herdr";
 import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
 import { newTabsToEnd } from "./tab-order.js";
 import { openRepoOnGitHub } from "./github.js";
+import { revealInFileManager } from "./reveal.js";
 
 const PANELS = [
-  { id: "files", label: "Files", icon: "mods/files/file.svg" },
+  { id: "files", label: "Files", icon: "mods/t3-files/file.svg" },
   { id: "changes", label: "Changes", icon: "mods/changes/changes.svg" },
   { id: "prs", label: "Pull requests", icon: "mods/prs/icons/pull-request.svg" },
 ];
@@ -56,6 +57,10 @@ const COMMANDS = {
   ...Object.fromEntries(PANELS.map(({ id }) => [id, () => toggle(id, isPanelShown(id))])),
   "new-space": newSpace,
   "new-tab": () => run("mod.open", { name: NEW_MENU }), // pick the space, then a new tab there
+  reveal: () => {
+    const at = focused();
+    revealInFileManager(at?.cwd, spaces().find((s) => s.id === at?.space)?.machine ?? null);
+  },
   github: (cx) => openRepoOnGitHub(cx).catch((error) => notify({ title: "Open on GitHub", body: String(error.message ?? error), level: "error" })),
 };
 

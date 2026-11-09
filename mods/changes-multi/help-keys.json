@@ -10,6 +10,10 @@
           ["/", "filter files by path; esc leaves the box, esc again clears it"],
           ["r", "refresh"]
         ] },
+        { "title": "View", "rows": [
+          ["m", "next view: All (uncommitted) · Unstaged · Staged · Branch (all the branch's work against its base)"],
+          ["b", "Branch, and type its base (enter applies; empty is each repo's own base)"]
+        ] },
         { "title": "Diff", "rows": [
           ["ctrl-d / ctrl-u", "half a page down / up"],
           ["shift-j / shift-k", "one line down / up"],

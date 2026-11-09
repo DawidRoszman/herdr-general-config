@@ -52,6 +52,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -357,10 +358,11 @@ def detail_pr(node: dict, name: str, slug: str) -> dict:
 
 
 def worktree_on_branch(porcelain: str, branch: str) -> str | None:
-    """Where `git worktree list --porcelain` says branch is checked out, if anywhere."""
+    """Where `git worktree list --porcelain` says branch is checked out, if anywhere. Not a worktree
+    whose folder is gone (prunable): T3 Code's, say, deleted without git being told."""
     for block in porcelain.strip().split("\n\n"):
         lines = block.splitlines()
-        if f"branch refs/heads/{branch}" in lines:
+        if f"branch refs/heads/{branch}" in lines and not any(line.startswith("prunable") for line in lines):
             return next(line.removeprefix("worktree ") for line in lines if line.startswith("worktree "))
     return None
 
@@ -540,6 +542,8 @@ def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None
     if target.is_symlink():
         target.unlink()
     git(repo, "fetch", "--quiet", "origin")
+    # A worktree whose folder is gone still holds its branch: git won't check it out again until told.
+    git(repo, "worktree", "prune")
     branch = repo_branch(repo, task.branch, chosen)
     if branch != task.branch:
         task.branches[name] = branch
@@ -551,6 +555,10 @@ def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None
         print(f"{name}: {branch} is already checked out at {existing}; linked to it", flush=True)
     elif has_ref(repo, f"refs/heads/{branch}"):
         git(repo, "worktree", "add", str(target), branch)
+        # A local branch left from an earlier checkout can be behind origin's: caught up when it has
+        # nothing of its own (a branch that went its own way stays as it is).
+        if has_ref(repo, f"refs/remotes/origin/{branch}"):
+            git(target, "merge", "--ff-only", "--quiet", f"origin/{branch}", check=False)
     elif has_ref(repo, f"refs/remotes/origin/{branch}"):
         git(repo, "worktree", "add", "--track", "-b", branch, str(target), f"origin/{branch}")
     else:
@@ -635,6 +643,21 @@ def cmd_manifest(args) -> None:
     print((current_project(args.project).root / PROJECT_FILE).read_text(), end="")
 
 
+def link_project_env(task_root: Path, project_root: Path) -> None:
+    """A task folder sits under ~/.herdr, outside its project's, so the direnv .envrc that applies to the
+    project (a GH_TOKEN, a CLAUDE_CONFIG_DIR for a work account) doesn't reach the task's shells and agents.
+    An .envrc of its own loads that one. Nothing without direnv or a project .envrc, or when it has one."""
+    envrc = next((folder / ".envrc" for folder in [project_root, *project_root.parents] if (folder / ".envrc").is_file()), None)
+    target = task_root / ".envrc"
+    if envrc is None or target.exists() or not shutil.which("direnv"):
+        return
+    target.write_text(f"# Written by mr: this task is outside {project_root}, so it loads the environment there.\n"
+                      f"source_env {shlex.quote(str(envrc))}\n")
+    allowed = subprocess.run(["direnv", "allow", str(target)], capture_output=True, text=True)
+    if allowed.returncode != 0:
+        print(f"mr: direnv allow {target}: {allowed.stderr.strip()}", file=sys.stderr)
+
+
 def cmd_new(args) -> None:
     project = current_project(args.project)
     names = match_repos(args.repos, [r["name"] for r in project.repos])
@@ -653,6 +676,7 @@ def cmd_new(args) -> None:
         if task.on and all(task.base(name) != task.on for name in names):
             raise MrError(f"None of {', '.join(names)} has a branch {task.on} to stack on.")
         task.save()
+        link_project_env(root, project.root)
     except MrError:
         # Leave nothing half made: worktrees already added stay registered in their repos.
         for name in names:
@@ -668,6 +692,7 @@ def cmd_add(args) -> None:
     names = [n for n in match_repos(args.repos, [r["name"] for r in task.project.repos]) if n not in task.repos]
     if args.branch and len(names) != 1:
         raise MrError("--branch is for one repo at a time.")
+    link_project_env(task.root, task.project.root)  # tasks made before mr wrote one get it here
     for name in names:
         checkout_task_repo(task, name, args.branch)
         task.repos.append(name)
@@ -827,6 +852,7 @@ def cmd_rm(args) -> None:
         if entry.is_symlink():
             entry.unlink()
     (task.root / TASK_FILE).unlink()
+    (task.root / ".envrc").unlink(missing_ok=True)  # link_project_env's
     task.root.rmdir()  # fails loudly if something unexpected is still there
     print(f"removed {task.root}")
 

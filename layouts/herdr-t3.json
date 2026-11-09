@@ -217,7 +217,7 @@
                       "id": "files",
                       "type": "block",
                       "content": {
-                        "mod": "files"
+                        "mod": "t3-files"
                       }
                     },
                     {

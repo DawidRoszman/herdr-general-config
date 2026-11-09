@@ -109,6 +109,7 @@
     "cmd-alt-c": "t3-panels.changes",
     "cmd-alt-p": "t3-panels.prs",
     "cmd-alt-g": "t3-panels.github",
+    "cmd-alt-r": "t3-panels.reveal",
     "cmd-n": "t3-panels.new-space",
     "cmd-shift-t": "t3-panels.new-tab"
   }

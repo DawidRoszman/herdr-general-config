@@ -377,10 +377,21 @@ export async function pullRequestSections(exec, prs) {
 
 /** Runs the GitHub CLI; its failures come back as one readable sentence. */
 async function gh(exec, top, args) {
-  let r;
-  try { r = await exec("gh", args, { cwd: top }); } catch { throw new Error(GH_MISSING); }
+  const r = await runGh(exec, top, args);
   if (r.code !== 0) throw new Error(ghError(r.stderr || r.stdout));
   return r.stdout ?? "";
+}
+
+/**
+ * gh in the repo's direnv environment, as a shell there has it: a work repo's .envrc gives the account
+ * that can see it (GH_TOKEN), and Herdr's commands don't load it. Plain gh without direnv.
+ */
+export async function runGh(exec, top, args) {
+  try {
+    const r = await exec("direnv", ["exec", top, "gh", ...args], { cwd: top });
+    if (r.code !== 127) return r; // 127: direnv is there, gh isn't
+  } catch { /* no direnv */ }
+  try { return await exec("gh", args, { cwd: top }); } catch { throw new Error(GH_MISSING); }
 }
 
 const GH_MISSING = "Pull requests are read with the GitHub CLI (gh), and it isn't installed. Install it, then run gh auth login.";

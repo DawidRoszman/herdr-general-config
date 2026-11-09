@@ -18,6 +18,9 @@ const DIFF_ROW_HEIGHT = 20;
 const FILE_HEADER_HEIGHT = 34;
 const AUTO_REFRESH_MS = 30000;
 const REFRESH_FAILED = "Could not refresh";
+// A first load still unanswered after this is lost (a command started as Herdr came up never reports
+// back): the shown tab starts it again rather than say "Loading" for ever.
+const LOST_LOAD_MS = 90000;
 const COMPOSE = {
   approve: { label: "Approve", hint: "optional comment", isBodyRequired: false },
   "request-changes": { label: "Request changes", hint: "what has to change", isBodyRequired: true },
@@ -36,6 +39,7 @@ export class Review {
     // focus() can't run in render, so a light timer does the claiming (no redraw).
     cx.timer.every(400, (cx) => this.claimKeyboard(cx));
     cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
+    cx.timer.every(10000, (cx) => this.retryLostLoad(cx));
     this.isAutoRefreshing = false;
     this.scrolls = Object.fromEntries([...TABS, "diff"].map((name) => [name, VirtualListScrollHandle.new()]));
     this.search = new Search({ onChange: () => this.moveTo(0), onSubmit: (cx) => this.openItem(cx) });
@@ -188,6 +192,12 @@ export class Review {
     });
   }
 
+  retryLostLoad(cx) {
+    if (this.data || !this.isBusy || Date.now() - this.busySince < LOST_LOAD_MS || !this.isTabShown()) return;
+    this.isBusy = false;
+    this.act(cx, () => this.load());
+  }
+
   isTabShown() {
     return Boolean(this.ownTab) && spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id === this.ownTab;
   }
@@ -197,6 +207,7 @@ export class Review {
   act(cx, work) {
     if (this.isBusy) return;
     this.isBusy = true;
+    this.busySince = Date.now();
     this.error = "";
     cx.notify();
     cx.spawn(async (cx) => {

@@ -39,41 +39,15 @@ import { addButton, removeButton } from "./setup.js";
 import { newer, installedVersion, checkUpdate, setUpdateCheck, updatePrompt } from "./update.js";
 import { text, pickLang, KEY_ALIASES, LANGS } from "./i18n.js";
 
-// Herdr's zoom scales every px an element is given (w, left, text_size...), but
-// not path geometry, sizes from on_size_change, or pointer positions: those are
-// real px. The drawing works in layout px and converts at those borders with
+// Herdr's zoom scales every px an element is given (w, left, text_size...) and
+// path geometry, but not sizes from on_size_change or pointer positions: those
+// are real px. The drawing works in layout px and converts at those borders with
 // this.zoom, read from settings() once per render, in canvas() (host calls are
 // the slow part of a render), and kept for the handlers in between.
 const zoomOf = (s) => (Number(s?.zoom) > 0 ? Number(s.zoom) : 1);
 
-// PathBuilder with every coordinate, stroke width and dash in layout px. One
-// object per path, not a wrapper per call: a big diagram makes thousands.
-class ScaledPath {
-  constructor(b, k) {
-    this.b = b;
-    this.k = k;
-  }
-  move_to(x, y) { this.b = this.b.move_to(x * this.k, y * this.k); return this; }
-  line_to(x, y) { this.b = this.b.line_to(x * this.k, y * this.k); return this; }
-  cubic_bezier_to(x, y, ax, ay, bx, by) {
-    const k = this.k;
-    this.b = this.b.cubic_bezier_to(x * k, y * k, ax * k, ay * k, bx * k, by * k);
-    return this;
-  }
-  arc_to(rx, ry, rot, large, sweep, x, y) {
-    const k = this.k;
-    this.b = this.b.arc_to(rx * k, ry * k, rot, large, sweep, x * k, y * k);
-    return this;
-  }
-  add_polygon(pts, closed) { this.b = this.b.add_polygon(pts.map(([x, y]) => [x * this.k, y * this.k]), closed); return this; }
-  close() { this.b = this.b.close(); return this; }
-  dash_array(values) { this.b = this.b.dash_array(values.map((v) => v * this.k)); return this; }
-  build() { return this.b.build(); }
-}
-const zpaths = (k) => ({
-  fill: () => new ScaledPath(PathBuilder.fill(), k),
-  stroke: (width) => new ScaledPath(PathBuilder.stroke(width * k), k),
-});
+// Paths in layout px, as elements: Herdr zooms them (it once didn't, and they were scaled here).
+const PATHS = { fill: () => PathBuilder.fill(), stroke: (width) => PathBuilder.stroke(width) };
 
 const MOD = "blueprint";
 const LANG_KEY = "blueprint.lang";
@@ -1709,7 +1683,7 @@ export default class Blueprint extends View {
     const X = (x) => x * z + v.x, Y = (y) => y * z + v.y;
     const sel = this.selected && g.nodes.has(this.selected) ? this.flow(L, this.selected) : null;
     const layer = (path, color) => div().absolute().left(0).top(0).w(W).h(H).child(window.paint_path(path, color));
-    const ZPath = zpaths(this.zoom);
+    const ZPath = PATHS;
     L.id ??= (this.layouts = (this.layouts ?? 0) + 1);
     // On screen, in drawing units, with room for strokes, badges and arrows.
     const m = 24 / z, x0 = -v.x / z - m, x1 = (W - v.x) / z + m, y0 = -v.y / z - m, y1 = (H - v.y) / z + m;

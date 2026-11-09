@@ -86,7 +86,8 @@ export function preferredCopy(copies, spaces, focusedMachine) {
 export function worktreeOf(porcelain, branch) {
   for (const block of String(porcelain).split("\n\n")) {
     const lines = block.split("\n");
-    if (lines.includes(`branch refs/heads/${branch}`)) return lines.find((l) => l.startsWith("worktree "))?.slice(9) ?? null;
+    // Not one whose folder is gone (prunable): git still lists it until pruned.
+    if (lines.includes(`branch refs/heads/${branch}`) && !lines.some((l) => l.startsWith("prunable"))) return lines.find((l) => l.startsWith("worktree "))?.slice(9) ?? null;
   }
   return null;
 }

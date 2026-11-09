@@ -39,6 +39,7 @@ assert.equal(projectSpace(placeSpaces, { machine: null, root: "/Users/me/x", nam
 const porcelain = "worktree /h/webapp/webapp\nHEAD 1\nbranch refs/heads/develop\n\nworktree /h/webapp/webapp.dep\nHEAD 2\nbranch refs/heads/dependabot/x\n";
 assert.equal(worktreeOf(porcelain, "dependabot/x"), "/h/webapp/webapp.dep");
 assert.equal(worktreeOf(porcelain, "nope"), null);
+assert.equal(worktreeOf("worktree /t3/old\nHEAD abc\nbranch refs/heads/feat/z\nprunable gitdir file points to non-existent location", "feat/z"), null);
 assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt" }, { id: "b", machine: "box", folder: "/x/repo.wt/sub" }], "box", "/x/repo.wt").id, "b");
 assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt-other" }], null, "/x/repo.wt"), null);
 const besides = [{ id: "main", machine: "buildbox", folder: "/h/webapp/webapp", branch: "develop" }, { id: "dep", machine: "buildbox", folder: "/h/webapp/webapp.dep", branch: null }];

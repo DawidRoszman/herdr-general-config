@@ -1,7 +1,7 @@
 // A review's pull requests read as one diff: node --test mods/walkthrough/lib/prs.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pullRequestSections, sourceKey, describe } from "./sources.js";
+import { pullRequestSections, sourceKey, describe, runGh } from "./sources.js";
 import { buildDigest } from "./digest.js";
 import { resolveTask } from "./task.js";
 
@@ -53,4 +53,15 @@ test("a toast names the source in a few words", async () => {
   assert.equal(shortLabel({ kind: "prs", prs }, "prs:devbox|/p|feat/x"), "api #3 · web #7");
   assert.equal(shortLabel({ kind: "branch", base: "main", head: "feat/x" }, "/code/app"), "app: feat/x vs main");
   assert.equal(shortLabel({ kind: "uncommitted" }, "/code/app"), "app: uncommitted");
+});
+
+test("gh runs in the repo's direnv environment, plain without direnv", async () => {
+  const calls = [];
+  const withDirenv = async (command, args) => { calls.push([command, ...args]); return { code: 0, stdout: "ok" }; };
+  assert.equal((await runGh(withDirenv, "/r", ["pr", "list"])).stdout, "ok");
+  assert.deepEqual(calls, [["direnv", "exec", "/r", "gh", "pr", "list"]]);
+  calls.length = 0;
+  const noDirenv = async (command, args) => { calls.push([command, ...args]); if (command === "direnv") throw new Error("not found"); return { code: 0 }; };
+  await runGh(noDirenv, "/r", ["pr", "list"]);
+  assert.deepEqual(calls.at(-1), ["gh", "pr", "list"]);
 });

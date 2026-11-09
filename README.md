@@ -14,7 +14,9 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
   a PR or every linked PR of a multirepo branch read as one change.
 - **Side panels** for Files, Changes (multirepo-aware) and Pull requests, toggled from the tab bar
   or `cmd-alt-f` / `cmd-alt-c` / `cmd-alt-p`, and a notification bell with a history. `cmd-alt-g` opens
-  the focused pane's repo on GitHub.
+  the focused pane's repo on GitHub, `cmd-alt-r` its folder in Finder. Changes shows All, Unstaged,
+  Staged or Branch (the branch's work against its base); Files opens what it can't preview in the
+  default app.
 - **Inbox** with machine names on each card and `ctrl-1…9` to jump between its items.
 - **Agents you can tell apart:** each is named after its branch or multirepo task, with a chip
   for the Claude Code account it really runs as (work or personal, from its `CLAUDE_CONFIG_DIR`).
@@ -72,8 +74,8 @@ An agent never overwrites a mod, so adding the layout again would install second
 ## Credits
 
 The T3 layout and `t3-*` mods are [herdr-t3](https://github.com/JinJieBeWater/herdr-t3) by
-JinJieBeWater (Apache-2.0), changed as described above; `t3-panels` is new. `changes-multi` and
-`wt-dialog` start from Herdr's shipped `changes` and `worktree` mods (Apache-2.0). The license is
+JinJieBeWater (Apache-2.0), changed as described above; `t3-panels` is new. `changes-multi`, `t3-files` and
+`wt-dialog` start from Herdr's shipped `changes`, `files` and `worktree` mods (Apache-2.0). The license is
 in [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt). `walkthrough` is
 [herdr-walkthrough](https://github.com/dmazlum/herdr-walkthrough) by dmazlum (MIT), extended
 with pull-request sets and finished-generation toasts. `blueprint` is a fork of

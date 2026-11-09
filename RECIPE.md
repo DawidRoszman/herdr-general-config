@@ -31,7 +31,10 @@ Left to right:
   tab bar buttons do the same); `cmd-n` is T3's New space (asks the machine), `cmd-shift-t` its
   New tab (asks the space), `cmd-t` a tab here. New tabs go to the end of their space; a restart keeps
   each space's tab order.
-- `cmd-alt-g` opens the focused pane's repo on GitHub (its `origin`, ssh aliases for github.com included).
+- `cmd-alt-g` opens the focused pane's repo on GitHub (its `origin`, ssh aliases for github.com included);
+  `cmd-alt-r` opens its folder in Finder (also the Files panel's header button).
+- Changes: All, Unstaged, Staged or Branch (`m` cycles; `b` types Branch's base, else each repo's own).
+- Files (`t3-files`): a file with no text preview offers its default app, and can remember that per extension.
 - The bell opens the notification history; a second click closes it. Blocked agents, PR changes,
   finished walkthroughs, Blueprint and worktree messages are kept there.
 - PR monitor: open and recently closed PRs grouped by branch topic; a click opens the branch's
@@ -52,8 +55,8 @@ Left to right:
   `prs`, `multirepo` (its `mr.py` is streamed to `python3` over ssh on each machine), `mr-pull`,
   `blueprint`, `changes-multi`, `walkthrough`, `notifications`, `jira`, `browser`,
   `command-palette`, `keybinds`, `wt-dialog`, `wt-new`, `wt-open`, `wt-remove`, `port-forward`,
-  `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine).
-- Herdr's shipped mods it uses: `files`, `workspace-status`, `confirm`, `prompt`, `menu`.
+  `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine), `t3-files`.
+- Herdr's shipped mods it uses: `workspace-status`, `confirm`, `prompt`, `menu`.
 - `keys.json`: a `layout:herdr-t3` section and the global keys that open the mods above.
 
 ## Watch out

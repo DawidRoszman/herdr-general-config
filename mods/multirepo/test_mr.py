@@ -60,6 +60,8 @@ assert mr.short_names(["solo-repo"]) == {"solo-repo": "solo-repo"}
 porcelain = "worktree /p/backend\nHEAD a\nbranch refs/heads/develop\n\nworktree /t3/wt\nHEAD b\nbranch refs/heads/feat/x\n\nworktree /d\nHEAD c\ndetached\n"
 assert mr.worktree_on_branch(porcelain, "feat/x") == "/t3/wt"
 assert mr.worktree_on_branch(porcelain, "feat/y") is None
+gone = "worktree /t3/old\nHEAD abc\nbranch refs/heads/feat/z\nprunable gitdir file points to non-existent location\n"
+assert mr.worktree_on_branch(gone, "feat/z") is None, "a worktree whose folder is gone holds nothing to link"
 assert mr.github_slug("git@github.com:acme-inc/acme-shop-backend.git") == "acme-inc/acme-shop-backend"
 assert mr.github_slug("https://github.com/o/r") == "o/r"
 assert mr.github_slug("git@gitlab.com:o/r.git") is None
@@ -132,6 +134,25 @@ layer = lambda position, state, head, oid: {"position": position, "pullRequest":
 assert mr.restack_plan("develop", [layer(3, "OPEN", "c", "3"), layer(1, "MERGED", "a", "1"), layer(2, "OPEN", "b", "2")]) == [
     {"branch": "b", "onto": "develop", "after": "1"}, {"branch": "c", "onto": "b", "after": "2"}]
 assert mr.restack_plan("develop", [layer(1, "OPEN", "a", "1")]) == [{"branch": "a", "onto": "develop", "after": None}]
+
+# A task outside its project's folder loads the project's direnv .envrc (the nearest above it) through its own.
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    (tmp / "work" / "shop").mkdir(parents=True)
+    (tmp / "work" / ".envrc").write_text("export CLAUDE_CONFIG_DIR=x\n")
+    (tmp / "task").mkdir()
+    real_which, real_run, allowed = mr.shutil.which, subprocess.run, []
+    mr.shutil.which = lambda name: "/bin/direnv"
+    subprocess.run = lambda args, **k: allowed.append(args) or subprocess.CompletedProcess(args, 0, "", "")
+    mr.link_project_env(tmp / "task", tmp / "work" / "shop")
+    assert f"source_env {tmp / 'work' / '.envrc'}" in (tmp / "task" / ".envrc").read_text()
+    assert allowed == [["direnv", "allow", str(tmp / "task" / ".envrc")]]
+    mr.link_project_env(tmp / "task", tmp / "work" / "shop")
+    assert len(allowed) == 1, "a task's own .envrc is left alone"
+    (tmp / "plain").mkdir()
+    mr.link_project_env(tmp / "plain", Path("/"))
+    assert not (tmp / "plain" / ".envrc").exists(), "no project .envrc, none written"
+    mr.shutil.which, subprocess.run = real_which, real_run
 
 # End to end with a fake HOME so the registry and workspaces stay in the temp folder.
 with tempfile.TemporaryDirectory() as tmp:
