@@ -87,6 +87,12 @@ assert.equal(topic[0].branch, "feat/SHOP-110-x");
 assert.deepEqual(topic[0].branches, ["feat/SHOP-110-x", "test/SHOP-110-x"]);
 assert.equal(reviewKey("m", "/p", "test/SHOP-110-x"), reviewKey("m", "/p", "feat/SHOP-110-x"));
 assert.deepEqual(reviewTab("m", "/p", "feat/SHOP-110-x", false, topic[0].branches).props.branches, ["feat/SHOP-110-x", "test/SHOP-110-x"]);
+// A repo on a branch named differently in the task (mr prs says its topic) joins the task's group.
+const odd = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
+  pr({ slug: "o/helper", short: "helper", number: 31, branch: "helpers-for-search", topic: "feat/SHOP-110-x" }), pr(),
+] }]);
+assert.equal(odd.length, 1);
+assert.deepEqual(odd[0].branches, ["feat/SHOP-110-x", "helpers-for-search"]);
 // A stack's branches stay together, bottom first, at the stack's latest update.
 const stackedGroups = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
   pr({ number: 3, branch: "top", updatedAt: "2026-11-01T00:00:00Z", stack: { number: 5, size: 2, position: 2 } }),

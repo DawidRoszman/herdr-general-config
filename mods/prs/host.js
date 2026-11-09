@@ -102,7 +102,8 @@ export async function openSpaceAt(machine, folder) {
 // a branch another tool already has checked out is linked, not checked out again. report: progress.
 export async function ensureTaskFolder(machine, project, branch, repos, report = () => {}) {
   const target = await sshTarget(machine);
-  const taskOf = async () => (await mrJson(target, ["ls", "--json", "--project", project])).tasks.find((t) => t.branch === branch)?.root;
+  const isOn = (t) => t.branch === branch || Object.values(t.branches ?? {}).includes(branch); // a repo's own branch in the task counts
+  const taskOf = async () => (await mrJson(target, ["ls", "--json", "--project", project])).tasks.find(isOn)?.root;
   const existing = await taskOf();
   if (existing) return existing;
   report(`Checking out ${branch} on ${machineLabel(machine)}…`);

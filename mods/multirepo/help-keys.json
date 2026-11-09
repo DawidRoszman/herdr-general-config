@@ -8,8 +8,8 @@
           ["o / enter / l", "open the task's workspace (or go to it if it's open)"],
           ["v", "review the task's PRs in a tab"],
           ["p", "push and create / update the cross-linked PRs (a stacked task's go in its GitHub stack)"],
-          ["a", "add repos to the task (a repo without its branch takes its one branch for the same ticket, e.g. test/X-1)"],
-          ["x", "remove the task (asks first)"],
+          ["a", "add repos to the task (a repo without its branch takes its one branch for the same ticket, e.g. test/X-1; b in the picker names another)"],
+          ["x", "remove the task (the dialog asks first)"],
           ["n", "new task: branch, then pick its repos"],
           ["s", "new task stacked on this one: its PRs target this task's branch, in a GitHub stack"],
           ["[ / ]", "previous / next project"],
@@ -36,17 +36,18 @@
           ["i", "install mr on this machine (~/.local/bin/mr)"]
         ] },
         { "title": "Tasks and repos", "rows": [
-          ["o", "open the task's workspace (Claude + Blueprint, terminal, nvim)"],
+          ["o", "open the task's workspace (claude, a terminal, nvim), or go to it if it's open"],
           ["v", "review the task's PRs in a tab"],
           ["n", "new task: type its branch, then ↵ to pick its repos"],
           ["s", "new task stacked on this one (its repos come ticked; p then opens stacked PRs)"],
           ["a", "add repos to the task: pick the ones it doesn't have yet (a repo without the task's branch takes its one branch for the same ticket, e.g. test/X-1)"],
           ["p", "push and create / update the cross-linked PRs"],
-          ["x / shift-x", "remove the task (press twice) / even with unpushed work"]
+          ["x / shift-x", "remove the task (asks first: x again or the buttons; esc keeps it) / even with unpushed work"]
         ] },
         { "title": "Picking repos (new task, add repos)", "rows": [
           ["space / x / l, click", "tick or untick the repo"],
           ["a", "tick all shown (again: untick them)"],
+          ["b", "the branch this repo takes, when someone named it differently there (also as repo=branch after a new task's branch)"],
           ["/", "search; ↵ in the search ticks the match"],
           ["enter", "create the task / add the ticked repos"],
           ["h / esc", "back without changes"]

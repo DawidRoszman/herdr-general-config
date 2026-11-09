@@ -55,8 +55,9 @@ async function searchIssues() {
   let r;
   try {
     r = await exec("acli", ["jira", "workitem", "search", "--jql", JQL, "--fields", FIELDS.join(","), "--json", "--paginate"]);
-  } catch {
-    throw new Error("acli is not installed: brew tap atlassian/homebrew-acli && brew install acli, then acli jira auth login --web");
+  } catch (error) {
+    // exec rejects both when acli is missing and when it outlives the timeout: say which.
+    throw new Error(`acli did not answer (${error.message ?? error}). Not installed? brew tap atlassian/homebrew-acli && brew install acli, then acli jira auth login --web`);
   }
   if (r.code !== 0 || !r.stdout.trim().startsWith("[")) {
     const why = (r.stderr || r.stdout).trim().replace(/^✗ Error: /, "");

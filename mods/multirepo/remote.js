@@ -2,7 +2,7 @@
 // mr.py run by python3 here, or streamed to python3 over ssh, so nothing has to be installed there),
 // Herdr commands that answer with ids, hc's JSON, and opening a task's workspace.
 
-import { exec, hc, appHome, window, spaces, run } from "herdr";
+import { exec, hc, appHome, window, spaces, panes, run } from "herdr";
 import { remoteCommand } from "./view.js";
 
 export const MR = `${appHome()}/mods/multirepo/mr.py`;
@@ -72,10 +72,16 @@ export function reviewTab(machine, project, branch) {
 }
 
 
-// A new workspace's tabs, as in the `wts` tmux flow: claude, a terminal and nvim, in that order
-// (new tabs go next to the selected one, so the order is set at the end). The agent-chat mod is
-// not used for now. machine: a Herdr machine name, or null here.
+// The task's workspace: the space already on its folder (a pane working in it), else a new one with
+// claude, a terminal and nvim, in that order, as in the `wts` tmux flow (new tabs go next to the
+// selected one, so the order is set at the end). machine: a Herdr machine name, or null here.
 export async function openWorkspace(folder, machine) {
+  const tabs = new Map(spaces().filter((s) => (s.machine ?? null) === (machine ?? null)).flatMap((s) => s.tabs.map((t) => [t.id, s])));
+  const pane = panes().find((p) => p.cwd?.startsWith(folder) && tabs.has(p.tab));
+  if (pane) {
+    run("space.select", { id: tabs.get(pane.tab).id });
+    return;
+  }
   const { space, tab: claude } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "claude", argv: ["claude"] });
   const { tab: terminal } = await herdrDo("tab.new", { space, folder, name: "terminal" });
   const { tab: nvim } = await herdrDo("tab.new", { space, folder, name: "nvim", argv: ["nvim"] });

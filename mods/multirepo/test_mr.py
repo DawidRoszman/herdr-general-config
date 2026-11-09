@@ -28,6 +28,9 @@ assert body.startswith("Fixes the thing.\n\n" + mr.RELATED_START) and "- portal:
 again = mr.with_related_section(body, ["portal: https://x/2", "app: https://x/3"])
 assert again.count(mr.RELATED_START) == 1 and "- app: https://x/3" in again and again.startswith("Fixes the thing.")
 assert mr.is_unsafe_to_remove({"dirty": 0, "unpushed": 2}) == "2 commit(s) not pushed"
+assert mr.split_repo_branches(["backend", "portal=fix/other-name"]) == (["backend", "portal"], {"portal": "fix/other-name"})
+assert mr.resolve_repos(["backend", "portal=fix/x", "backend"], ["acme-shop-backend", "acme-shop-portal"]) == (
+    ["acme-shop-backend", "acme-shop-portal"], {"acme-shop-portal": "fix/x"})
 
 # gh runs in the project's direnv environment: --in wins, then --repo; a slug-only command has none.
 assert mr.gh_folder(mr.parser().parse_args(["--in", "/x/Proj", "pr-diff", "acme/api", "3"])) == Path("/x/Proj")
@@ -192,6 +195,13 @@ with tempfile.TemporaryDirectory() as tmp:
     assert status["repos"][0]["dirty"] == 1
     refused = mrcmd("rm", cwd=task, check=False)
     assert refused.returncode == 1 and "uncommitted" in refused.stderr
+    # Something put in the task folder itself is work too; Finder's .DS_Store is not.
+    (task / "notes.md").write_text("todo")
+    (task / ".DS_Store").write_bytes(b"\0")
+    stray = mrcmd("rm", cwd=task, check=False)
+    assert "notes.md: not part of any repo" in stray.stderr, stray.stderr
+    (task / "notes.md").unlink()
+    assert json.loads(mrcmd("ls", "--json", "--project", str(project)).stdout)["tasks"][0]["on"] is None
 
     sh("git", "-C", str(task / "proj-backend"), "add", ".")
     sh("git", "-C", str(task / "proj-backend"), "commit", "-qm", "feat: thing")
@@ -225,6 +235,34 @@ with tempfile.TemporaryDirectory() as tmp:
     assert saved.get("branches") == {"helper": "test/T-1-e2e"}, saved
     own = {r["name"]: r["branch"] for r in json.loads(mrcmd("status", "--json", "--no-pr", cwd=task).stdout)["repos"]}
     assert own == {"proj-backend": "feat/T-1-thing", "proj-portal": "feat/T-1-thing", "helper": "test/T-1-e2e"}, own
+
+    # A repo whose branch someone named differently joins a task as repo=branch; its PRs belong to the task.
+    sh("git", "-C", str(project / "helper"), "push", "-q", "origin", "main:odd/helper-name")
+    mrcmd("new", "feat/T-3-odd", "backend", "helper=odd/helper-name", cwd=project)
+    odd = tmp / ".herdr" / "projects" / "Proj" / "feat-T-3-odd"
+    assert sh("git", "-C", str(odd / "helper"), "branch", "--show-current").stdout.strip() == "odd/helper-name"
+    assert json.loads((odd / ".mr-task.json").read_text())["branches"] == {"helper": "odd/helper-name"}
+    real_workspaces, mr.WORKSPACES = mr.WORKSPACES, tmp / ".herdr" / "projects"
+    scope = mr.PrScope(name="Proj", root=project, repos=[("proj-backend", "o/b"), ("helper", "o/h")], shorts={}, project=mr.Project.load(project))
+    assert scope.topics() == {("helper", "test/T-1-e2e"): "feat/T-1-thing", ("helper", "odd/helper-name"): "feat/T-3-odd"}
+    assert scope.branches_of("helper", ["feat/T-3-odd"]) == ["feat/T-3-odd", "odd/helper-name"]
+    assert scope.branches_of("proj-backend", ["feat/T-3-odd"]) == ["feat/T-3-odd"]
+    assert scope.task_for("odd/helper-name") == str(odd)
+    # pr-view for the task's branch asks GitHub for helper's own branch too, so the review shows its PR.
+    import contextlib, io
+    real_full_pr, real_slug = mr.full_pr, mr.github_slug
+    mr.github_slug = lambda url: f"o/{Path(url).name.removesuffix('.git')}"
+    mr.full_pr = lambda name, slug, branch: ("me", {"number": 1, "headRefName": branch, "repo": name, "slug": slug})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        mr.cmd_pr_view(mr.parser().parse_args(["pr-view", "feat/T-3-odd", "--project", str(project)]))
+    view = json.loads(out.getvalue())
+    assert sorted((pr["repo"], pr["headRefName"]) for pr in view["prs"]) == [
+        ("helper", "feat/T-3-odd"), ("helper", "odd/helper-name"), ("proj-backend", "feat/T-3-odd"), ("proj-portal", "feat/T-3-odd")], view["prs"]
+    assert view["task"] == str(odd) and view["viewer"] == "me"
+    mr.full_pr, mr.github_slug = real_full_pr, real_slug
+    mr.WORKSPACES = real_workspaces
+    mrcmd("rm", cwd=odd)
 
     # Cloning the project elsewhere from its manifest (the "new remote" path).
     clone_root = tmp / "elsewhere" / "Proj"

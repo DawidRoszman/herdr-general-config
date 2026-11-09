@@ -160,7 +160,8 @@ export class Monitor {
     if (shared(BADGE_KEY) !== requested) setShared(BADGE_KEY, requested);
     for (const change of changes.slice(0, MAX_NOTIFICATIONS)) {
       const { pr } = change;
-      notify({ title: change.title, body: change.body, level: change.level, action: reviewCommand(pr.machine, pr.root, pr.branch, pr.isRepo, pr.project) });
+      // A repo on a branch of its own in a task (topic): the review of the task, which covers that PR too.
+      notify({ title: change.title, body: change.body, level: change.level, action: reviewCommand(pr.machine, pr.root, pr.topic ?? pr.branch, pr.isRepo, pr.project) });
     }
     if (changes.length > MAX_NOTIFICATIONS) notify({ title: `${changes.length - MAX_NOTIFICATIONS} more PR changes`, body: "See the PR list.", level: "info" });
   }
@@ -223,7 +224,8 @@ export class Monitor {
     const group = this.rows()[index]?.group;
     if (!group) return;
     const { machine, root, branch, isRepo, prs } = group;
-    const repos = prs.filter((pr) => pr.branch === branch).map((pr) => pr.short);
+    // The task's repos as mr new takes them: a repo on a branch of its own in the task as repo=branch.
+    const repos = prs.filter((pr) => (pr.topic ?? pr.branch) === branch).map((pr) => (pr.branch === branch ? pr.short : `${pr.short}=${pr.branch}`));
     openBranchCheckout({ machine, project: root, branch, isRepo, repos }, (line) => notify({ title: "Pull requests", body: line, level: "info" }))
       .catch((error) => notify({ title: `Could not open ${branch}`, body: String(error.message ?? error), level: "warning" }));
   }

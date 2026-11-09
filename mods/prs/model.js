@@ -126,7 +126,8 @@ export function groupByBranch(projects) {
   const groups = new Map();
   for (const { machine, project, root, isRepo, prs } of projects) {
     for (const pr of prs) {
-      const key = `${machine}|${root}|${branchTopic(pr.branch)}`;
+      // topic (mr prs): the task branch a repo's own branch belongs to (test/X-1, or one named differently).
+      const key = `${machine}|${root}|${branchTopic(pr.topic ?? pr.branch)}`;
       if (!groups.has(key)) groups.set(key, { key, machine, project, root, isRepo: Boolean(isRepo), prs: [] });
       groups.get(key).prs.push(pr);
     }

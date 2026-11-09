@@ -174,6 +174,25 @@ def match_repos(wanted: list[str], available: list[str]) -> list[str]:
     return list(dict.fromkeys(resolved))
 
 
+def split_repo_branches(words: list[str]) -> tuple[list[str], dict[str, str]]:
+    """'backend portal=fix/other-name' -> (['backend', 'portal'], {'portal': 'fix/other-name'}): a repo whose
+    branch for the task is named differently (someone else's naming) is given with its branch."""
+    names, branches = [], {}
+    for word in words:
+        name, _, branch = word.partition("=")
+        names.append(name)
+        if branch:
+            branches[name] = branch
+    return names, branches
+
+
+def resolve_repos(words: list[str], available: list[str]) -> tuple[list[str], dict[str, str]]:
+    """split_repo_branches with the repo names resolved (match_repos), the branches keyed by full name."""
+    names, branches = split_repo_branches(words)
+    full_names = [match_repos([name], available)[0] for name in names]
+    return list(dict.fromkeys(full_names)), {full: branches[name] for full, name in zip(full_names, names) if name in branches}
+
+
 def with_related_section(body: str, links: list[str]) -> str:
     """Replace (or append) the block listing the task's other PRs, leaving the rest of the body alone."""
     block = RELATED_START + "\n**Related PRs**\n" + "\n".join(f"- {link}" for link in links) + "\n" + RELATED_END
@@ -547,7 +566,7 @@ def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None
     branch = repo_branch(repo, task.branch, chosen)
     if branch != task.branch:
         task.branches[name] = branch
-        print(f"{name}: on {branch}, its branch for this ticket", flush=True)
+        print(f"{name}: on {branch}, {'as given' if chosen else 'its branch for this ticket'}", flush=True)
     existing = worktree_on_branch(git(repo, "worktree", "list", "--porcelain"), branch)
     if existing:
         target.symlink_to(existing)
@@ -660,7 +679,7 @@ def link_project_env(task_root: Path, project_root: Path) -> None:
 
 def cmd_new(args) -> None:
     project = current_project(args.project)
-    names = match_repos(args.repos, [r["name"] for r in project.repos])
+    names, chosen = resolve_repos(args.repos, [r["name"] for r in project.repos])
     root = project.workspaces / branch_slug(args.branch)
     if root.exists():
         raise MrError(f"{root} already exists. Open it, or remove it with mr rm.")
@@ -671,8 +690,8 @@ def cmd_new(args) -> None:
             if repo["name"] not in names:
                 (root / repo["name"]).symlink_to(project.root / repo["name"])
         for name in names:
-            print(f"{name}: {args.branch}", flush=True)
-            checkout_task_repo(task, name)
+            print(f"{name}: {chosen.get(name, args.branch)}", flush=True)
+            checkout_task_repo(task, name, chosen.get(name))
         if task.on and all(task.base(name) != task.on for name in names):
             raise MrError(f"None of {', '.join(names)} has a branch {task.on} to stack on.")
         task.save()
@@ -689,12 +708,13 @@ def cmd_new(args) -> None:
 
 def cmd_add(args) -> None:
     task = current_task(args.task)
-    names = [n for n in match_repos(args.repos, [r["name"] for r in task.project.repos]) if n not in task.repos]
+    resolved, chosen = resolve_repos(args.repos, [r["name"] for r in task.project.repos])
+    names = [n for n in resolved if n not in task.repos]
     if args.branch and len(names) != 1:
-        raise MrError("--branch is for one repo at a time.")
+        raise MrError("--branch is for one repo at a time; give several as repo=branch.")
     link_project_env(task.root, task.project.root)  # tasks made before mr wrote one get it here
     for name in names:
-        checkout_task_repo(task, name, args.branch)
+        checkout_task_repo(task, name, chosen.get(name, args.branch))
         task.repos.append(name)
         task.save()
         print(f"{name}: {task.branch_of(name)}")
@@ -707,7 +727,7 @@ def task_summaries(project: Project, with_status: bool) -> list[dict]:
     for folder in sorted(project.workspaces.iterdir()):
         if (folder / TASK_FILE).exists():
             task = Task.load(folder)
-            summary = {"branch": task.branch, "root": str(folder), "repos": task.repos, "branches": task.branches}
+            summary = {"branch": task.branch, "root": str(folder), "repos": task.repos, "branches": task.branches, "on": task.on}
             if with_status:
                 summary["status"] = [repo_state(task, name, with_pr=False) for name in task.repos]
             tasks.append(summary)
@@ -770,6 +790,9 @@ def cmd_pr(args) -> None:
     changed = [r for r in changed if r["ahead"] > 0 or r["pr"]]
     if not changed:
         raise MrError("No repo in this task has commits on top of its base yet.")
+    off_github = [r["name"] for r in changed if not github_slug(task.project.repo(r["name"])["url"])]
+    if off_github:
+        raise MrError(f"{', '.join(off_github)}: origin is not on GitHub, where mr pr opens PRs.")
     for r in changed:
         if args.dry_run:
             print(f"{r['name']}: would push and {'keep PR #' + str(r['pr']['number']) if r['pr'] else 'open a PR into ' + r['base']}")
@@ -830,12 +853,24 @@ def link_stack(cwd: Path, parent_branch: str, child: int) -> str:
     return f"stacked on #{parent} (stack #{stack['number']})"
 
 
+# Files a task folder may hold besides its repos and markers without anyone having put work there.
+TASK_JUNK = {".DS_Store", ".direnv", ".envrc"}
+
+
+def stray_entries(task: Task) -> list[str]:
+    """Files in a task folder that are neither its repos, mr's markers nor known junk: something the person
+    (or a tool) put there, which rm would lose."""
+    known = {TASK_FILE, *TASK_JUNK, *(r["name"] for r in task.project.repos)}
+    return sorted(entry.name for entry in task.root.iterdir() if entry.name not in known)
+
+
 def cmd_rm(args) -> None:
     task = current_task(args.task)
     states = [repo_state(task, name, with_pr=True) for name in task.repos]
     problems = [f"{s['name']}: {why}" for s in states if s["name"] not in task.borrowed and (why := is_unsafe_to_remove(s))]
+    problems += [f"{name}: not part of any repo" for name in stray_entries(task)]
     if problems and not args.force:
-        raise MrError("Not removing, it would lose work:\n  " + "\n  ".join(problems) + "\nCommit and push, or pass --force.")
+        raise MrError("Not removing, it would lose work:\n  " + "\n  ".join(problems) + "\nCommit and push (or move stray files), or pass --force.")
     for s in states:
         repo = task.project.root / s["name"]
         if s["name"] in task.borrowed:
@@ -852,8 +887,13 @@ def cmd_rm(args) -> None:
         if entry.is_symlink():
             entry.unlink()
     (task.root / TASK_FILE).unlink()
-    (task.root / ".envrc").unlink(missing_ok=True)  # link_project_env's
-    task.root.rmdir()  # fails loudly if something unexpected is still there
+    if args.force:
+        shutil.rmtree(task.root)
+    else:
+        for name in TASK_JUNK:  # Finder's .DS_Store, direnv's cache and the .envrc link_project_env wrote
+            junk = task.root / name
+            shutil.rmtree(junk) if junk.is_dir() else junk.unlink(missing_ok=True)
+        task.root.rmdir()  # fails loudly if something unexpected is still there
     print(f"removed {task.root}")
 
 
@@ -888,12 +928,24 @@ class PrScope:
     shorts: dict[str, str]
     project: Project | None
 
+    def tasks(self) -> list[dict]:
+        return task_summaries(self.project, with_status=False) if self.project else []
+
     def task_for(self, branch: str) -> str | None:
         """Where branch is checked out: the project's task, or for a plain repo any of its worktrees."""
         if self.project:
-            return next((t["root"] for t in task_summaries(self.project, with_status=False)
-                         if branch in (t["branch"], *t["branches"].values())), None)
+            return next((t["root"] for t in self.tasks() if branch in (t["branch"], *t["branches"].values())), None)
         return worktree_on_branch(git(self.root, "worktree", "list", "--porcelain"), branch)
+
+    def topics(self) -> dict[tuple[str, str], str]:
+        """(repo, branch) -> the task branch it belongs to, for repos on a branch of their own in a task
+        (test/X-1 beside feat/X-1, or one named differently): their PRs group with the task's."""
+        return {(name, branch): t["branch"] for t in self.tasks() for name, branch in t["branches"].items()}
+
+    def branches_of(self, repo: str, branches: list[str]) -> list[str]:
+        """The branches to look for in a repo: the given ones plus the repo's own branch in a task of theirs."""
+        own = [branch for (name, branch), topic in self.topics().items() if name == repo and topic in branches]
+        return list(dict.fromkeys([*branches, *own]))
 
 
 def pr_scope(args) -> PrScope:
@@ -924,7 +976,9 @@ def cmd_prs(args) -> None:
     failed = {slug: reason for (_, slug), (_, repo_list, reason) in zip(scope.repos, results) if repo_list is None}
     if not viewers:
         raise MrError(f"GitHub answered for none of the repos ({next(iter(failed.values()), 'no reason given')}); is gh logged in here?")
-    prs = [{**pr, "short": scope.shorts[pr["repo"]]} for _, repo_list, _ in results if repo_list for pr in repo_list]
+    topics = scope.topics()
+    prs = [{**pr, "short": scope.shorts[pr["repo"]], "topic": topics.get((pr["repo"], pr["branch"]), pr["branch"])}
+           for _, repo_list, _ in results if repo_list for pr in repo_list]
     print(json.dumps({**header, "viewer": viewers[0], "prs": prs, "failed": list(failed), "failedWhy": failed}))
 
 
@@ -953,7 +1007,8 @@ def full_pr(name: str, slug: str, branch: str) -> tuple[str, dict | None]:
 def cmd_pr_view(args) -> None:
     scope = pr_scope(args)
     with ThreadPoolExecutor(max_workers=len(scope.repos) or 1) as pool:
-        found = list(pool.map(lambda job: full_pr(*job[0], job[1]), [(repo, branch) for repo in scope.repos for branch in args.branch]))
+        found = list(pool.map(lambda job: full_pr(*job[0], job[1]),
+                              [(repo, branch) for repo in scope.repos for branch in scope.branches_of(repo[0], args.branch)]))
     viewer = found[0][0] if found else ""  # whose review is requested, for the view
     prs = [pr for _, pr in found if pr]
     for pr in prs:
@@ -1163,11 +1218,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--project")
     p = command("new", cmd_new, "create a task workspace")
     p.add_argument("branch")
-    p.add_argument("repos", nargs="+")
+    p.add_argument("repos", nargs="+", help="repo names; repo=branch for one whose branch is named differently")
     p.add_argument("--project")
     p.add_argument("--on", metavar="PARENT", help="stack on another task's branch")
     p = command("add", cmd_add, "check out more repos in this task")
-    p.add_argument("repos", nargs="+")
+    p.add_argument("repos", nargs="+", help="repo names; repo=branch for one whose branch is named differently")
     p.add_argument("--branch", help="the repo's own branch (default: the task's, else its one for the same ticket)")
     p.add_argument("--task")
     p = command("ls", cmd_ls, "list a project's tasks")

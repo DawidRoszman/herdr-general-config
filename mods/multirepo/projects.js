@@ -5,14 +5,16 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
-import { theme, run, spaces, panes, openOverlay, settings } from "herdr";
+import { theme, run, spaces, panes, openOverlay, settings, shared, setShared } from "herdr";
 import { mrJsonOn, machinesWithThisMac, machineLabel, reviewTab, openWorkspace } from "./remote.js";
-import { changeBadge, baseLabel, prLabel } from "./view.js";
+import { changeBadge, baseLabel, prLabel, CHANGED } from "./view.js";
 
 const ICONS = "mods/prs/icons";
 const TASK_ROW = 58;
 const REFRESH_MS = 30000;
 const DIALOG = { mod: "multirepo", kind: "dialog", width: 760, height: 480 };
+// Shared: the tabs holding a Projects view (panes() can't tell one multirepo pane from another).
+const PROJECTS_TABS = "multirepo.projectsTabs";
 
 const icon = (name, size, color) => svg(`${ICONS}/${name}.svg`).size(size).flex_none().text_color(color);
 // "feat/SHOP-110-search-filters" -> { ticket: "SHOP-110", rest: "search filters" }
@@ -38,8 +40,10 @@ export class ProjectsView {
     this.input = InputState.new({ value: "" });
     this.input.on("change", (_e, cx) => { if (!this.isTyping) return; this.query = this.input.value().trim().toLowerCase(); this.moveTo(0); cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.isTyping = false; cx.notify(); });
-    cx.timer.every(400, (cx) => this.claimKeyboard(cx));
+    this.seenChange = shared(CHANGED);
+    cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.followDialog(cx); });
     cx.timer.every(REFRESH_MS, (cx) => { if (this.isShown()) this.loadTasks(cx); });
+    this.loadedAt = 0;
     this.loadPlaces(cx);
   }
 
@@ -73,7 +77,7 @@ export class ProjectsView {
       this.places = lists.flat();
       if (!this.places.some((p) => p.key === this.placeKey)) this.placeKey = this.places[0]?.key ?? null;
       await this.loadTasks(cx);
-      return this.places.length ? "" : "No multirepo projects on any connected machine: set one up with the multirepo dialog (n on a folder of repos).";
+      return "";
     });
   }
 
@@ -87,6 +91,7 @@ export class ProjectsView {
     this.isLoadingTasks = true;
     try {
       this.listing = await mrJsonOn(place.machine.target, ["ls", "--json", "--project", place.project.root]);
+      this.loadedAt = Date.now();
       this.details.clear();
       this.loadDetail(cx);
     } catch (error) {
@@ -128,15 +133,9 @@ export class ProjectsView {
 
   // ---------------------------------------------------------------- actions
 
-  // The task's workspace: the space already on its folder, else a new one (claude, terminal, nvim).
+  // The task's workspace: the space already on its folder, else a new one (openWorkspace).
   openTask(cx, task) {
     const place = this.place();
-    const tabs = new Map(spaces().filter((s) => s.machine === place.machine.name).flatMap((s) => s.tabs.map((t) => [t.id, s])));
-    const pane = panes().find((p) => p.cwd?.startsWith(task.root) && tabs.has(p.tab));
-    if (pane) {
-      run("space.select", { id: tabs.get(pane.tab).id });
-      return;
-    }
     this.act(cx, async () => { await openWorkspace(task.root, place.machine.name); return ""; });
   }
 
@@ -175,16 +174,34 @@ export class ProjectsView {
   }
 
   // Its tab, learnt at the first layout (focused() can lag right after tab.new); a second
-  // Projects tab in the same space hands over to the first one and closes.
+  // Projects tab in the same space hands over to the earlier one and closes (the earlier one stays,
+  // so two copies learning at once, after a reload, never close each other).
   learnTab(cx) {
     if (this.ownTab) return;
     this.ownTab = spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id ?? null;
     const space = spaces().find((s) => s.tabs.some((t) => t.id === this.ownTab));
-    const other = panes().find((p) => p.mod === "multirepo" && p.tab !== this.ownTab && space?.tabs.some((t) => t.id === p.tab));
-    if (other) {
-      run("tab.select", { id: other.tab });
+    const isLive = (id) => panes().some((p) => p.tab === id && p.mod === "multirepo");
+    const others = (shared(PROJECTS_TABS) ?? []).filter((id) => id !== this.ownTab && isLive(id));
+    setShared(PROJECTS_TABS, [...others, this.ownTab]);
+    const position = (id) => space?.tabs.findIndex((t) => t.id === id) ?? -1;
+    const earlier = others.find((id) => position(id) !== -1 && position(id) < position(this.ownTab));
+    if (earlier) {
+      run("tab.select", { id: earlier });
       run("tab.close", { id: this.ownTab, confirmed: true });
     }
+  }
+
+  // The dialog stamps CHANGED when a task was made, changed or removed: the list and details reload.
+  // So do they when the tab is shown again after missing a refresh while hidden (tasks made in a shell).
+  followDialog(cx) {
+    const stamp = shared(CHANGED);
+    const isShown = this.isShown();
+    const isStale = isShown && !this.wasShown && Date.now() - this.loadedAt > REFRESH_MS;
+    this.wasShown = isShown;
+    if (stamp === this.seenChange && !isStale) return;
+    this.seenChange = stamp;
+    this.details.clear();
+    this.loadTasks(cx);
   }
 
   claimKeyboard(cx) {
@@ -251,7 +268,7 @@ export class ProjectsView {
       .when(isSelected, (el) => el.bg(t.selected))
       .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
       .child(h_flex().h(18).gap(6).items_center().min_w(0)
-        .child(icon("branch", 13, isDirty ? t.working : t.dim))
+        .child(icon(task.on ? "stack" : "branch", 13, isDirty ? t.working : t.dim))
         .when(Boolean(ticket), (el) => el.child(div().flex_none().text_size(12.5).font_semibold().text_color(t.accent).child(ticket)))
         .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(rest || task.branch))
         .when(isDirty, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.working).child("● changes")))
@@ -287,22 +304,30 @@ export class ProjectsView {
     return v_flex().id("projects-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(16).gap(14)
       .child(v_flex().gap(4)
         .child(div().text_size(17).font_semibold().text_color(t.foreground).truncate().child(task.branch))
-        .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${task.root} · ${machineLabel(place.machine)}`)))
+        .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${task.root} · ${machineLabel(place.machine)}`))
+        .when(Boolean(task.on), (el) => el.child(h_flex().gap(5).items_center().child(icon("stack", 12, t.accent))
+          .child(div().text_size(11.5).text_color(t.muted).child(`Stacked on ${task.on}: its PRs target that branch`)))))
       .child(h_flex().gap(6).flex_wrap()
         .child(this.button("act-open", "terminal", "Open workspace", (cx) => this.openTask(cx, task), t, { isPrimary: true, tooltip: "o / enter" }))
         .child(this.button("act-review", "eye", "Review PRs", () => this.review(task), t, { tooltip: "v" }))
         .child(this.button("act-pr", "send", "Create / update PRs", () => this.dialog({ prTask: task.root }), t, { tooltip: "p: push, open missing PRs, cross-link them" }))
         .child(this.button("act-add", "plus", "Add repos", () => this.dialog({ addTo: task.root }), t, { tooltip: "a" }))
-        .child(this.button("act-stack", "plus", "Stack task", () => this.dialog({ newTask: "", stackOn: task.root }), t, { tooltip: "s: a new task on this one; its PRs target this branch, in a GitHub stack" }))
+        .child(this.button("act-stack", "stack", "Stack task", () => this.dialog({ newTask: "", stackOn: task.root }), t, { tooltip: "s: a new task on this one; its PRs target this branch, in a GitHub stack" }))
         .child(this.button("act-remove", "trash", "Remove", () => this.dialog({ removeTask: task.root }), t, { isDanger: true, tooltip: "x: asks first; keeps unpushed work" })))
       .child(h_flex().gap(6).items_center().child(icon("repo", 13, t.dim))
         .child(div().text_size(12).font_semibold().text_color(t.muted).child(`Repos on the branch · ${task.repos.length}`)))
       .child(detail.repos
         ? v_flex().gap(6).children(detail.repos.map((repo) => this.repoRow(repo, task, t)))
         : div().text_size(12).text_color(detail.error ? t.blocked : t.dim).child(detail.error ?? "Loading each repo's state and PR…"))
-      .when(linked.length > 0, (el) => el.child(v_flex().gap(4)
+      .when(linked.length > 0, (el) => el.child(v_flex().gap(6)
         .child(div().text_size(12).font_semibold().text_color(t.muted).child(`Linked in from the project · ${linked.length}`))
-        .child(div().text_size(11.5).text_color(t.dim).child(`${linked.map((n) => this.short(n)).join(", ")} (a, Add repos, gives one a worktree on the branch)`))));
+        .child(h_flex().gap(6).flex_wrap().items_center()
+          .children(linked.map((name) => h_flex().id(`linked-${name}`).h(24).px(8).gap(5).items_center().rounded(6).border(1).border_color(t.border).bg(t.background)
+            .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`Add ${this.short(name)} to the task: a worktree on the branch`)
+            .on_click(() => this.dialog({ addTo: task.root }))
+            .child(icon("repo", 12, t.dim))
+            .child(div().text_size(11.5).text_color(t.muted).child(this.short(name)))))
+          .child(div().text_size(11).text_color(t.dim).child("links to the project's checkouts · click one to work on it in this task")))));
   }
 
   render() {
@@ -325,6 +350,7 @@ export class ProjectsView {
             .child(div().text_size(11).text_color(t.dim).child(machineLabel(p.machine)));
         })))
         .when(Boolean(place), (el) => el.child(this.button("act-new", "plus", "New task", () => this.dialog({ newTask: "" }), t, { isPrimary: true, tooltip: "n" })))
+        .child(this.button("act-project", "folder", place ? "" : "Add project", () => openOverlay(DIALOG), t, { tooltip: "Projects on a machine: set one up from a folder of repos, clone one from another machine" }))
         .child(this.button("act-refresh", "refresh", "", (cx) => { this.details.clear(); this.loadTasks(cx); }, t, { tooltip: "r" })))
       .child(h_flex().flex_1().min_h(0)
         // Tasks.
@@ -342,9 +368,10 @@ export class ProjectsView {
                 .size_full())
             .child(Scrollbar.vertical("projects-tasks").absolute().inset_0())))
         // The selected task.
-        .child(task && place ? this.detail(task, t) : div().flex_1().p(20).text_size(12.5).text_color(t.dim).child(place ? "Pick a task." : "")))
+        .child(task && place ? this.detail(task, t) : div().flex_1().p(20).text_size(12.5).text_color(t.dim)
+          .child(place ? "Pick a task." : this.places?.length === 0 ? "No multirepo projects on any connected machine yet. Add project (top right) sets one up from a folder of git repos, or clones one from another machine." : "")))
       .when(Boolean(this.error), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.blocked).child(this.error)))
       .child(div().flex_none().px(16).py(8).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
-        .child("j/k task · o/↵ open workspace · v review PRs · p PRs · a add repos · x remove · n new task · [ ] project · / search · r refresh"));
+        .child("j/k task · o/↵ open workspace · v review PRs · p PRs · a add repos · s stack task · x remove · n new task · [ ] project · / search · r refresh"));
   }
 }
