@@ -60,6 +60,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 
 VERSION = "1"
@@ -192,10 +193,29 @@ def short_names(names: list[str]) -> dict[str, str]:
     return shorts
 
 
+GIT_URL = re.compile(r"^(?:https://(?P<web>[^/]+)/|ssh://(?:[^@/]+@)?(?P<ssh>[^/:]+)(?::\d+)?/|(?:[^@/]+@)?(?P<scp>[^/:]+):)"
+                     r"(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$")
+
+
+@lru_cache(maxsize=None)
+def ssh_hostname(host: str) -> str:
+    """The host an ssh alias stands for (Host github / HostName github.com in ~/.ssh/config), read
+    with `ssh -G`, which connects nowhere; the name itself when ssh can't say."""
+    try:
+        r = subprocess.run(["ssh", "-G", host], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return host
+    return next((line.split(None, 1)[1] for line in r.stdout.splitlines() if line.startswith("hostname ")), host)
+
+
 def github_slug(url: str) -> str | None:
-    """git@github.com:Owner/repo.git or https://github.com/Owner/repo -> Owner/repo; None off GitHub."""
-    match = re.match(r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+/[^/]+?)(?:\.git)?/?$", url)
-    return match[1] if match else None
+    """git@github.com:Owner/repo.git, an ssh alias for github.com (git@github:Owner/repo) or
+    https://github.com/Owner/repo -> Owner/repo; None off GitHub."""
+    match = GIT_URL.match(url)
+    if not match:
+        return None
+    host = match["web"] or ssh_hostname(match["ssh"] or match["scp"])
+    return match["slug"] if host == "github.com" else None
 
 
 def check_counts(states: list[dict]) -> dict:

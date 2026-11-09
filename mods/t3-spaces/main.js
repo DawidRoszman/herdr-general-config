@@ -87,9 +87,23 @@ export default class Spaces extends View {
       this.machinesSeen = seen;
       this.refreshMachines(cx);
     }
+    this.landOnRoot(sp);
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
+  }
+
+  // The shown space closed and it was a worktree or a multirepo task: its repo's or project's space is shown
+  // instead of the one Herdr moved on to. lastGit still knows a space that's gone.
+  landOnRoot(sp) {
+    const active = sp.find((s) => s.active)?.id ?? null;
+    const left = this.activeSpace;
+    this.activeSpace = active;
+    if (!left || left === active || sp.some((s) => s.id === left)) return;
+    const closed = this.lastGit[left];
+    if (!closed?.linked) return;
+    const root = sp.find((s) => this.lastGit[s.id]?.repo === closed.repo && !this.lastGit[s.id].linked);
+    if (root && root.id !== active) run("space.select", { id: root.id });
   }
 
   // Places whose git could have changed: new ones (a new space, a cd), where a

@@ -63,6 +63,13 @@ assert mr.worktree_on_branch(porcelain, "feat/y") is None
 assert mr.github_slug("git@github.com:acme-inc/acme-shop-backend.git") == "acme-inc/acme-shop-backend"
 assert mr.github_slug("https://github.com/o/r") == "o/r"
 assert mr.github_slug("git@gitlab.com:o/r.git") is None
+assert mr.github_slug("ssh://git@github.com:22/o/r.git") == "o/r"
+real_hostname = mr.ssh_hostname
+mr.ssh_hostname = lambda host: {"github": "github.com", "github-work": "github.com"}.get(host, host)
+assert mr.github_slug("git@github:o/r.git") == "o/r", "an ssh alias for github.com is GitHub"
+assert mr.github_slug("github-work:o/r") == "o/r"
+assert mr.github_slug("git@gitlab:o/r.git") is None
+mr.ssh_hostname = real_hostname
 assert mr.check_counts([{"state": "SUCCESS", "count": 3}, {"state": "FAILURE", "count": 1}, {"state": "IN_PROGRESS", "count": 2},
                         {"state": "SKIPPED", "count": 1}]) == {"passed": 4, "failed": 1, "pending": 2}
 node = {

@@ -8,7 +8,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand } from "herdr";
 import { pickedRepos, changeBadge, baseLabel, prLabel } from "./view.js";
-import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace } from "./remote.js";
+import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace, closeSpacesOn } from "./remote.js";
 import { ProjectsView } from "./projects.js";
 
 
@@ -74,7 +74,7 @@ export default class Multirepo extends View {
     this.cloneSource = null;
     this.at = 0;
     this.isBusy = false;
-    this.job = null; // { name, label } of a long mr command running as a local hc terminal
+    this.job = null; // { name, label, branch?, removed? } of a long mr command running as a local hc terminal
     this.confirmRemove = null; // task root that x was pressed on once
     this.error = "";
     this.notice = "";
@@ -155,13 +155,14 @@ export default class Multirepo extends View {
   async pollJob() {
     const terminal = (await hcJson(["ls", "--json", "--all"])).terminals.find((t) => t.name === this.job?.name && !t.address.includes("/"));
     if (!terminal || terminal.state !== "finished") return;
-    const { label, branch } = this.job;
+    const { label, branch, removed } = this.job;
     this.job = null;
     const output = (await hc(["read", terminal.address, "--lines", "40"])).stdout.trim().split("\n").filter(Boolean);
     await hc(["rm", terminal.address]);
     if (terminal.exit_code === 0) {
       this.notice = `${label}: done. ${output.slice(-3).join(" · ")}${branch ? " · o opens its workspace" : ""}`;
       this.error = "";
+      if (removed) closeSpacesOn(removed.machine, removed.folder);
     } else {
       this.error = `${label} failed: ${output.slice(-4).join(" ").replace(/mr: /g, "")}`;
       this.notice = "";
@@ -313,7 +314,9 @@ export default class Multirepo extends View {
       return "";
     }
     this.confirmRemove = null;
-    return this.startJob(`Removing ${task.branch}`, ["rm", "--task", task.root, ...(isForced ? ["--force"] : [])]);
+    const error = await this.startJob(`Removing ${task.branch}`, ["rm", "--task", task.root, ...(isForced ? ["--force"] : [])]);
+    if (!error) this.job.removed = { machine: this.machine.name, folder: task.root };
+    return error;
   }
 
   openPr(cx, repo) {

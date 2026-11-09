@@ -110,6 +110,24 @@ function fixture(width) {
   return { ...env, load, slots, state, calls, overlays, stores, scopes, labelled, shown, commands, closed, ui, orderWrites, sharedWrites, notifications, answerHc: fn => { hcAnswer = fn; } };
 }
 
+// The shown worktree's (or multirepo task's) space closes: its repo's space is shown, not the next one Herdr picked.
+{
+  const f = fixture(256), sp = f.load("t3-spaces"), list = f.spaces();
+  const repo = JSON.stringify([null, "/work/p1"]);
+  list.forEach((s) => { s.active = false; });
+  list.push({ id: "wt", name: "wt", active: true, folder: "/work/p1.x", machine: null, tabs: [] });
+  sp.lastGit = { s1: { repo, linked: false }, wt: { repo, linked: true } };
+  sp.landOnRoot(list);
+  list.pop(); list[0].active = true;
+  sp.landOnRoot(list);
+  assert.deepEqual(f.calls.splice(0), [["space.select", { id: "s1" }]]);
+  list[0].active = false; list[2].active = true;
+  sp.landOnRoot(list);
+  list.splice(2, 1); list[0].active = true;
+  sp.landOnRoot(list);
+  assert.deepEqual(f.calls.splice(0), [], "a space that's no worktree goes where Herdr went");
+}
+
 for (const width of [208, 240, 256, 320, 480]) {
   const f = fixture(width);
   const sp = f.load("t3-spaces"), ag = f.load("t3-agents");

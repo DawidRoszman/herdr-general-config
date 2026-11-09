@@ -2,7 +2,7 @@
 // mr.py run by python3 here, or streamed to python3 over ssh, so nothing has to be installed there),
 // Herdr commands that answer with ids, hc's JSON, and opening a task's workspace.
 
-import { exec, hc, appHome, window } from "herdr";
+import { exec, hc, appHome, window, spaces, run } from "herdr";
 import { remoteCommand } from "./view.js";
 
 export const MR = `${appHome()}/mods/multirepo/mr.py`;
@@ -40,6 +40,14 @@ export async function mrOn(target, args) {
 
 export async function mrJsonOn(target, args) {
   return JSON.parse(await mrOn(target, args));
+}
+
+// Closes a removed task's spaces (on its folder or inside it). The sidebar shows its project's space after.
+export function closeSpacesOn(machine, folder) {
+  for (const s of spaces()) {
+    const isOnFolder = s.folder === folder || Boolean(s.folder?.startsWith(`${folder}/`));
+    if ((s.machine ?? null) === (machine ?? null) && isOnFolder) run("space.close", { id: s.id, confirmed: true });
+  }
 }
 
 // `herdr-app do` answers with the ids it made; run() does not.
