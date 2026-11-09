@@ -100,6 +100,28 @@ export function toDetails(issue) {
   };
 }
 
+// Where the code is for an issue: the PRs and multirepo task branches named after its key
+// (feat/SHOP-110-search-filters is SHOP-110's, not SHOP-11's).
+export function codeFor(key, prs, branches) {
+  const pattern = new RegExp(`(^|[^A-Za-z0-9])${key}(?![0-9])`, "i");
+  return { prs: prs.filter((pr) => pattern.test(pr.branch)), hasBranch: branches.some((branch) => pattern.test(branch)) };
+}
+
+// Why an issue's Jira status disagrees with its code, or "". stage is what config.json
+// "statusStages" calls the status: todo, progress, review or testing.
+// prs: { state: OPEN | MERGED | CLOSED, isDraft }, as `mr prs` lists them (merged ones for 3 days).
+export function codeMismatch(stage, code) {
+  const open = code.prs.filter((pr) => pr.state === "OPEN");
+  const isInReview = open.some((pr) => !pr.isDraft);
+  const isAllMerged = code.prs.length > 0 && !open.length && code.prs.some((pr) => pr.state === "MERGED");
+  if (stage === "todo" && (code.hasBranch || code.prs.length)) return "work has started in code";
+  if (stage === "progress" && isInReview) return "a PR is open for review";
+  if ((stage === "progress" || stage === "review") && isAllMerged) return "its PRs are merged";
+  if (stage === "review" && !isInReview) return open.length ? "its PR is a draft" : "no open PR";
+  if (stage === "testing" && open.length) return "a PR is still open";
+  return "";
+}
+
 export function matches(card, query) {
   return !query || [card.key, card.summary, card.type, card.priority].join(" ").toLowerCase().includes(query);
 }

@@ -2,7 +2,7 @@
 // access to the repos: every call streams the multirepo mod's mr.py to python3 over ssh,
 // as the multirepo dialog does.
 
-import { exec, hc, appHome, run, spaces, focused, shared, openOverlay, window } from "herdr";
+import { exec, hc, appHome, run, spaces, focused, shared, openOverlay, window, agents } from "herdr";
 import { remoteCommand, reviewTab, reviewKey, projectSpace, spaceAt, worktreeOf, machineLabel, OPEN_REVIEWS } from "./model.js";
 
 const MR = `${appHome()}/mods/multirepo/mr.py`;
@@ -82,16 +82,20 @@ async function herdrDo(command, args) {
 }
 
 // The space already on folder, else a new one there with the wts tabs (claude, terminal, nvim), as
-// multirepo/remote.js and wt-dialog open a workspace (mods can't import across folders).
+// multirepo/remote.js and wt-dialog open a workspace (mods can't import across folders). Its id.
 export async function openSpaceAt(machine, folder) {
   const space = spaceAt(spaces(), machine, folder);
-  if (space) return run("space.select", { id: space.id });
+  if (space) {
+    run("space.select", { id: space.id });
+    return space.id;
+  }
   const { space: id, tab: claude } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "claude", argv: ["claude"] });
   const { tab: terminal } = await herdrDo("tab.new", { space: id, folder, name: "terminal" });
   const { tab: nvim } = await herdrDo("tab.new", { space: id, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, tab] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id: tab, index: index + 1 });
   await herdrDo("space.select", { id });
   await herdrDo("tab.select", { id: claude });
+  return id;
 }
 
 // A multirepo task's folder for branch, made with mr new on repos (their short names) when missing;
@@ -111,7 +115,8 @@ export async function ensureTaskFolder(machine, project, branch, repos, report =
 // A PR branch's checkout in a space (the one already on it, else a new one), for the review tab and
 // the sidebar: the multirepo task (ensureTaskFolder), or the plain repo's worktree. A plain repo
 // without one gets it from the worktree dialog, made where the project's wt config says, from
-// origin's branch. report: progress lines for the slow steps.
+// origin's branch. report: progress lines for the slow steps. The space's id; undefined while the
+// worktree dialog is up.
 export async function openBranchCheckout({ machine, project, branch, isRepo, repos }, report = () => {}) {
   if (!isRepo) return openSpaceAt(machine, await ensureTaskFolder(machine, project, branch, repos, report));
   const folder = await checkoutOf(machine, project, branch);
@@ -119,6 +124,24 @@ export async function openBranchCheckout({ machine, project, branch, isRepo, rep
   report(`Fetching ${branch} on ${machineLabel(machine)}…`);
   await trackOriginBranch(machine, project, branch);
   openOverlay({ mod: "wt-dialog", kind: "dialog", width: 460, height: 280, props: { folder: project, machine, branch, action: "new" } });
+}
+
+const CLAUDE_START_MS = 30000;
+
+// Sends prompt to Claude Code in the branch's checkout (openBranchCheckout: made and opened when
+// missing), waiting for a new space's Claude to start. wait(ms): a pause (mods have no setTimeout).
+export async function askClaude(checkout, prompt, wait, report = () => {}) {
+  const space = await openBranchCheckout(checkout, report);
+  if (!space) throw new Error("Make the branch's worktree in the dialog, then try again.");
+  report("Waiting for Claude…");
+  for (const start = Date.now(); Date.now() - start < CLAUDE_START_MS; await wait(500)) {
+    const claude = agents().find((a) => a.space === space && a.app === "claude-code");
+    if (!claude) continue;
+    const r = await hc(["send", claude.address, prompt]);
+    if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || "hc send failed");
+    return;
+  }
+  throw new Error("No Claude Code in the branch's space: start one there, then try again.");
 }
 
 // The branch's review tab open in any space (review tabs publish theirs), or undefined.

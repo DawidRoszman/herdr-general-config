@@ -181,6 +181,14 @@
               "walkthrough of this PR, or of every linked PR as one change (Claude explains the diff step by step, in reading order)"
             ],
             [
+              "shift-w",
+              "Watch: Claude in the branch's checkout watches the open PRs (opens the space, starting Claude when needed)"
+            ],
+            [
+              "f",
+              "on a selected inline comment (Overview): send its review thread to Claude in the branch's checkout to fix"
+            ],
+            [
               "?",
               "this list"
             ]

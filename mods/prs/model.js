@@ -611,3 +611,31 @@ export function cycleFilter(options, value, step) {
   const at = options.indexOf(value);
   return options[(Math.max(at, 0) + step + options.length) % options.length];
 }
+
+// The review thread an inline comment (its index in pr.inlineComments) is in: the comment that
+// started it and the replies after it, as mr lists them (each thread's first, then its answers).
+export function threadOf(comments, index) {
+  let start = index, end = index + 1;
+  while (start > 0 && comments[start].isReply) start--;
+  while (end < comments.length && comments[end].isReply) end++;
+  return comments.slice(start, end);
+}
+
+// What Claude, in the branch's checkout, is asked to do about a review thread. A multirepo task holds
+// each repo in its own folder, so the file is named with its repo.
+export function fixThreadPrompt(pr, thread, isRepo) {
+  const [first] = thread;
+  const where = `${isRepo ? "" : `the ${pr.repo} repo's `}${first.path}${first.line ? `:${first.line}` : ""}`;
+  const quoted = thread.map((c) => `${c.author}: ${c.body.trim()}`.split("\n").map((line) => `> ${line}`).join("\n")).join("\n>\n");
+  return [
+    `Fix this review thread on PR #${pr.number} (${first.url}), about ${where}:`,
+    quoted,
+    `Read the code there and make the change the thread asks for. If it's unclear or you disagree, tell me why instead of changing code. Commit the fix on ${pr.headRefName}, but don't push: tell me what you changed.`,
+  ].join("\n\n");
+}
+
+// Claude's own PR watching, on every linked PR of the branch.
+export function watchPrompt(prs) {
+  const urls = prs.map((pr) => pr.url).join(" ");
+  return `Watch ${prs.length > 1 ? "these PRs" : "this PR"}: ${urls}. Subscribe to ${prs.length > 1 ? "their" : "its"} activity, and when a check fails or a reviewer comments, look into it and fix what you can.`;
+}

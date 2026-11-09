@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
   remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, spaceAt, preferredCopy, parsePlace, worktreeOf,
-  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, commitItems, diffFiles,
+  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, commitItems, diffFiles, threadOf, fixThreadPrompt, watchPrompt,
 } from "./model.js";
 
 const pr = (over = {}) => ({
@@ -256,5 +256,23 @@ assert.deepEqual(mergedWith(middle).map((e) => e.number), [12]);
 assert.deepEqual(mergedWith({}), []);
 const stackMerged = optimisticPr(middle, { action: "merge-stack" }, "me");
 assert.deepEqual([stackMerged.state, ...stackMerged.stack.entries.map((e) => e.state)], ["MERGED", "MERGED", "MERGED", "MERGED", "OPEN"]);
+
+// A review thread for Claude: the comment that started it and its replies.
+const inline = [
+  { author: "ann", body: "Rename this", path: "src/a.ts", line: 4, url: "u1", isReply: false },
+  { author: "bob", body: "Why?\nIt reads fine", path: "src/a.ts", line: 4, url: "u2", isReply: true },
+  { author: "ann", body: "Other", path: "src/b.ts", line: 9, url: "u3", isReply: false },
+];
+assert.deepEqual(threadOf(inline, 1).map((c) => c.url), ["u1", "u2"]);
+assert.deepEqual(threadOf(inline, 0).map((c) => c.url), ["u1", "u2"]);
+assert.deepEqual(threadOf(inline, 2).map((c) => c.url), ["u3"]);
+const threadPr = { number: 107, repo: "acme-shop-backend", headRefName: "feat/SHOP-1-x", url: "https://gh/o/backend/pull/107" };
+const prompt = fixThreadPrompt(threadPr, threadOf(inline, 0), false);
+assert.ok(prompt.startsWith("Fix this review thread on PR #107 (u1), about the acme-shop-backend repo's src/a.ts:4:"));
+assert.ok(prompt.includes("> ann: Rename this\n>\n> bob: Why?\n> It reads fine"));
+assert.ok(prompt.includes("Commit the fix on feat/SHOP-1-x, but don't push"));
+assert.ok(fixThreadPrompt(threadPr, [inline[2]], true).includes("about src/b.ts:9:"));
+assert.equal(watchPrompt([threadPr]), "Watch this PR: https://gh/o/backend/pull/107. Subscribe to its activity, and when a check fails or a reviewer comments, look into it and fix what you can.");
+assert.ok(watchPrompt([threadPr, { url: "x" }]).startsWith("Watch these PRs: https://gh/o/backend/pull/107 x. Subscribe to their"));
 
 console.log("model.js ok");

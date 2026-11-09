@@ -4,8 +4,8 @@
 import { div, list, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { theme, run, settings, panes, focused, spaces, exec, shared, setShared, openOverlay } from "herdr";
-import { sshTarget, mr, mrArgv, mrJson, openReview, ensureTaskFolder, openBranchCheckout } from "./host.js";
-import { prKey, prState, overviewItems, checkItems, checkMark, commitItems, diffFiles, parseDiff, stackDiffs, optimisticPr, stackNeighbor, mergedWith, shortBranch, canReRequest, reviewKey, OPEN_REVIEWS, requestedLogins, shortTime, matches, machineLabel, prStateIcon, checksStatus, reviewStatus, mergeStatus, prActions, checksIcon, checkState, isSettling, hasSameHeads } from "./model.js";
+import { sshTarget, mr, mrArgv, mrJson, openReview, ensureTaskFolder, openBranchCheckout, askClaude } from "./host.js";
+import { prKey, prState, overviewItems, checkItems, checkMark, commitItems, diffFiles, parseDiff, stackDiffs, optimisticPr, stackNeighbor, mergedWith, shortBranch, canReRequest, reviewKey, OPEN_REVIEWS, requestedLogins, shortTime, matches, machineLabel, prStateIcon, checksStatus, reviewStatus, mergeStatus, prActions, checksIcon, checkState, isSettling, hasSameHeads, threadOf, fixThreadPrompt, watchPrompt } from "./model.js";
 import { Search } from "./search.js";
 import { ReviewerPicker } from "./reviewers.js";
 import { highlightDiff } from "./delta.js";
@@ -224,7 +224,7 @@ export class Review {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        this.error = (await work()) || "";
+        this.error = (await work(cx)) || "";
       } catch (error) {
         this.error = String(error.message ?? error);
       }
@@ -429,6 +429,34 @@ export class Review {
     this.notice = "";
   }
 
+  // The review thread of the Overview's selected inline comment, or null.
+  selectedThread() {
+    if (this.tab !== "overview" || !this.pr) return null;
+    const item = this.items()[this.at.overview];
+    return item?.kind === "inline" ? threadOf(this.pr.inlineComments, Number(item.key.slice("inline-".length))) : null;
+  }
+
+  // Sends prompt to Claude Code in the branch's checkout (askClaude), which opens that space.
+  sendToClaude(cx, prompt, sent) {
+    const { machine, project, branch, isRepo } = this.props;
+    this.act(cx, async (cx) => {
+      const wait = (ms) => new Promise((resolve) => cx.timer.after(ms, () => resolve()));
+      await askClaude({ machine, project, branch, isRepo, repos: this.repoShorts() }, prompt, wait, (line) => { this.notice = line; cx.notify(); });
+      this.notice = sent;
+    });
+  }
+
+  fixThread(cx) {
+    const thread = this.selectedThread();
+    if (thread) this.sendToClaude(cx, fixThreadPrompt(this.pr, thread, this.props.isRepo), `Sent ${thread[0].path}'s thread to Claude.`);
+  }
+
+  watchPrs(cx) {
+    const open = this.data.prs.filter((pr) => pr.state === "OPEN");
+    if (!open.length) this.error = "No open PR to watch.";
+    else this.sendToClaude(cx, watchPrompt(open), `Claude is watching ${open.map((pr) => `${pr.short} #${pr.number}`).join(", ")}.`);
+  }
+
   // The walkthrough mod over every PR of this review, read as one change: a plain repo's PR, or
   // each linked repo's with paths under the repo's name. It reads the diffs with mr pr-diff, as
   // the Files tab does, so a project on another machine works too.
@@ -578,6 +606,8 @@ export class Review {
       this.act(cx, () => this.showBlueprint(tab, pane));
     }
     else if (stroke === "w" && this.data?.prs.length) this.openWalkthrough();
+    else if (stroke === "shift-w" && this.data?.prs.length && !this.isBusy) this.watchPrs(cx);
+    else if (stroke === "f" && this.selectedThread() && !this.isBusy) this.fixThread(cx);
     else if (stroke === "g" && this.data) this.act(cx, () => this.openCheckout());
     else if (!pr || this.isBusy) return;
     else if (stroke === "o") cx.open_url(pr.url);
@@ -648,7 +678,11 @@ export class Review {
         this.act(cx, () => this.showBlueprint(tab, pane));
       }, t, { tooltip: "Blueprint of this branch · b" }))
       .child(this.actionButton("act-walkthrough", "eye", "", () => this.openWalkthrough(), t,
-        { tooltip: `Walkthrough of ${this.data.prs.length > 1 ? `all ${this.data.prs.length} linked PRs` : "this PR"}, step by step · w` }));
+        { tooltip: `Walkthrough of ${this.data.prs.length > 1 ? `all ${this.data.prs.length} linked PRs` : "this PR"}, step by step · w` }))
+      .when(this.data.prs.some((linked) => linked.state === "OPEN"), (el) => el.child(this.actionButton("act-watch", "clock", "Watch", (cx) => this.watchPrs(cx), t,
+        { isDisabled: this.isBusy, tooltip: "Claude in the branch's checkout watches the open PRs: fixes failed checks and answers reviews · shift-w" })))
+      .when(Boolean(this.selectedThread()), (el) => el.child(this.actionButton("act-fix-thread", "robot", "Fix thread", (cx) => this.fixThread(cx), t,
+        { isPrimary: true, isDisabled: this.isBusy, tooltip: "Send the selected review thread to Claude in the branch's checkout · f" })));
   }
 
   statusChip(id, status, t) {
@@ -791,6 +825,7 @@ export class Review {
       .child(h_flex().gap(6).text_size(12).min_w(0)
         .child(div().flex_none().font_semibold().text_color(t.foreground).child(item.author))
         .child(div().flex_1().min_w(0).truncate().text_color(item.kind === "inline" ? t.accent : t.muted).child(what))
+        .when(item.kind === "inline" && isSelected, (el) => el.child(div().flex_none().text_color(t.accent).child("f fix in Claude")))
         .child(div().flex_none().text_color(t.dim).child(shortTime(item.at))))
       .child(TextView.markdown(`md-${prKey(this.pr)}-${item.key}`, item.body).text_size(13).text_color(t.foreground));
   }

@@ -6,5 +6,11 @@
       "root": "/Users/you/git/your-multirepo-project"
     }
   },
-  "hiddenStatuses": []
+  "hiddenStatuses": [],
+  "statusStages": {
+    "To Do": "todo",
+    "In Progress": "progress",
+    "Code Review": "review",
+    "In Testing": "testing"
+  }
 }

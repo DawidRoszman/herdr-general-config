@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { toCard, columns, branchFor, matches, isShown, toDetails, inOrder, movedOrder } from "./board.js";
+import { toCard, columns, branchFor, matches, isShown, toDetails, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
 import { adfToMarkdown } from "./adf.js";
 
 const issue = (key, status, category, priority = "Medium", updated = "2026-11-01T00:00:00.000+0000", type = "Story") => ({
@@ -84,3 +84,21 @@ assert.deepEqual(inOrder(board, []).map((c) => c.name), ["To Do", "Code Review",
 const shown = ["To Do", "Code Review", "In Progress"];
 assert.deepEqual(movedOrder(shown, ["Blocked"], "To Do", "In Progress"), ["Code Review", "In Progress", "To Do", "Blocked"], "right: past the target");
 assert.deepEqual(movedOrder(shown, [], "In Progress", "To Do"), ["In Progress", "To Do", "Code Review"], "left: before it");
+
+// An issue's code, and when its status disagrees with it.
+const prs = [{ branch: "feat/SHOP-110-search", state: "OPEN", isDraft: false }, { branch: "fix/SHOP-11", state: "MERGED", isDraft: false }];
+assert.deepEqual(codeFor("SHOP-11", prs, ["feat/SHOP-110-search"]), { prs: [prs[1]], hasBranch: false });
+assert.equal(codeFor("SHOP-110", prs, ["feat/SHOP-110-search"]).hasBranch, true);
+const code = (hasBranch, ...states) => ({ hasBranch, prs: states.map((s) => ({ state: s.replace("DRAFT", "OPEN"), isDraft: s === "DRAFT" })) });
+assert.equal(codeMismatch("todo", code(false)), "");
+assert.equal(codeMismatch("todo", code(true)), "work has started in code");
+assert.equal(codeMismatch("progress", code(true, "DRAFT")), "");
+assert.equal(codeMismatch("progress", code(true, "OPEN")), "a PR is open for review");
+assert.equal(codeMismatch("progress", code(true, "MERGED")), "its PRs are merged");
+assert.equal(codeMismatch("review", code(true, "OPEN", "MERGED")), "");
+assert.equal(codeMismatch("review", code(true)), "no open PR");
+assert.equal(codeMismatch("review", code(true, "DRAFT")), "its PR is a draft");
+assert.equal(codeMismatch("review", code(false, "MERGED", "MERGED")), "its PRs are merged");
+assert.equal(codeMismatch("testing", code(false, "MERGED")), "");
+assert.equal(codeMismatch("testing", code(false, "OPEN")), "a PR is still open");
+assert.equal(codeMismatch(undefined, code(true, "OPEN")), "", "a status with no stage is never checked");

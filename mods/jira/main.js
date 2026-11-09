@@ -5,10 +5,11 @@
 // Issues come from Atlassian's CLI, signed in with OAuth (some organizations block API tokens):
 //   brew tap atlassian/homebrew-acli && brew install acli && acli jira auth login --web
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input, TextView } from "gpui-base";
 import { theme, exec, run, appHome, readTextFile, openOverlay, panes, spaces, settings } from "herdr";
-import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown, inOrder, movedOrder } from "./board.js";
+import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
+import { projectCode } from "./code.js";
 
 const ORDER_KEY = "columns.order"; // localStorage: the status names in the order they were dragged into
 
@@ -47,7 +48,7 @@ async function readConfig() {
   if (!text) throw new Error(`${path} is missing: copy config.example.json beside it to config.json and fill in your Jira site and projects.`);
   const config = JSON.parse(text);
   if (!config.site) throw new Error(`${path} needs "site", e.g. "your-company.atlassian.net".`);
-  return { projects: {}, hiddenStatuses: [], ...config };
+  return { projects: {}, hiddenStatuses: [], statusStages: {}, ...config };
 }
 
 async function searchIssues() {
@@ -78,6 +79,8 @@ export default class Jira extends View {
     this.isShowingDetails = false;
     this.detailKey = null;
     this.cards = undefined;
+    this.code = new Map(); // Jira project key -> { prs, branches }, from its multirepo project
+    this.codeError = "";
     this.config = null;
     this.column = 0;
     this.at = 0;
@@ -117,12 +120,36 @@ export default class Jira extends View {
         for (const column of columns(this.cards)) if (!this.scrolls.has(column.name)) this.scrolls.set(column.name, VirtualListScrollHandle.new());
         this.loadedAt = new Date();
         this.error = "";
+        this.loadCode(cx);
       } catch (error) {
         this.error = String(error.message ?? error);
       }
       this.isLoading = false;
       cx.notify();
     });
+  }
+
+  // After the issues, so the board shows first: reading GitHub through mr takes a few seconds.
+  loadCode(cx) {
+    cx.spawn(async (cx) => {
+      const errors = [];
+      await Promise.all(Object.entries(this.config.projects).map(async ([key, project]) => {
+        try {
+          this.code.set(key, await projectCode(project));
+        } catch (error) {
+          errors.push(`${key}: ${error.message ?? error}`);
+        }
+      }));
+      this.codeError = errors.length ? `Could not compare with the code: ${errors.join(" · ")}` : "";
+      cx.notify();
+    });
+  }
+
+  // Why the card's status disagrees with its code (config.json "statusStages"), or "".
+  mismatch(card) {
+    const code = this.code.get(card.project);
+    const stage = this.config?.statusStages[card.status];
+    return code && stage ? codeMismatch(stage, codeFor(card.key, code.prs, code.branches)) : "";
   }
 
   board() {
@@ -212,7 +239,7 @@ export default class Jira extends View {
   startWork() {
     const card = this.selected();
     if (!card) return "";
-    const target = this.config.projects[card.project];
+    const target = [this.config.projects[card.project]].flat()[0]; // listed on several computers: the first
     if (!target) return `No multirepo project for ${card.project}: add "${card.project}": { "machine", "root" } under "projects" in mods/jira/config.json.`;
     openOverlay({ mod: "multirepo", kind: "dialog", width: 760, height: 480, props: { machine: target.machine, project: target.root, newTask: branchFor(card) } });
     return "";
@@ -258,13 +285,15 @@ export default class Jira extends View {
 
   card(card, isSelected, t) {
     const priorityColor = { Highest: t.blocked, High: t.blocked, Medium: t.working, Low: t.dim, Lowest: t.dim }[card.priority] ?? t.dim;
+    const mismatch = this.mismatch(card);
     return div().flex_none().h(CARD_HEIGHT).pb(6).child(
       v_flex().size_full().p(10).gap(4).rounded(8).border(1).cursor_pointer()
         .border_color(isSelected ? t.accent : t.border).bg(isSelected ? t.selected : t.background)
         .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
         .child(h_flex().gap(8).items_center().text_size(11.5)
           .child(div().flex_none().font_semibold().text_color(t.accent).child(card.key))
-          .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(card.type))
+          .when(Boolean(mismatch), (el) => el.child(svg("mods/jira/alert.svg").size(13).flex_none().text_color(t.working)))
+          .child(div().flex_1().min_w(0).truncate().text_color(mismatch ? t.working : t.dim).child(mismatch ? `Not ${card.status}? ${mismatch}` : card.type))
           .child(div().flex_none().text_color(priorityColor).child(card.priority)))
         .child(div().h(40).overflow_hidden().text_size(12.5).line_height("20px").text_color(t.foreground).child(card.summary)));
   }
@@ -415,6 +444,7 @@ export default class Jira extends View {
           }))
           .when(this.isShowingDetails && Boolean(this.detailKey), (el) => el.child(this.detailsPanel(t)))))
       .when(Boolean(this.error), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.blocked).child(this.error)))
+      .when(Boolean(this.codeError), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.working).child(this.codeError)))
       .child(div().flex_none().px(16).py(8).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
         .child("? keys · h/l column · drag a header or H/L to move it · j/k issue · click/↵ details · o open in Jira · s start work (multirepo task) · a hidden statuses · / search · r refresh"))
       .when(this.isShowingKeys, (el) => el.child(keyHelp("jira-keys", "Jira board keys", this.keySections, t)));
