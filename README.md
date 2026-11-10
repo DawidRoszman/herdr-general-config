@@ -24,6 +24,10 @@ layout, whose file and mod names it keeps (`layouts/herdr-t3.json`, `t3-*`), and
   for the Claude Code account it really runs as (work or personal, from its `CLAUDE_CONFIG_DIR`).
 - **Checkouts from PRs:** `g` in a PR review or the PR list opens the branch's multirepo task or
   worktree in a space, making it when missing.
+- **Claude as a chat** (`cmd-alt-n`, `cmd-shift-a`, or `cmd-enter` on a space in New tab; new
+  workspaces open one): `t3-chat` draws a Claude Code session as T3 Code draws a thread, with
+  Markdown, the work log and diffs, plans and approvals, and T3's composer. Claude Code itself
+  runs in a terminal pane hidden behind the chat, so it stays a normal Herdr agent.
 - **Jira** board (`cmd-shift-j`) whose status columns drag into your own order, with a warning
   on issues whose status disagrees with their PRs and task branches, a **browser** pane shared with your agents (`cmd-shift-i`),
   **Blueprint** flowcharts, **worktree** dialogs, **port forwarding**, a **command palette**
@@ -84,7 +88,9 @@ An agent never overwrites a mod, so adding the layout again would install second
 ## Credits
 
 The T3 layout and `t3-*` mods are [herdr-t3](https://github.com/JinJieBeWater/herdr-t3) by
-JinJieBeWater (Apache-2.0), changed as described above; `t3-panels` is new. `changes-multi`, `t3-files` and
+JinJieBeWater (Apache-2.0), changed as described above; `t3-panels` and `t3-chat` are new
+(`t3-chat` copies the look of [T3 Code](https://github.com/pingdotgg/t3code)'s chat, MIT, T3 Tools Inc.;
+none of its code is included). `changes-multi`, `t3-files` and
 `wt-dialog` start from Herdr's shipped `changes`, `files` and `worktree` mods (Apache-2.0). The license is
 in [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt). `walkthrough` is
 [herdr-walkthrough](https://github.com/dmazlum/herdr-walkthrough) by dmazlum (MIT), extended

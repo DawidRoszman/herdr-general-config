@@ -81,7 +81,7 @@ async function herdrDo(command, args) {
   return out;
 }
 
-// The space already on folder, else a new one there with the wts tabs (claude, terminal, nvim), as
+// The space already on folder, else a new one there with the wts tabs (claude, terminal, nvim; claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.) as
 // multirepo/remote.js and wt-dialog open a workspace (mods can't import across folders). Its id.
 export async function openSpaceAt(machine, folder) {
   const space = spaceAt(spaces(), machine, folder);
@@ -89,8 +89,8 @@ export async function openSpaceAt(machine, folder) {
     run("space.select", { id: space.id });
     return space.id;
   }
-  const { space: id, tab: claude } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "claude", argv: ["claude"] });
-  const { tab: terminal } = await herdrDo("tab.new", { space: id, folder, name: "terminal" });
+  const { space: id, tab: terminal } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "terminal" });
+  const { tab: claude } = await herdrDo("tab.new", { space: id, name: "claude", mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } });
   const { tab: nvim } = await herdrDo("tab.new", { space: id, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, tab] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id: tab, index: index + 1 });
   await herdrDo("space.select", { id });

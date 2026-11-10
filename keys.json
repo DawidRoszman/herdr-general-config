@@ -43,6 +43,16 @@
         "mod": "browser"
       }
     },
+    "cmd-shift-a": {
+      "command": "tab.new",
+      "args": {
+        "name": "claude",
+        "mod": "t3-chat",
+        "props": {
+          "view": "chat"
+        }
+      }
+    },
     "cmd-shift-k": "mod.open:walkthrough",
     "cmd-shift-g": "mod.open:prs"
   },
@@ -111,6 +121,15 @@
     "cmd-alt-g": "t3-panels.github",
     "cmd-alt-r": "t3-panels.reveal",
     "cmd-n": "t3-panels.new-space",
-    "cmd-shift-t": "t3-panels.new-tab"
+    "cmd-shift-t": "t3-panels.new-tab",
+    "cmd-alt-n": {
+      "command": "tab.new",
+      "args": {
+        "mod": "t3-chat",
+        "props": {
+          "view": "chat"
+        }
+      }
+    }
   }
 }

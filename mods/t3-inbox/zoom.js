@@ -12,6 +12,9 @@ export function focusPane(pane) {
   run("pane.focus", { pane });
 }
 export function focusAgent(terminal) {
-  zoomTo(p => p.terminal === terminal);
+  // A chat's Claude Code (the t3-chat mod, or the older agent-chat) sits in a pane hidden behind its chat: going to that agent shows the chat.
+  const ps = panes(), own = ps.find(p => p.terminal === terminal), chat = own && ps.find(p => p.tab === own.tab && (p.mod === "t3-chat" || p.mod === "agent-chat"));
+  zoomTo(chat ? (p => p.pane === chat.pane) : (p => p.terminal === terminal));
   run("agent.focus", { terminal });
+  if (chat) run("pane.focus", { pane: chat.pane });
 }

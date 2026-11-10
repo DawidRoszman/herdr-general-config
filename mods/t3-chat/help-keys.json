@@ -1,0 +1,92 @@
+{
+  "views": [
+    {
+      "id": "chat",
+      "title": "Chat tab",
+      "sections": [
+        {
+          "title": "Writing",
+          "rows": [
+            [
+              "enter",
+              "send the message to Claude Code"
+            ],
+            [
+              "shift-enter",
+              "new line"
+            ],
+            [
+              "up / down",
+              "in an empty box: the messages sent before"
+            ],
+            [
+              "shift-tab",
+              "Claude Code's next mode (Supervised, Auto-accept edits, Plan, Auto); the mode control does the same"
+            ],
+            [
+              "/command",
+              "any Claude Code slash command (/model, /compact, …); common ones are offered, tab accepts"
+            ],
+            [
+              "@path",
+              "mention a file of the chat's folder (fuzzy): tab accepts, up/down choose"
+            ],
+            [
+              "1 / 2 / 3…",
+              "in an empty box: answer what Claude asks (permission, plan)"
+            ],
+            [
+              "esc",
+              "close the model menu; stop Claude's turn while it works; else leave the box"
+            ]
+          ]
+        },
+        {
+          "title": "Reading (after esc)",
+          "rows": [
+            [
+              "j / k",
+              "next / previous row"
+            ],
+            [
+              "l / enter",
+              "open a work group, a tool call or a details block"
+            ],
+            [
+              "h",
+              "close it"
+            ],
+            [
+              "g / G",
+              "top / the end (G follows new messages again)"
+            ],
+            [
+              "wheel",
+              "scroll; leaving the end stops following a reply being written, coming back follows again"
+            ],
+            [
+              "1 / 2 / 3…",
+              "answer Claude's question (permission, plan) while it waits"
+            ],
+            [
+              "t",
+              "Claude Code's own terminal beside the chat, for a prompt the chat can't show; again to hide it"
+            ],
+            [
+              "i / a",
+              "back to the box"
+            ],
+            [
+              "esc",
+              "stop Claude's turn, else close the tab"
+            ],
+            [
+              "?",
+              "this list"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -22,11 +22,11 @@ async function herdrDo(command, args) {
 }
 
 // A new workspace's tabs, as in the `wts` tmux flow: claude, a terminal and nvim, in that order
-// (new tabs go next to the selected one, so the order is set at the end). The agent-chat mod is
-// not used for now. Blueprint opens on request only (cmd-shift-b). machine: a Herdr machine name, or null here.
+// (new tabs go next to the selected one, so the order is set at the end). Claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.
+// Blueprint opens on request only (cmd-shift-b). machine: a Herdr machine name, or null here.
 async function openWorkspace(folder, machine) {
-  const { space, tab: claude } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "claude", argv: ["claude"] });
-  const { tab: terminal } = await herdrDo("tab.new", { space, folder, name: "terminal" });
+  const { space, tab: terminal } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "terminal" });
+  const { tab: claude } = await herdrDo("tab.new", { space, name: "claude", mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } });
   const { tab: nvim } = await herdrDo("tab.new", { space, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, id] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id, index: index + 1 });
   await herdrDo("space.select", { id: space });

@@ -82,8 +82,9 @@ export async function openWorkspace(folder, machine) {
     run("space.select", { id: tabs.get(pane.tab).id });
     return;
   }
-  const { space, tab: claude } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "claude", argv: ["claude"] });
-  const { tab: terminal } = await herdrDo("tab.new", { space, folder, name: "terminal" });
+  // Claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.
+  const { space, tab: terminal } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "terminal" });
+  const { tab: claude } = await herdrDo("tab.new", { space, name: "claude", mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } });
   const { tab: nvim } = await herdrDo("tab.new", { space, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, id] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id, index: index + 1 });
   await herdrDo("space.select", { id: space });

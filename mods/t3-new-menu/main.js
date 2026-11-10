@@ -1,4 +1,4 @@
-// New: pick the space and open a terminal tab there, or start a new space, on a machine picked as T3 picks an environment.
+// New: pick the space and open a terminal tab there (⌘Enter: a chat tab, the t3-chat mod), or start a new space, on a machine picked as T3 picks an environment.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, machines, panes, run, closeOverlay, props, window, keys, home, shared, setShared } from "herdr";
@@ -36,7 +36,8 @@ export default class NewMenu extends View {
     const field = (placeholder) => {
       const input = InputState.new({ placeholder });
       input.on("change", (_e, cx) => { this.filter = input.value(); this.at = 0; cx.notify(); });
-      input.on("submit", () => { this.choose(this.items()[this.at]); });
+      // ⌘Enter (the submit's `secondary`): a chat instead of a terminal.
+      input.on("submit", (e) => { this.choose(this.items()[this.at], { chat: Boolean(e?.secondary) && !this.picking }); });
       return input;
     };
     this.spaceInput = field("Search spaces…");
@@ -68,10 +69,11 @@ export default class NewMenu extends View {
       .map(s => ({ key: `space:${s.id}`, space: s }));
   }
 
-  choose(item) {
+  // chat: a chat with Claude Code (the t3-chat mod) instead of a terminal.
+  choose(item, { chat = false } = {}) {
     if (!item || item.off) return;
     closeOverlay(props().overlay);
-    if (item.space) run("tab.new", { space: item.space.id });
+    if (item.space) run("tab.new", chat ? { space: item.space.id, mod: "t3-chat", props: { view: "chat" } } : { space: item.space.id });
     else run("space.new", { machine: item.machine ?? "" });
   }
 
@@ -148,6 +150,7 @@ export default class NewMenu extends View {
         .child(h_flex().gap(12).items_center()
           .child(hint("↑ ↓", "Navigate"))
           .child(hint("Enter", this.picking ? "New space" : "New tab"))
+          .when(!this.picking, el => el.child(hint("⌘Enter", "New chat")))
           .child(hint("Esc", "Close")))
         .when(this.picking, el => el.child(footButton("new-back", "Back to spaces").on_click((_e, cx) => this.showMachines(false, cx)).child("← Spaces")))
         .when(!this.picking, el => el.child(footButton("space-new", "New space").on_click((_e, cx) => this.newSpace(cx))
