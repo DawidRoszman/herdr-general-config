@@ -34,10 +34,10 @@ export function retryAtFrom(header, now) {
 export const WARN_AT = 80;
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-// The Claude accounts whose usage the bar shows: a context name (T3's switch, else accounts.py's
+// The Claude accounts whose usage the bar shows: a profile name (T3's switch, else accounts.py's
 // kind: work | personal) -> its Claude config dir, null for Claude Code's default (~/.claude).
-// From config.json "claudeConfigDirs" beside this file (see config.example.json); without one,
-// the default account alone.
+// From the profiles (claudeAccountsOfProfiles); in a setup without profiles from config.json
+// "claudeConfigDirs" beside this file (see config.example.json), else the default account alone.
 export const DEFAULT_CLAUDE_ACCOUNTS = { default: null };
 
 /** config.json's text (null: no file) as the accounts map. */
@@ -50,6 +50,13 @@ export function parseClaudeAccounts(text) {
     && Object.values(dirs).every((dir) => dir === null || typeof dir === "string");
   if (!isValid) throw new Error('config.json needs "claudeConfigDirs": { "<context>": "<config dir>" or null }');
   return dirs;
+}
+
+/** The accounts map from profiles (t3-context's shared "context".profiles): each profile's Claude
+ *  config dir. null when no profile declares a Claude account: config.json's map is used then. */
+export function claudeAccountsOfProfiles(profiles) {
+  const declared = Object.entries(profiles ?? {}).filter(([, profile]) => profile.accounts?.claude);
+  return declared.length ? Object.fromEntries(declared.map(([name, profile]) => [name, profile.accounts.claude.configDir ?? null])) : null;
 }
 
 /** The account shown for a context: its own, else the only one there is; null when neither. */

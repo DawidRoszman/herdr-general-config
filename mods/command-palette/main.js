@@ -61,6 +61,8 @@ const NAMED = [
   ["tab.new", { name: "Projects", mod: "multirepo", props: { view: "projects" } }, "App", "Projects: multirepo tasks", "multirepo mr tasks worktrees repos"],
   ["mod.open", { name: "multirepo" }, "App", "Multirepo dialog (quick)", "multirepo mr tasks new task clone install"],
   ["mod.open", { name: "mr-pull" }, "App", "Pull task repos (mr pull)", "multirepo mr pull fetch update sync fast-forward git"],
+  ["mod.open", { name: "profile-edit" }, "App", "Profiles: edit, new, delete", "profile work personal account machine folder agents context switch"],
+  ["t3-context.next", {}, "App", "Profiles: show the next profile", "profile work personal switch context next toggle"],
   ["app.welcome", {}, "App", "Welcome", "intro start onboarding"],
   ["app.whats_new", {}, "App", "What's new", "release changes news update"],
   ["app.reset", {}, "App", "Reset to the default screen", "escape hatch broken restore"],

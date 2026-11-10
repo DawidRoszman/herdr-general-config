@@ -74,8 +74,9 @@ export class ReviewerPicker {
 
   row(login, isSelected, t) {
     const isTicked = this.ticked.has(login);
-    return h_flex().w_full().h(ROW_HEIGHT).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+    return h_flex().id(`reviewer-${login}`).w_full().h(ROW_HEIGHT).px(8).gap(8).items_center().rounded(6).cursor_pointer()
       .when(isSelected, (el) => el.bg(t.selected))
+      .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
       .child(div().flex_none().w(16).h(16).rounded(4).border(1).border_color(isTicked ? t.accent : t.input)
         .when(isTicked, (el) => el.bg(t.accent)).flex().items_center().justify_center()
         .child(div().text_size(11).text_color(t.accent_foreground).child(isTicked ? "✓" : "")))
@@ -110,7 +111,7 @@ export class ReviewerPicker {
             .child(Scrollbar.vertical("pr-reviewer-list").absolute().inset_0()))
         .child(h_flex().justify_between().items_center()
           .child(div().text_size(11).text_color(t.dim).child("space tick · / search · enter save · esc cancel"))
-          .child(div().id("pr-reviewers-save").px(10).h(26).flex().items_center().rounded(6).cursor_pointer().bg(t.solid)
+          .child(div().id("pr-reviewers-save").px(10).h(26).flex().items_center().rounded(6).cursor_pointer().bg(t.solid).hover((s) => s.opacity(0.88))
             .on_click((_e, cx) => { this.onSubmit(cx); cx.notify(); })
             .child(div().text_size(12).text_color(t.solid_foreground).child("Save")))));
   }

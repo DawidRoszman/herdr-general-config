@@ -16,7 +16,7 @@ import { h_flex } from "gpui-base";
 import { spaces, agents, panes, focused, theme, run, window, keys, exec, hc, appHome, readTextFile, shared, setShared, props } from "herdr";
 import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
 import { System, bytes, pct, level, heat } from "./system.js";
-import { USAGE_SHARED_KEY, shouldRefresh, parseClaudeAccounts, claudeAccountFor, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, asOf } from "./usage.js";
+import { USAGE_SHARED_KEY, shouldRefresh, parseClaudeAccounts, claudeAccountFor, claudeAccountsOfProfiles, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, asOf } from "./usage.js";
 
 const ACCOUNTS = `${appHome()}/mods/status-accounts/accounts.py`;
 const CONFIG = `${appHome()}/mods/status-accounts/config.json`;
@@ -45,20 +45,34 @@ async function bridge(args, machine) {
   return JSON.parse(r.stdout);
 }
 
-// The shown space's machine and the folder of its focused (else first) terminal.
+// The shown space's machine, its focused (else first) terminal and that terminal's folder.
 function currentPlace() {
   const space = spaces().find((s) => s.id === focused()?.space) ?? spaces().find((s) => s.active);
   if (!space) return null;
   const tabs = new Set(space.tabs.map((t) => t.id));
   const all = panes().filter((p) => tabs.has(p.tab) && p.cwd);
   const pane = all.find((p) => p.focused) ?? all.find((p) => p.tab === space.tabs.find((t) => t.active)?.id) ?? all[0];
-  return pane ? { machine: space.machine ?? null, folder: pane.cwd } : null;
+  return pane ? { machine: space.machine ?? null, folder: pane.cwd, terminal: pane.terminal } : null;
 }
 
 // "~" for home, else the folder's last name: the bar says which folder the accounts are for.
 function shortFolder(folder) {
   const name = folder.split("/").filter(Boolean).pop() ?? folder;
   return /^\/(Users|home)\/[^/]+\/?$/.test(folder) ? "~" : name;
+}
+
+// A work account by its organization, a personal one as "personal".
+const accountName = (account) => (account.kind === "work" ? account.org || account.email : PERSONAL);
+
+// The profile (t3-context's shared "context") of that name, for a chip's badge and colour; null when unknown.
+const profileNamed = (name) => (name && shared("context")?.profiles?.[name]) || null;
+
+// A Claude account chip in its profile's badge and colour, as the pane headers' and the agents list's chips.
+// Without profiles: amber for work and blue for personal.
+function claudeChip(t, account, profile, label, tooltip) {
+  const color = profile ? t[profile.color] ?? t.dim : account.kind === "work" ? t.ansi3 : account.kind === PERSONAL ? t.ansi4 : t.dim;
+  return div().id("account-claude").px(7).h(18).flex().items_center().rounded(9).bg(`${color}26`).text_color(color).font_semibold()
+    .tooltip(tooltip).child(label);
 }
 
 export default class StatusAccounts extends View {
@@ -72,11 +86,11 @@ export default class StatusAccounts extends View {
     cx.timer.every(1500, (cx) => this.lookUp(cx));
     this.sys = new System();
     this.sys.start(cx);
-    this.claudeAccounts = null; // context -> Claude config dir, from config.json (usage.js); null until read
+    this.configAccounts = null; // context -> Claude config dir, from config.json (usage.js); null until read
     this.claudeConfigError = null;
     cx.spawn(async (cx) => {
       try {
-        this.claudeAccounts = parseClaudeAccounts(await readTextFile(CONFIG));
+        this.configAccounts = parseClaudeAccounts(await readTextFile(CONFIG));
       } catch (error) {
         this.claudeConfigError = `${CONFIG}: ${error.message ?? error}`;
       }
@@ -161,25 +175,37 @@ export default class StatusAccounts extends View {
     return key ? `${key}  commands` : "commands";
   }
 
+  // The Claude account of the shown terminal: the agent's own when it runs one (lookUpAgents,
+  // from its process), else the one a new terminal in its folder gets. gh is always the folder's.
   accountChips(t) {
     const place = currentPlace();
-    const found = place && this.accounts.get(`${place.machine}|${place.folder}`);
-    if (!found || (!found.value && !found.error)) return [];
-    if (found.error) return [div().id("account-error").text_color(t.blocked).tooltip(found.error).child("accounts: unknown")];
-    const { claude, gh, warning } = found.value;
-    const isWork = claude.kind === "work";
-    const color = isWork ? t.ansi3 : claude.kind === PERSONAL ? t.ansi4 : t.dim;
-    const chips = [
-      div().id("account-claude").px(7).h(18).flex().items_center().rounded(9).bg(`${color}26`).text_color(color).font_semibold()
-        .tooltip(`A new Claude Code in ${place.folder} signs in as ${claude.email || "nobody"} (${claude.configDir}). Running agents show their own account in their pane header.`)
-        .child(`${shortFolder(place.folder)}: Claude ${claude.email ? (isWork ? claude.org || claude.email : PERSONAL) : "not signed in"}`),
-    ];
-    if (gh) chips.push(div().id("account-gh").tooltip(`gh in ${place.folder} acts as ${gh}`).child(`gh ${gh}`));
+    if (!place) return [];
+    const agent = place.terminal && (shared(AGENT_ACCOUNTS) ?? {})[place.terminal];
+    const found = this.accounts.get(`${place.machine}|${place.folder}`);
+    const chips = [];
+    if (agent?.email) {
+      const profile = profileNamed(shared("context")?.byAgent?.[place.terminal] ?? agent.profile);
+      chips.push(claudeChip(t, agent, profile, `Claude ${profile?.badge ?? accountName(agent)}`,
+        `This agent (${place.terminal}) runs as ${agent.email} (${agent.configDir}), from its own CLAUDE_CONFIG_DIR.`));
+    } else if (found?.error) {
+      return [div().id("account-error").text_color(t.blocked).tooltip(found.error).child("accounts: unknown")];
+    } else if (found?.value) {
+      const { claude } = found.value, profile = profileNamed(found.value.profile);
+      chips.push(claudeChip(t, claude, profile, `${shortFolder(place.folder)}: Claude ${claude.email ? profile?.badge ?? accountName(claude) : "not signed in"}`,
+        `A new terminal in ${place.folder} gets Claude Code as ${claude.email || "nobody"} (${claude.configDir}).`));
+    }
+    const { gh, warning } = found?.value ?? {};
+    if (gh) chips.push(div().id("account-gh").tooltip(`gh in a new terminal in ${place.folder} acts as ${gh}`).child(`gh ${gh}`));
     if (warning) chips.push(div().id("account-warning").text_color(t.blocked).tooltip(warning).child("⚠ direnv"));
     return chips;
   }
 
-  // The shown context (T3's Work | Personal switch), else the account of the shown folder.
+  // profile -> Claude config dir: the profiles' (t3-context's shared "context"), else config.json's.
+  claudeAccounts() {
+    return claudeAccountsOfProfiles(shared("context")?.profiles) ?? this.configAccounts;
+  }
+
+  // The shown profile (T3's switch), else the account of the shown folder.
   usageContext() {
     const context = shared("context")?.current;
     if (context) return context;
@@ -187,10 +213,16 @@ export default class StatusAccounts extends View {
     return place && this.accounts.get(`${place.machine}|${place.folder}`)?.value?.claude.kind;
   }
 
+  // Codex's limits matter where Codex may run: not in a profile (the switch's) that forbids it.
+  isCodexShown() {
+    const context = shared("context");
+    return !(context?.profiles?.[context.current]?.agents?.forbidden ?? []).includes("codex");
+  }
+
   // Each source at most once per REFRESH_MS across all copies of the bar (shouldRefresh). Never awaited by render.
   refreshUsage(cx) {
-    const account = this.claudeAccounts && claudeAccountFor(this.usageContext(), this.claudeAccounts);
-    const sources = [["codex", () => fetchCodexUsage({ exec })]];
+    const accounts = this.claudeAccounts(), account = accounts && claudeAccountFor(this.usageContext(), accounts);
+    const sources = this.isCodexShown() ? [["codex", () => fetchCodexUsage({ exec })]] : [];
     if (account) sources.push([`claude:${account.name}`, () => fetchClaudeUsage(account.configDir, { exec, fetch })]);
     for (const [key, load] of sources) {
       const known = usageCache()[key];
@@ -224,15 +256,15 @@ export default class StatusAccounts extends View {
 
   usageChips(t) {
     const context = this.usageContext();
-    const account = this.claudeAccounts && claudeAccountFor(context, this.claudeAccounts);
+    const accounts = this.claudeAccounts(), account = accounts && claudeAccountFor(context, accounts);
     const claude = account ? usageCache()[`claude:${account.name}`]
       : this.claudeConfigError ? { error: this.claudeConfigError }
-      : this.claudeAccounts ? { error: `No Claude account in config.json for ${context ?? "the shown folder"}` }
+      : accounts ? { error: `No Claude account for ${context ?? "the shown folder"} in profiles.json or config.json` }
       : null;
     const about = account ? `Claude ${account.name} account (${account.configDir ?? "~/.claude"}), from Claude Code's usage endpoint` : "Claude";
     return [
       this.usageChip(t, "usage-claude", "Claude", claude, about),
-      this.usageChip(t, "usage-codex", "Codex", usageCache().codex, "Codex, from its last turn's log in ~/.codex/sessions"),
+      ...(this.isCodexShown() ? [this.usageChip(t, "usage-codex", "Codex", usageCache().codex, "Codex, from its last turn's log in ~/.codex/sessions")] : []),
     ];
   }
 
@@ -261,7 +293,9 @@ export default class StatusAccounts extends View {
     if (this.isPublishOnly) return div();
     const t = theme();
     const space = spaces().find(s => s.active);
-    const list = agents();
+    // The shown profile's agents only (t3-context's switch), as the sidebar lists them.
+    const offAgents = new Set(shared("context")?.offAgents ?? []);
+    const list = agents().filter((a) => !offAgents.has(a.address));
     const needs = list.filter(a => a.status === "blocked").length;
     const label = (icon, text) => h_flex().gap(6).items_center().child(svg(`mods/workspace-chrome/${icon}.svg`).size(13)).child(text);
     return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)

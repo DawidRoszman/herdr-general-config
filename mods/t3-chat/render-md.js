@@ -1,11 +1,13 @@
 // A Markdown block (markdown.js) drawn as T3 Code draws it: the numbers are T3's index.css
 // "Chat markdown rendering" and ChatMarkdown.tsx (rem = 16px). Inline marks are TextView's.
-// No handlers in here: blocks are rows of the chat's virtual list (one click action per row).
+// Handlers only on images (a click opens one, state.onOpenImage); other clicks are the row's.
 
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor } from "gpui-base";
 import { window, settings } from "herdr";
 import { blocks, gapBefore, columnWidths, CODE } from "./markdown.js";
+import { fitSize } from "./model.js";
+import { tip, glow } from "./tip.js";
 
 // T3's --font-sans starts with -apple-system: the system font. Elsewhere the layout's ui font.
 export const sans = (el) => (window()?.platform === "macos" ? el.font_family(".AppleSystemUIFont") : el);
@@ -31,10 +33,29 @@ function text(id, markdown, t, { size = BODY, leading = LEADING, color = body(t)
 
 const ALERTS = { note: "Note", tip: "Tip", important: "Important", warning: "Warning", caution: "Caution" };
 
-// Markdown inside a block (a quote, a list item): its own blocks with their margins.
-export function nested(markdown, id, t, depth = 0) {
+// Markdown inside a block (a quote, a list item): its own blocks with their margins. state: as mdBlock's.
+export function nested(markdown, id, t, depth = 0, state = {}) {
   const inner = blocks(markdown);
-  return v_flex().w_full().min_w(0).children(inner.map((block, i) => mdBlock(block, inner[i - 1] ?? null, `${id}-${i}`, t, {}, depth)));
+  return v_flex().w_full().min_w(0).children(inner.map((block, i) => mdBlock(block, inner[i - 1] ?? null, `${id}-${i}`, t, { ...state, isOpen: false }, depth)));
+}
+
+// An image of a reply (markdown.js image): a thumbnail at most the lane wide and IMAGE_MAX_HEIGHT
+// tall, its own shape kept, from its sharp copy (thumb) when made; a click opens it large
+// (onOpenImage(src): the chat's lightbox), else in the system's viewer.
+// Not shown (yet, or at all): its source with why, as muted text, so the message still reads.
+// picture: the chat's answer for its src: { path, thumb?, width, height, open } | { error } | {} while it loads.
+const IMAGE_MAX_HEIGHT = 320;
+export const IMAGE_BOX = { width: 736, height: IMAGE_MAX_HEIGHT }; // the largest a reply's image is drawn
+function drawImage(block, id, t, picture, width, onOpenImage) {
+  if (picture?.path) {
+    const size = fitSize(picture, width, IMAGE_MAX_HEIGHT);
+    return div().id(`img-${id}`).w(size.width).h(size.height).cursor_pointer()
+      .on_click((_e, cx) => { cx.stop_propagation(); if (onOpenImage) onOpenImage(block.src); else cx.open_url(picture.open); })
+      .child(image(picture.thumb ?? picture.path).w(size.width).h(size.height).rounded(8));
+  }
+  const note = picture?.error ? ` · ${picture.error}` : " · loading…";
+  return sans(div().w_full().min_w(0).text_size(13).line_height("20px").text_color(t.muted)
+    .child(div().font_family(settings().font_family ?? "JetBrains Mono").child(block.alt ? `${block.alt}: ${block.src}${note}` : `${block.src}${note}`)));
 }
 
 // ul / ol: a 1.25rem gutter with the marker outside the text; disc, circle, square by depth; 0.25rem
@@ -65,7 +86,7 @@ function listMarker(item, t, depth) {
   return box(dot.bg(body(t)));
 }
 
-function drawList(block, id, t, depth) {
+function drawList(block, id, t, depth, state) {
   const widest = Math.max(...block.items.map((item) => item.marker.length));
   const gutter = Math.max(GUTTER, widest * 8 + 5);
   return v_flex().w_full().children(block.items.map((item, i) => {
@@ -73,7 +94,7 @@ function drawList(block, id, t, depth) {
     const gap = !previous ? 0 : block.isLoose || /\n/.test(previous.text) ? 10.4 : 4;
     return h_flex().w_full().items_start().pt(gap)
       .child(div().w(gutter).flex_none().child(listMarker(item, t, depth)))
-      .child(nested(item.text, `${id}-${i}`, t, depth + 1));
+      .child(nested(item.text, `${id}-${i}`, t, depth + 1, state));
   }));
 }
 
@@ -83,21 +104,25 @@ function drawList(block, id, t, depth) {
 function drawTable(block, id, t, lane) {
   const widths = columnWidths(block, lane);
   const line = alpha(t.border, 0.6);
-  const row = (cells, r, isHead) => h_flex().w_full().items_start().border_b(1).border_color(line)
+  const width = widths.reduce((sum, w) => sum + w, 0);
+  const row = (cells, r, isHead) => h_flex().w(width).items_start().border_b(1).border_color(line)
     .children(cells.map((cell, c) => div().w(widths[c]).flex_none().py(isHead ? 8.8 : 7.2)
       .pl(c === 0 ? 0 : 12).pr(c === cells.length - 1 ? 0 : 12)
       .child(text(`${id}-${r}-${c}`, cell, t, isHead ? { weight: 600, color: t.foreground } : {}))));
-  return v_flex().w_full().child(row(block.header, "h", true)).children(block.rows.map((cells, r) => row(cells, r, false)));
+  const table = v_flex().w(width).flex_none().child(row(block.header, "h", true)).children(block.rows.map((cells, r) => row(cells, r, false)));
+  // Wider than the lane (a narrow pane): it scrolls sideways, as T3's overflow-x-auto.
+  return width <= lane + 0.5 ? table : div().id(`${id}-scroll`).w_full().overflow_x_scrollbar().child(table);
 }
 
 // <details> (MarkdownDetails.tsx): ruled above and below at 60%, a 16px chevron and the summary
 // at 14px medium with 8px above and below; the body 24px in, 12px under. The row is the toggle.
-function drawDetails(block, id, t, depth, isOpen) {
+function drawDetails(block, id, t, depth, state) {
+  const { isOpen } = state;
   return v_flex().w_full().border_t(1).border_b(1).border_color(alpha(t.border, 0.6)).cursor_pointer()
     .child(h_flex().w_full().py(8).gap(8).items_center()
       .child(svg(`mods/t3-chat/icons/chevron-${isOpen ? "down" : "right"}.svg`).size(16).flex_none().text_color(t.muted))
       .child(sans(div().min_w(0).text_size(BODY).line_height("20px").font_weight(500).text_color(t.foreground).child(block.summary))))
-    .when(isOpen, (el) => el.child(div().w_full().pl(24).pb(12).child(nested(block.body, id, t, depth))));
+    .when(isOpen, (el) => el.child(div().w_full().pl(24).pb(12).child(nested(block.body, id, t, depth, state))));
 }
 
 function draw(block, id, t, depth, state) {
@@ -114,14 +139,16 @@ function draw(block, id, t, depth, state) {
       const tone = { note: t.accent, tip: t.done, important: t.accent, warning: t.working, caution: t.blocked }[block.alert];
       return v_flex().w_full().pl(12.8).border_l(2).border_color(tone ?? alpha(t.foreground, 0.35)).gap(4)
         .when(Boolean(block.alert), (el) => el.child(sans(div().text_size(BODY).font_weight(600).text_color(tone).child(ALERTS[block.alert]))))
-        .child(nested(block.text, id, t, depth));
+        .child(nested(block.text, id, t, depth, state));
     }
     case "list":
-      return drawList(block, id, t, depth);
+      return drawList(block, id, t, depth, state);
     case "table":
       return drawTable(block, id, t, state.width - depth * GUTTER);
     case "details":
-      return drawDetails(block, id, t, depth, state.isOpen);
+      return drawDetails(block, id, t, depth, state);
+    case "image":
+      return drawImage(block, id, t, state.pictures?.get(block.src), state.width - depth * GUTTER, state.onOpenImage);
     case "html":
       // Raw HTML: what TextView's HTML draws of it (no CSS).
       return sans(div().w_full().line_height(LEADING).child(TextView.html(id, `<div>${block.raw}</div>`).text_size(BODY).text_color(body(t))));
@@ -132,7 +159,8 @@ function draw(block, id, t, depth, state) {
 }
 
 // One block as a list row's content: its collapsed top margin, then the block.
-// depth: how many lists it is nested in. state: { isOpen (a details block), width (the lane's) }.
+// depth: how many lists it is nested in. state: { isOpen (a details block), width (the lane's),
+// pictures (image src -> what drawImage shows), onOpenImage (src -> opens it large) }.
 export function mdBlock(block, previous, id, t, state = {}, depth = 0) {
   return div().w_full().min_w(0).pt(gapBefore(previous, block)).child(draw(block, id, t, depth, { width: 736, ...state }));
 }
@@ -145,14 +173,18 @@ const codeEdge = (t) => (settings().dark ? "#00000000" : alpha(t.border, 0.7));
 // The header: language (mono 11px, 72% foreground) left; copy right, a check for a moment after.
 // The whole row is the button (one click action per row).
 // height: the row's, margin above included; the header fills what is under the margin.
-export function codeHead(block, height, t, mono, isCopied) {
+// The copy button's mark, labelled on hover (view: the chat, for tip()).
+const copyIcon = (view, id, t, isCopied) => tip(view, t, id, isCopied ? "Copied" : "Copy", h_flex().id(id).size(24).flex_none().items_center().justify_center().rounded(6)
+  .hover((s) => s.bg(t.hover)).on_hover(glow(view, id))
+  .child(svg(`mods/t3-chat/icons/${isCopied ? "check" : "copy"}.svg`).size(12).text_color(isCopied ? t.done : t.muted)));
+
+export function codeHead(view, id, block, height, t, mono, isCopied) {
   const label = block.title || block.lang || "text";
   return v_flex().w_full().h(height).justify_end().cursor_pointer()
     .child(h_flex().w_full().h(CODE.head).pt(6).pr(6).pl(12).gap(8).items_center().justify_between()
       .rounded_t(8).bg(codeFill(t)).border_t(1).border_l(1).border_r(1).border_color(codeEdge(t))
       .child(div().min_w(0).truncate().font_family(mono).text_size(11).text_color(alpha(t.foreground, 0.72)).child(label))
-      .child(h_flex().size(24).flex_none().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover))
-        .child(svg(`mods/t3-chat/icons/${isCopied ? "check" : "copy"}.svg`).size(12).text_color(isCopied ? t.done : t.muted))));
+      .child(copyIcon(view, id, t, isCopied)));
 }
 
 // The code: Herdr's code view when the language is known (editor: its retained state, made
@@ -167,10 +199,8 @@ export function codeBody(block, height, editor, t, mono) {
 }
 
 // Under a table, at the right: copy it (as Markdown). T3's `mt-0.5` and an icon-xs button.
-export function copyRow(t, isCopied) {
-  return h_flex().w_full().h(26).pt(2).justify_end().cursor_pointer()
-    .child(h_flex().size(24).items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover))
-      .child(svg(`mods/t3-chat/icons/${isCopied ? "check" : "copy"}.svg`).size(12).text_color(isCopied ? t.done : t.muted)));
+export function copyRow(view, id, t, isCopied) {
+  return h_flex().w_full().h(26).pt(2).justify_end().cursor_pointer().child(copyIcon(view, id, t, isCopied));
 }
 
 // ```html drawn under its source. T3 renders it in a sandboxed frame; here it is what TextView's

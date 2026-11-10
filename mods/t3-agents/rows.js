@@ -221,7 +221,7 @@ export function agentEntries(view, t, { list, all, shown, ps, now, viewing, byPr
     const when = view.since(a);
     const lead = h_flex().size(16).flex_none().items_center().justify_center().when(Boolean(pic), el => el.child(pic));
     const server = svg("mods/t3-agents/icons/server.svg").size(14).flex_none().text_color(t.dim);
-    const account = accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address);
+    const account = accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address, { isOnlyOtherProfile: true });
     const time = div().flex_none().text_size(12).text_color(t.dim).opacity(offer ? 0 : 1).transition("opacity", MOTION).when(Boolean(when), el => el.child(duration(now - when)));
     const base = h_flex()
       .relative()

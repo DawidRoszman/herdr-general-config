@@ -1,35 +1,49 @@
 // The conversation's rows other than the reply's Markdown, drawn as T3 Code's timeline draws them
 // (MessagesTimeline.tsx, TimelineUserMessageRow.tsx, TimelineWorkEntryRow.tsx). Each function
 // returns one row's content at the lane's width, with the space under it that T3's row has.
-// ctx: { t, mono, p (an id prefix), now (seconds), images (key -> path), copied (row id),
+// ctx: { view (the chat, for tip()), t, mono, p (an id prefix), now (seconds), images (key -> { path, thumb?, width, height }), openImage (key ->
+// opens it large), copied (row id),
 // hovered (the row id under the pointer), folder }.
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { typedMarkdown, formatElapsed, entryLabel, toolDetail, editDiff, shortPath } from "./model.js";
+import { typedMarkdown, formatElapsed, entryLabel, toolDetail, editDiff, shortPath, fitSize } from "./model.js";
 import { sans, alpha, nested } from "./render-md.js";
+import { tip, tipMark, glow } from "./tip.js";
 
 const icon = (name, size, color) => svg(`mods/t3-chat/icons/${name}.svg`).size(size).flex_none().text_color(color);
 const LEADING = "22.75px"; // text-sm leading-relaxed
 // The time as 14:05 (the runtime's toLocaleTimeString takes no options).
 const clock = (at) => { const d = new Date(at * 1000); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
-function thumbs(pictures, images, t) {
-  return h_flex().gap(8).flex_wrap().justify_end().children(pictures.map((picture) => (images.get(picture.key)
-    ? image(images.get(picture.key)).max_w(320).max_h(240).rounded(16)
-    : h_flex().px(8).h(24).gap(6).items_center().rounded(8).border(1).border_color(alpha(t.border, 0.8))
-      .child(icon("file-text", 12, t.dim)).child(div().text_size(11).text_color(t.dim).child("image")))));
+// Pictures the transcript holds (pasted ones, a tool's screenshots), each fitted in THUMB_BOX, from
+// its sharp copy when made; a click opens it large.
+export const THUMB_BOX = { width: 320, height: 240 };
+function thumbs(pictures, ctx) {
+  const { images, t } = ctx;
+  return h_flex().gap(8).flex_wrap().justify_end().children(pictures.map((picture) => {
+    const shown = images.get(picture.key);
+    if (!shown) {
+      return h_flex().px(8).h(24).gap(6).items_center().rounded(8).border(1).border_color(alpha(t.border, 0.8))
+        .child(icon("file-text", 12, t.dim)).child(div().text_size(11).text_color(t.dim).child("image"));
+    }
+    const fit = fitSize(shown, THUMB_BOX.width, THUMB_BOX.height);
+    return div().id(`${ctx.p}thumb-${picture.key}`).w(fit.width).h(fit.height).cursor_pointer()
+      .on_click((_e, cx) => { cx.stop_propagation(); ctx.openImage?.(picture.key); })
+      .child(image(shown.thumb ?? shown.path).w(fit.width).h(fit.height).rounded(16));
+  }));
 }
 
-// The copy control of a row: a check for a moment after (T3's MessageCopyButton).
-const copyMark = (ctx, id) => icon(ctx.copied === id ? "check" : "copy", 12, ctx.copied === id ? ctx.t.done : ctx.t.muted);
+// The copy control of a row: a check for a moment after (T3's MessageCopyButton). The row is the button.
+const copyMark = (ctx, id) => tipMark(ctx.view, ctx.t, `copy-${id}`, ctx.copied === id ? "Copied" : "Copy",
+  icon(ctx.copied === id ? "check" : "copy", 12, ctx.copied === id ? ctx.t.done : ctx.t.muted));
 
 // The person's message: a bubble at the right, at most 80% of the lane, rounded-2xl on T3's
 // message surface; under it the time and copy, shown while the pointer is on the row; pb-4.
 export function userRow(row, ctx, lane) {
   const { t } = ctx;
   return v_flex().w_full().items_end().gap(4).pb(16)
-    .when(row.images.length > 0, (el) => el.child(thumbs(row.images, ctx.images, t)))
+    .when(row.images.length > 0, (el) => el.child(thumbs(row.images, ctx)))
     .when(Boolean(row.text), (el) => el.child(sans(div().max_w(lane * 0.8).px(12).py(12).rounded(16).bg(alpha(t.foreground, 0.07)).line_height(LEADING)
       .when(Boolean(row.isPending), (bubble) => bubble.opacity(0.6))
       .child(TextView.markdown(`${ctx.p}u-${row.id}`, typedMarkdown(row.text)).text_size(14).text_color(t.foreground).selectable(true)))))
@@ -94,12 +108,15 @@ export function changedRow(row, ctx) {
       .child(v_flex().w_full().px(12).pb(8).children(row.files.map((file) => {
         const path = shortPath(file.path, ctx.folder);
         const cut = path.lastIndexOf("/") + 1;
-        return sans(h_flex().w_full().h(28).pr(8).gap(8).items_center().rounded(6).text_size(13).hover((s) => s.bg(alpha(t.foreground, 0.05)))
+        // The folders give way to the name; the whole path is on hover.
+        const id = `${ctx.p}changed-${row.id}-${file.path}`;
+        return tip(ctx.view, t, id, file.path, sans(h_flex().id(id).w_full().h(28).pr(8).gap(8).items_center().rounded(6).text_size(13).hover((s) => s.bg(alpha(t.foreground, 0.05)))
+          .on_hover(glow(ctx.view, id))
           .child(icon("file-text", 14, alpha(t.muted, 0.75)))
           .child(h_flex().flex_1().min_w(0)
             .child(div().min_w(0).truncate().text_color(t.muted).child(path.slice(0, cut)))
             .child(div().flex_none().text_color(t.foreground).child(path.slice(cut))))
-          .child(diffStat(file, t, mono)));
+          .child(diffStat(file, t, mono))));
       }))));
 }
 
@@ -131,7 +148,7 @@ export function entryRow(entry, ctx, isOpen) {
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(detail ?? ""))
         .when(Boolean(editDiff(entry)), (el) => el.child(diffStat(editDiff(entry), t, mono))))))
     .when(isOpen, (el) => el.child(div().w_full().pl(32).pr(4).pt(4).pb(8).child(body())))
-    .when((entry.images ?? []).length > 0 && isOpen, (el) => el.child(div().pl(32).pb(8).child(thumbs(entry.images, ctx.images, t))));
+    .when((entry.images ?? []).length > 0 && isOpen, (el) => el.child(div().pl(32).pb(8).child(thumbs(entry.images, ctx))));
 }
 
 // After a finished turn: how long it took, and copy the reply (T3's assistant meta, shown while the

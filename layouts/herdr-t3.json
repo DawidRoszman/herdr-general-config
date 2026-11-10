@@ -28,6 +28,16 @@
           "window_drag": true
         },
         {
+          "id": "context",
+          "type": "block",
+          "content": {
+            "mod": "t3-context"
+          },
+          "size": {
+            "px": 78
+          }
+        },
+        {
           "id": "sidebar-lists",
           "type": "stack",
           "active": "inbox",
@@ -145,7 +155,10 @@
               },
               "window_drag": true,
               "content": {
-                "mod": "t3-panels"
+                "mod": "t3-panels",
+                "props": {
+                  "block": "panels"
+                }
               }
             },
             {
@@ -234,6 +247,23 @@
                         "mod": "prs",
                         "props": {
                           "view": "monitor"
+                        }
+                      }
+                    },
+                    {
+                      "id": "board",
+                      "type": "block",
+                      "content": {
+                        "mod": "coordinator-board"
+                      }
+                    },
+                    {
+                      "id": "jira",
+                      "type": "block",
+                      "content": {
+                        "mod": "jira",
+                        "props": {
+                          "panel": true
                         }
                       }
                     }

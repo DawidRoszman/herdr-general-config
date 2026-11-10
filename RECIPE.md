@@ -8,7 +8,8 @@ on top, framed panes, and a right side panel for Files, Changes and Pull request
 
 Left to right:
 
-- **Sidebar** (256px, `chrome`): the brand row (40px), then either the **Inbox** (agents that
+- **Sidebar** (256px, `chrome`): the brand row (40px), the profile switch (`t3-context`, 78px),
+  then either the **Inbox** (agents that
   need you as cards, working ones folded into a Working shelf, settled ones at the bottom; each
   card names another machine's agent beside a server mark; the first nine show a faint 1–9) or
   **Lists** (Spaces grouped by machine, worktree spaces and multirepo task spaces nested under
@@ -16,7 +17,9 @@ Left to right:
 - **Work column**: a 40px tab bar (`t3-tabs`, then `t3-actions`' Add action, then `t3-panels`:
   Files, Changes, Pull requests toggles and a notification bell with an unread count), the shown
   tab's panes framed with `t3-pane` headers, and on the right a hidden 368px **panel** column whose
-  `panel-body` stack holds `files` (`t3-files`), `changes` (`changes-multi`) and `prs` (the PR monitor).
+  `panel-body` stack holds `files` (`t3-files`), `changes` (`changes-multi`), `prs` (the PR
+  monitor), `board` (`coordinator-board`) and `jira`. In a coordinator's space the board shows
+  by itself and a Jira toggle joins the tab bar's buttons.
 - A 28px status bar under the work column (`status-accounts` with `{ bell: false }`): the shown
   folder's Claude and gh accounts, Claude and Codex 5-hour and weekly usage, cpu and ram. It also
   finds each Claude agent's account for the chips in pane headers, Agents and Inbox.
@@ -56,7 +59,11 @@ Left to right:
   `prs`, `multirepo` (its `mr.py` is streamed to `python3` over ssh on each machine), `mr-pull`,
   `blueprint`, `changes-multi`, `walkthrough`, `notifications`, `jira`, `browser`,
   `command-palette`, `keybinds`, `wt-dialog`, `wt-new`, `wt-open`, `wt-remove`, `port-forward`,
-  `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine), `t3-files`.
+  `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine), `t3-files`,
+  `t3-chat`, `t3-context` (the profile switch; its `profiles.py` reads and checks
+  `profiles.json`), `profile-edit` (the Profiles dialog), `coordinator-board`.
+- Outside `mods/`, copied to the same paths in the Herdr home: `profiles.example.json`,
+  `coordinators/example/CLAUDE.md`, `scripts/start-task.mjs`, `scripts/agent-guard.py`.
 - Herdr's shipped mods it uses: `confirm`, `prompt`, `menu`.
 - `keys.json`: a `layout:herdr-t3` section and the global keys that open the mods above.
 
@@ -74,6 +81,11 @@ Left to right:
   taken, don't install under a new name: ask the person, since a renamed mod breaks the others.
 - **Never copy** `mods/jira/config.json` or `mods/status-accounts/config.json` from anywhere: the
   person writes their own from `config.example.json`. On update, keep theirs.
+- **Never write `profiles.json`** for the person: copy `profiles.example.json` beside it and
+  leave making their own to them (the Profiles dialog, or by hand). Without it the layout works
+  as one profile. On update, keep theirs, and their `coordinators/` folders other than `example`.
+- **Do not add `scripts/agent-guard.py` to a Claude config's hooks** unless the person asks: a
+  hook that can't read `profiles.json` refuses every Bash call of that account.
 - **Keys:** merge `keys.json`; ask before replacing a key the person already binds. The
   `layout:herdr-t3` section only applies while this layout shows.
 - `herdr-app check` every mod; `check-*.cjs` files are the mods' own tests, not loaded by Herdr.

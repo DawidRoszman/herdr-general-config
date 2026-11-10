@@ -321,6 +321,12 @@ export default class Spaces extends View {
     openOverlay({ mod: "t3-menu", kind: "popup", width: 220, height: 260, props: { tab: "space", target: { id: w.id } } });
   }
 
+  // A machine's profile (t3-context): the profiles to give it to, or none (shared). Not for this computer, which is shared by its folders.
+  machineMenu(machine) {
+    if (!machine || !Object.keys(shared("context")?.profiles ?? {}).length) return;
+    openOverlay({ mod: "t3-menu", kind: "popup", width: 220, height: 260, props: { tab: "profile", target: { kind: "machine", value: machine } } });
+  }
+
   orderingDue(now) {
     return this.ordering && now - this.ordering.at >= 1000
       && this.ordering.machines.every(name => machines().some(m => m.name === name && m.layout === "ready"));
@@ -443,6 +449,7 @@ export default class Spaces extends View {
       const head = hoverKept(this, "overMachine", `machine-${id}`, h_flex().id(`machine-${id}`).h(ROW).flex_none().mx(2).px(8).gap(8).items_center()
         .text_size(12).font_medium().text_color(t.dim)
         .role("button").accessibility_label(`${folded ? "Expand" : "Collapse"} ${m ?? "This computer"}`))
+        .on_mouse_down("right", () => this.machineMenu(m))
         .on_click((_e, cx) => {
           folded ? this.folded.delete(m) : this.folded.add(m);
           localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
@@ -496,13 +503,7 @@ export default class Spaces extends View {
   gitTail(g, tree, name, t, id, ghost) {
     const n = (count, what) => `${count} commit${count === 1 ? "" : "s"} to ${what}`;
     const mark = (mid, label, el) => ghost ? el : tipMark(this, t, mid, label, el);
-    // A multirepo project root (g.root, not linked) has no branch of its own: nothing to say, not "detached".
-    const raw = g.branch ?? (g.root ? "" : "detached");
-    // A multirepo task's space is named as mr names its folder: feat/SHOP-1-x becomes feat-SHOP-1-x.
-    const same = (a) => a.toLowerCase() === name.toLowerCase() || (Boolean(g.root) && a.replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase() === name.toLowerCase());
-    const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
-    const repo = tree || same(g.name) ? "" : g.name;
-    const where = [repo, branch].filter(Boolean).join(" \u00b7 ");
+    const where = this.gitWhere(g, tree, name);
     return h_flex()
       .flex_1()
       .min_w(0)
@@ -514,6 +515,17 @@ export default class Spaces extends View {
       .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)))
       .when(g.ahead > 0, (el) => el.child(mark(`ahead-${id}`, n(g.ahead, "push"), div().text_color(t.ansi2).child(`\u2191${g.ahead}`))))
       .when(g.behind > 0, (el) => el.child(mark(`behind-${id}`, n(g.behind, "pull"), div().text_color(t.ansi1).child(`\u2193${g.behind}`))));
+  }
+
+  // The repo and branch the tail names, "" when the name says them.
+  gitWhere(g, tree, name) {
+    // A multirepo project root (g.root, not linked) has no branch of its own: nothing to say, not "detached".
+    const raw = g.branch ?? (g.root ? "" : "detached");
+    // A multirepo task's space is named as mr names its folder: feat/SHOP-1-x becomes feat-SHOP-1-x.
+    const same = (a) => a.toLowerCase() === name.toLowerCase() || (Boolean(g.root) && a.replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase() === name.toLowerCase());
+    const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
+    const repo = tree || same(g.name) ? "" : g.name;
+    return [repo, branch].filter(Boolean).join(" \u00b7 ");
   }
 
   // A checkout's fold arrow: at the row's end, and folded, the count before it, as T3's folder; dim, brightening when hovered.
@@ -562,6 +574,7 @@ export default class Spaces extends View {
     // end, and folded, the count; dim, brightening when hovered.
     const foldId = `space-fold-${w.id}`;
     const rowId = `space-${w.id}`;
+    const where = g ? this.gitWhere(g, tree, w.name) : "";
     const el = v_flex()
       .relative()
       .px(10)
@@ -581,7 +594,8 @@ export default class Spaces extends View {
           .when(Boolean(tree), el => el.pl(20).child(h_flex().size(16).flex_none().items_center().justify_center()
             .child(svg("mods/t3-spaces/icons/git-branch.svg").size(16).text_color(t.dim))))
           .when(!tree, el => el.child(projectMark(w, 16, t, ps)))
-          .child(div().min_w(0).max_w(150).truncate().font_medium().text_color(t.foreground + "e6").child(w.name))
+          // Room for the tail when there is one; cut in the middle, so a task's key and its branch's end both stay.
+          .child(div().min_w(0).when(Boolean(where), el => el.max_w(150)).truncate().text_ellipsis_middle().font_medium().text_color(t.foreground + "e6").child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t, w.id, ghost) : div().flex_1())
           .when(kids > 0, el => el.child(this.foldButton(t, foldId, g.repo, hiding, ghost))),
       );
@@ -590,6 +604,8 @@ export default class Spaces extends View {
       .id(rowId)
       .role("button")
       .accessibility_label(w.name)
+      // ponytail: a length guess at what gets cut; the sidebar's width isn't known here.
+      .when(w.name.length + where.length > 22, el => el.tooltip(where ? `${w.name} \u00b7 ${where}` : w.name))
       .when(!on && !this.drag?.moved, (el) => el.hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       // Held by its space and where it was drawn: a move under it doesn't change what's lifted.
       .on_mouse_down("left", (e) => {

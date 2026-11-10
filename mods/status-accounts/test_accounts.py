@@ -26,5 +26,20 @@ with tempfile.TemporaryDirectory() as tmp:
     assert accounts.claude_account(str(tmp / "missing"))["kind"] == "unknown"
 
 # This very process: its CLAUDE_CONFIG_DIR (or the default) gives an account record.
-assert set(accounts.process_claude_account(os.getpid())) == {"email", "org", "configDir", "kind"}
+assert set(accounts.process_claude_account(os.getpid())) == {"email", "org", "configDir", "kind", "profile"}
+
+# A process started as a profile (profiles.py run, or a folder's .envrc) says so in its environment.
+import subprocess  # noqa: E402
+WAITING = [sys.executable, "-c", "import time; time.sleep(30)"]  # not a system binary: macOS hides those' environment
+child = subprocess.Popen(WAITING, env={**os.environ, "HERDR_PROFILE": "client", "CLAUDE_CONFIG_DIR": str(tmp / ".claude-acme")})
+try:
+    started = accounts.process_claude_account(child.pid)
+    assert (started["profile"], started["configDir"]) == ("client", "~/.claude-acme"), started
+finally:
+    child.kill()
+plain = subprocess.Popen(WAITING, env={k: v for k, v in os.environ.items() if k != "HERDR_PROFILE"})
+try:
+    assert accounts.process_claude_account(plain.pid)["profile"] == ""
+finally:
+    plain.kill()
 print("accounts.py ok")

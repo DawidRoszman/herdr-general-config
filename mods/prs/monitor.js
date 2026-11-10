@@ -4,14 +4,14 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input } from "gpui-base";
-import { theme, run, shared, setShared, exec, spaces, panes, focused } from "herdr";
+import { theme, run, shared, setShared, exec, spaces, panes, focused, layout } from "herdr";
 import { notifyAndLog } from "./notifylog.js";
 // Every notification also goes in the bell's history (notifylog.js).
 const notify = (n) => notifyAndLog(n, "Pull requests");
 import { THIS_MAC, connectedMachines, mrJson, openReview, reviewCommand, openBranchCheckout } from "./host.js";
 import {
   groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, prKey, prState, matches, isCoveredByProject, machineLabel,
-  DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionRows, groupTitle, prStateIcon, checksIcon, age, preferredCopy,
+  DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionRows, groupTitle, prStateIcon, checksIcon, age, preferredCopy, shortTime,
 } from "./model.js";
 import { Search } from "./search.js";
 import { isHelpKey, keyHelp, loadKeys } from "./keyhelp.js";
@@ -19,11 +19,30 @@ import { isHelpKey, keyHelp, loadKeys } from "./keyhelp.js";
 const REFRESH_MS = 60000;
 // Row heights by kind (the virtual list places rows by these).
 const HEIGHTS = { section: 30, place: 22, group: 64 };
+// A branch row's third line (review state, comments) is left out when it would be empty.
+const GROUP_WITHOUT_STATUS_HEIGHT = 45;
+// A branch's review state on its row's third line (colours are theme names).
+const REVIEW_LOOK = {
+  "review requested from you": { icon: "eye", color: "accent", text: "Review requested" },
+  "changes requested": { icon: "x-circle", color: "blocked", text: "Changes requested" },
+  approved: { icon: "check-circle", color: "done", text: "Approved" },
+  "review required": { icon: "clock", color: "dim", text: "Review required" },
+};
+const hasStatusLine = (group) => Boolean(REVIEW_LOOK[reviewSummary(group.prs)]) || commentCount(group.prs) > 0;
+const rowHeight = (row) => (row.kind === "group" && !hasStatusLine(row.group) ? GROUP_WITHOUT_STATUS_HEIGHT : HEIGHTS[row.kind]);
 const ICONS = "mods/prs/icons";
 // The checkout button sits at a branch row's right edge. Rows of a virtual list can't hold handlers,
 // so a press this close to the list's right edge (its padding, the row's, the button) counts as on it.
 const CHECKOUT_BUTTON_ZONE = 40;
 const MAX_NOTIFICATIONS = 5;
+
+// Shown in the Herdr T3 layout's side panel (its "panel-body" stack), the list is a card with a
+// header like the panel's Files and Changes; in a sidebar it stays flat on the sidebar's colour.
+function isInSidePanel(node = layout()) {
+  if (!node) return false;
+  if (node.id === "panel-body") return (node.children ?? []).some((child) => child.content?.mod === "prs");
+  return (node.children ?? []).some((child) => isInSidePanel(child));
+}
 // Open review requests, shown as a badge on the sidebar's Pull requests tab (sidebar-tabs mod).
 const BADGE_KEY = "prs.reviewRequested";
 // Filter chips: key to cycle (shift: back), label.
@@ -231,6 +250,18 @@ export class Monitor {
       .catch((error) => notify({ title: `Could not open ${branch}`, body: String(error.message ?? error), level: "warning" }));
   }
 
+  // The selected branch's lead PR (its first open one) in the browser.
+  openOnGitHub(cx, index = this.at) {
+    const group = this.rows()[index]?.group;
+    const lead = group && (group.prs.find((pr) => pr.state === "OPEN") ?? group.prs[0]);
+    if (lead?.url) cx.open_url(lead.url);
+  }
+
+  // The keyboard goes back to the work area: right of a sidebar, left of the T3 side panel.
+  leave() {
+    run("pane.go", { direction: isInSidePanel() ? "left" : "right" });
+  }
+
   toggleSection(id) {
     if (this.toggledSections.has(id)) this.toggledSections.delete(id);
     else this.toggledSections.add(id);
@@ -254,13 +285,14 @@ export class Monitor {
     } else if (stroke === "/") this.search.open(cx);
     else if (stroke === "escape") {
       if (this.search.escape(this.handle)) this.moveTo(0);
-      else run("pane.go", { direction: "right" });
+      else this.leave();
     } else if ((stroke === "j" || stroke === "down") && count) this.moveTo((this.at + 1) % count);
     else if ((stroke === "k" || stroke === "up") && count) this.moveTo((this.at + count - 1) % count);
     else if (stroke === "l" || stroke === "enter") this.open(cx);
-    else if (stroke === "h") run("pane.go", { direction: "right" });
+    else if (stroke === "h") this.leave();
     else if (stroke === "r") this.refresh(cx);
     else if (stroke === "g") this.openCheckout();
+    else if (stroke === "b") this.openOnGitHub(cx);
     else if (stroke === "x") this.resetFilters();
     else if (stroke === "f") this.isShowingFilters = !this.isShowingFilters;
     else if (FILTERS.some((f) => stroke === f.key || stroke === `shift-${f.key}`)) {
@@ -272,14 +304,14 @@ export class Monitor {
   }
 
   // Click: next value; right click: previous. Changed filters are drawn in the accent color.
-  filterChips(t) {
+  filterChips(t, surface) {
     const options = filterOptions(this.allPrs());
     return h_flex().flex_none().flex_wrap().px(12).pb(8).gap(4)
       .children(FILTERS.filter((f) => options[f.name]).map((f) => {
         const value = this.filters[f.name];
         const isChanged = value !== DEFAULT_FILTERS[f.name];
         return h_flex().id(`filter-${f.name}`).h(22).px(7).gap(4).items_center().rounded(5).border(1).cursor_pointer()
-          .border_color(isChanged ? t.accent : t.border).bg(isChanged ? t.selected : t.chrome)
+          .border_color(isChanged ? t.accent : t.border).bg(isChanged ? t.selected : surface)
           .hover((s) => s.bg(t.hover))
           .tooltip(`${f.label}: click or ${f.key} for next, right-click or shift-${f.key} for previous`)
           .on_click((_e, cx) => { this.setFilter(f.name, 1); cx.notify(); })
@@ -319,19 +351,17 @@ export class Monitor {
   groupRow(group, isSelected, t) {
     const lead = group.prs.find((pr) => pr.state === "OPEN") ?? group.prs[0];
     const state = prStateIcon(lead);
-    const review = reviewSummary(group.prs);
+    const look = REVIEW_LOOK[reviewSummary(group.prs)];
+    const reviewLook = look && { ...look, color: t[look.color] };
     const comments = commentCount(group.prs);
-    const reviewLook = {
-      "review requested from you": { icon: "eye", color: t.accent, text: "Review requested" },
-      "changes requested": { icon: "x-circle", color: t.blocked, text: "Changes requested" },
-      approved: { icon: "check-circle", color: t.done, text: "Approved" },
-      "review required": { icon: "clock", color: t.dim, text: "Review required" },
-    }[review];
     const details = v_flex().flex_1().min_w(0).gap(3)
       // Title, with the lead PR's state.
       .child(h_flex().h(18).flex_none().gap(6).items_center().min_w(0)
         .child(this.icon(state.icon, 13, t[state.color]))
-        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(group.isOpen ? t.foreground : t.muted).child(groupTitle(group)))
+        // The title and the PRs line are cut to the panel's width: the tooltip has them whole, with the branch.
+        .child(div().id(`title-${group.key}`).flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(group.isOpen ? t.foreground : t.muted)
+          .tooltip([groupTitle(group), group.branch, group.prs.map((pr) => `${pr.short} #${pr.number}`).join(" · "), "b: open on GitHub"].join("\n"))
+          .child(groupTitle(group)))
         .child(div().flex_none().text_size(10.5).text_color(t.dim).child(age(group.updatedAt))))
       // Each repo's PR with its checks.
       .child(h_flex().h(16).flex_none().pl(19).gap(9).items_center().overflow_hidden()
@@ -344,13 +374,13 @@ export class Monitor {
               .child(div().text_size(10.5).text_color(t.dim).child(`${pr.stack.position}/${pr.stack.size}`)));
         })))
       // Review state and conversation.
-      .child(h_flex().h(16).flex_none().pl(19).gap(6).items_center()
+      .when(hasStatusLine(group), (el) => el.child(h_flex().h(16).flex_none().pl(19).gap(6).items_center()
         .when(Boolean(reviewLook), (el) => el.child(this.icon(reviewLook.icon, 11, reviewLook.color))
           .child(div().text_size(11).text_color(reviewLook.color).child(reviewLook.text)))
         .child(div().flex_1())
-        .when(comments > 0, (el) => el.child(this.icon("comment", 11, t.dim)).child(div().text_size(11).text_color(t.dim).child(String(comments)))));
+        .when(comments > 0, (el) => el.child(this.icon("comment", 11, t.dim)).child(div().text_size(11).text_color(t.dim).child(String(comments))))));
     // Ids: this UI kit applies hover styles only to elements that have one.
-    return h_flex().id(group.key).flex_none().h(HEIGHTS.group).pl(8).pr(8).py(6).gap(6).items_center().rounded(7).cursor_pointer()
+    return h_flex().id(group.key).flex_none().h(hasStatusLine(group) ? HEIGHTS.group : GROUP_WITHOUT_STATUS_HEIGHT).pl(8).pr(8).py(6).gap(6).items_center().rounded(7).cursor_pointer()
       .when(isSelected, (el) => el.bg(t.selected))
       .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
       .child(details)
@@ -364,11 +394,30 @@ export class Monitor {
     const t = theme();
     const rows = this.rows();
     const isLoading = this.before === null;
+    const isCard = isInSidePanel();
+    const surface = isCard ? t.background : t.chrome;
     const filtered = FILTERS.filter((f) => this.filters[f.name] !== DEFAULT_FILTERS[f.name]).length;
     const branches = rows.filter((r) => r.kind === "group").length + rows.filter((r) => r.kind === "section" && r.isFolded).reduce((n, r) => n + r.count, 0);
+    const branchCount = isLoading ? "" : `${branches} branch${branches === 1 ? "" : "es"}`;
     const button = (id, icon, tooltip, onClick, isOn = false) => h_flex().id(id).h(22).px(5).gap(3).items_center().rounded(5).cursor_pointer()
-      .bg(isOn ? t.selected : t.chrome).hover((s) => s.bg(t.hover)).tooltip(tooltip).on_click((_e, cx) => { onClick(cx); cx.notify(); })
+      .bg(isOn ? t.selected : surface).hover((s) => s.bg(t.hover)).tooltip(tooltip).on_click((_e, cx) => { onClick(cx); cx.notify(); })
       .child(this.icon(icon, 13, isOn ? t.accent : t.dim));
+    const buttons = [
+      button("pr-filter", "filter", `Filter · f${filtered ? ` (${filtered} on)` : ""}`, () => { this.isShowingFilters = !this.isShowingFilters; }, this.isShowingFilters || filtered > 0)
+        .when(filtered > 0, (el) => el.child(div().text_size(10).font_semibold().text_color(t.accent).child(String(filtered)))),
+      button("pr-refresh", "refresh", this.refreshedAt ? `Refreshed ${shortTime(this.refreshedAt.toISOString())} · r` : "Refresh · r", (cx) => this.refresh(cx))
+        .when(this.isRefreshing, (el) => el.opacity(0.5)),
+      div().id("pr-keys").h(22).w(20).flex().items_center().justify_center().rounded(5).cursor_pointer().text_size(12).text_color(t.dim)
+        .hover((s) => s.bg(t.hover)).tooltip("Keys · ?").on_click((_e, cx) => { this.isShowingKeys = !this.isShowingKeys; cx.notify(); }).child("?"),
+    ];
+    const header = isCard
+      ? h_flex().flex_none().h(42).px(14).gap(8).items_center().border_b(1).border_color(t.border).mb(6)
+        .child(div().flex_none().font_semibold().text_color(t.foreground).child("Pull requests"))
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(branchCount))
+        .children(buttons)
+      : h_flex().px(12).h(38).pt(8).flex_none().gap(4).items_center()
+        .child(div().flex_1().text_size(11.5).font_medium().text_color(t.dim).child(branchCount))
+        .children(buttons);
     return v_flex()
       .id("pr-monitor")
       .track_focus(this.handle)
@@ -377,19 +426,12 @@ export class Monitor {
       .size_full()
       .min_h(0)
       .relative()
-      .bg(t.chrome)
-      .border_t(1)
-      .border_color(t.border)
+      .bg(surface)
+      .when(isCard, (el) => el.rounded(10).overflow_hidden().border_1().border_color(t.border))
+      .when(!isCard, (el) => el.border_t(1).border_color(t.border))
       .text_size(13)
-      .child(h_flex().px(12).h(38).pt(8).flex_none().gap(4).items_center()
-        .child(div().flex_1().text_size(11.5).font_medium().text_color(t.dim).child(`${branches} branch${branches === 1 ? "" : "es"}`))
-        .child(button("pr-filter", "filter", `Filter · f${filtered ? ` (${filtered} on)` : ""}`, () => { this.isShowingFilters = !this.isShowingFilters; }, this.isShowingFilters || filtered > 0)
-          .when(filtered > 0, (el) => el.child(div().text_size(10).font_semibold().text_color(t.accent).child(String(filtered)))))
-        .child(button("pr-refresh", "refresh", this.refreshedAt ? `Refreshed ${this.refreshedAt.toLocaleTimeString()} · r` : "Refresh · r", (cx) => this.refresh(cx))
-          .when(this.isRefreshing, (el) => el.opacity(0.5)))
-        .child(div().id("pr-keys").h(22).w(20).flex().items_center().justify_center().rounded(5).cursor_pointer().text_size(12).text_color(t.dim)
-          .hover((s) => s.bg(t.hover)).tooltip("Keys · ?").on_click((_e, cx) => { this.isShowingKeys = !this.isShowingKeys; cx.notify(); }).child("?")))
-      .when(this.isShowingFilters, (el) => el.child(this.filterChips(t)))
+      .child(header)
+      .when(this.isShowingFilters, (el) => el.child(this.filterChips(t, surface)))
       .when(this.search.isShown, (el) => el.child(div().px(8).pb(6).child(
         Input.new(this.search.input).h(28).px(8).items_center().rounded(6).border(1)
           .border_color(this.search.isTyping ? t.accent : t.input).bg(t.background).text_color(t.foreground).text_size(12))))
@@ -399,8 +441,8 @@ export class Monitor {
           this.isPressOnCheckout = Boolean(e.local_position && e.bounds) && e.local_position.x >= e.bounds.width - CHECKOUT_BUTTON_ZONE;
         })
         .child(isLoading || !rows.length
-          ? div().px(8).text_size(12).text_color(t.dim).child(isLoading ? "Loading PRs…" : this.search.query ? `Nothing matches "${this.search.query}".` : "No PRs match these filters.")
-          : v_virtual_list("pr-groups", rows.length, rows.map((r) => HEIGHTS[r.kind]), (i) => rows[i].id, (range) => rows.slice(range.start, range.end).map((row, k) => {
+          ? div().px(8).py(6).text_size(12).text_color(t.dim).child(isLoading ? "Loading PRs…" : this.search.query ? `Nothing matches "${this.search.query}".` : "No PRs match these filters.")
+          : v_virtual_list("pr-groups", rows.length, rows.map(rowHeight), (i) => rows[i].id, (range) => rows.slice(range.start, range.end).map((row, k) => {
             const index = range.start + k;
             if (row.kind === "section") return this.sectionRow(row, index === this.at, t);
             if (row.kind === "place") return this.placeRow(row, t);

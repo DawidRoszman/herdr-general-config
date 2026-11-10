@@ -82,7 +82,8 @@ export function inboxRowView(view, t, model, actions, drag) {
     const st = state(a), on = viewing(a);
     const machine = machineOf(a), branch = branchOf(a);
     const going = (kids.get(a.address) ?? []).filter((s) => s === "working").length;
-    const meta = [branch, going ? `${going} sub-agent${going > 1 ? "s" : ""} working` : null].filter(Boolean).join(" · ");
+    // An agent named after its branch says it already.
+    const meta = [branch !== title(a) && branch, going ? `${going} sub-agent${going > 1 ? "s" : ""} working` : null].filter(Boolean).join(" · ");
     const pic = icon(a.program, 14, t.muted);
     // Snooze is offered for anything not needing the person, working too, as T3's. A failed turn counts as needing them
     // here, and a mod pane has no terminal to hold the label.
@@ -92,7 +93,7 @@ export function inboxRowView(view, t, model, actions, drag) {
     const over = !dragging && !view.sweep?.moved && (menu || view.hovered === a.address || within(view, [`card-${a.address}`, `settle-${a.address}`, `snooze-${a.address}`, `woke-${a.address}`]));
     // As T3's rows: what you're on or what wants you leads; the rest recede until hovered, in color only so nothing reflows.
     const leads = on || ghost || st === "blocked" || st === "done" || woke(a);
-    const account = a.mod ? null : accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address);
+    const account = a.mod ? null : accountChip(view, t, ghost ? null : `acct-${a.address}`, a.address, { isOnlyOtherProfile: true });
     const marks = machine || pic || account ? h_flex().gap(4).flex_none().items_center()
       .when(Boolean(account), (el) => el.child(account))
       // Another machine's agent: a server mark and the machine's name, readable without hovering.

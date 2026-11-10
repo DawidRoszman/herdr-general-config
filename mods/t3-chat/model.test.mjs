@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { unwrapped, screenPlanPath, screenStatus, compactTokens, todoSummary, pendingTool, MODES, modelLabel, historyStep, lineDiff, editDiff, changedFiles, shortPath, timeline, formatElapsed, entryLabel, emptyChat, applyTranscript, transcriptLines, visibleItems, chatState, screenMenu, htmlBlocks, typedMarkdown, stateLabel, toolDetail, toolTitle, commandMatches, fileMatches, suggestionsFor, accepted, chatTabName, estimateRowHeight, markdownHeight } from "./model.js";
+import { COMMANDS, unwrapped, screenPlanPath, screenStatus, compactTokens, todoSummary, pendingTool, MODES, modelLabel, historyStep, lineDiff, editDiff, changedFiles, shortPath, timeline, formatElapsed, entryLabel, emptyChat, applyTranscript, transcriptLines, visibleItems, chatState, screenMenu, htmlBlocks, typedMarkdown, stateLabel, toolDetail, toolTitle, commandMatches, fileMatches, suggestionsFor, accepted, chatTabName, estimateRowHeight, markdownHeight, isTypedOption, typedAnswer, placeQuestion } from "./model.js";
 
 // Claude Code transcript entries, as in ~/.claude/projects/<folder>/<session>.jsonl.
 let n = 0;
@@ -84,10 +84,44 @@ assert.deepEqual(fileMatches(files, "chat"), ["mods/t3-chat/chat.js", "mods/t3-c
 assert.deepEqual(fileMatches(files, "mdl"), ["mods/t3-chat/model.js"]); // fuzzy
 assert.equal(suggestionsFor("look at @cha", [], files).items[0].insert, "@mods/t3-chat/chat.js ");
 assert.equal(suggestionsFor("mail@x", [], files).items.length, 0); // an address, not a mention
-assert.equal(accepted("look at @cha", "@cha", "@mods/t3-chat/chat.js "), "look at @mods/t3-chat/chat.js ");
+// A taken command (its trailing space) closes the menu, so Enter then sends it.
+assert.equal(suggestionsFor("/co", COMMANDS, files).items[0].insert, "/compact ");
+assert.equal(suggestionsFor("/compact ", COMMANDS, files).items.length, 0);
+assert.equal(suggestionsFor("/cost", COMMANDS, files).items.length, 1);
+assert.deepEqual(accepted("look at @cha", "@cha", "@mods/t3-chat/chat.js "), { text: "look at @mods/t3-chat/chat.js ", caret: 30 });
+{
+  const { composerKeyRoute } = await import("./model.js");
+  const plain = { hasSuggestions: false, isQuestion: false, isEmpty: false, recalls: false };
+  // The menu open: every arrow and Tab is the menu's, whatever else holds.
+  for (const key of ["up", "down", "tab"]) assert.equal(composerKeyRoute(key, { ...plain, hasSuggestions: true, isQuestion: true, isEmpty: true, recalls: true }), "suggest");
+  assert.equal(composerKeyRoute("up", { ...plain, isQuestion: true, isEmpty: true, recalls: true }), "question");
+  assert.equal(composerKeyRoute("down", { ...plain, isEmpty: true, recalls: true }), "history");
+  assert.equal(composerKeyRoute("up", plain), "box");
+  assert.equal(composerKeyRoute("tab", { ...plain, isEmpty: true, recalls: true }), "box");
+}
+{
+  const { isImagePath } = await import("./model.js");
+  const { coverSize } = await import("./model.js");
+  assert.deepEqual(coverSize({ width: 400, height: 1200 }, 56, 56), { width: 56, height: 168 });
+  assert.deepEqual(coverSize({ width: 1600, height: 800 }, 56, 56), { width: 112, height: 56 });
+  assert.deepEqual(["/a/paste-1.png", "/a/b.JPEG", "/a/c.webp", "/a/notes.pdf", "/a/png"].map(isImagePath), [true, true, true, false, false]);
+}
+assert.deepEqual(accepted("/c", "/c", "/compact "), { text: "/compact ", caret: 9 });
+// On a later line, after text the box counts in UTF-16 units (an emoji is two).
+assert.deepEqual(accepted("zażółć 😀\nsee @ch", "@ch", "@chat.js "), { text: "zażółć 😀\nsee @chat.js ", caret: 23 });
 assert.equal(typedMarkdown("a<b>\nc"), "a\\<b>  \nc");
-assert.equal(chatTabName("a very long first message that goes on"), "Chat: a very long first messag");
-assert.equal(chatTabName(""), "Chat: new");
+assert.equal(chatTabName("a very long first message that goes on"), "a very long first message that");
+assert.equal(chatTabName(""), "new");
+{
+  const { chatTabRename } = await import("./model.js");
+  const title = "Fix the login test on CI please";
+  assert.equal(chatTabRename({ name: "2", named: false }, title), "Fix the login test on CI pleas");
+  assert.equal(chatTabRename({ name: "claude", named: true }, title), "Fix the login test on CI pleas");
+  assert.equal(chatTabRename({ name: "Chat: Fix the login test on CI", named: true }, title), "Fix the login test on CI pleas");
+  assert.equal(chatTabRename({ name: "Fix the login test on CI pleas", named: true }, title), null);
+  assert.equal(chatTabRename({ name: "login fix", named: true }, title), null);
+  assert.equal(chatTabRename({ name: "2", named: false }, ""), null);
+}
 assert.ok(markdownHeight("one line", 600) > 0);
 assert.ok(estimateRowHeight({ kind: "tool", input: {}, title: "" }, { isOpen: true }) > estimateRowHeight({ kind: "tool", input: {}, title: "" }));
 
@@ -114,6 +148,9 @@ assert.equal(timeline(turn, { isWorking: true }).at(-1).kind, "text"); // no met
 
 assert.deepEqual([0, 51, 60, 135, 3725].map(formatElapsed), ["0s", "51s", "1m 0s", "2m 15s", "1h 2m"]);
 assert.deepEqual(entryLabel(done[1].entries[1]), { icon: "terminal", heading: "Ran", detail: "ls" });
+assert.equal(entryLabel({ kind: "tool", name: "Bash", title: "cd /Users/me/my-repo && git log --oneline | head", input: {} }).detail, "git log --oneline | head");
+assert.equal(entryLabel({ kind: "tool", name: "Bash", title: 'cd "/a b" && npm test', input: {} }).detail, "npm test");
+assert.equal(entryLabel({ kind: "tool", name: "Bash", title: "cd /tmp", input: {} }).detail, "cd /tmp");
 assert.deepEqual(entryLabel(done[3].entries[0]), { icon: "square-pen", heading: "Edited", detail: "a.js" });
 assert.deepEqual(entryLabel({ kind: "thinking", text: "first\nsecond" }), { icon: "lightbulb", heading: "Thought", detail: "first" });
 assert.equal(entryLabel({ kind: "tool", name: "mcp__browser__click", title: "x", input: {} }).heading, "browser · click");
@@ -203,3 +240,69 @@ const editing = applyTranscript(emptyChat(), [assistant([{ type: "tool_use", id:
 assert.equal(pendingTool(editing, narrow).name, "Edit");
 
 console.log("model.js ok");
+
+// Claude Code's questions (AskUserQuestion): tabs over them, "Chat about this" under a rule of its
+// own, a multi-select ticked with digits and left with →; an echoed one-line message (❯ over a rule) above.
+const RULED = "─".repeat(60);
+const askSingle = screenMenu(["❯ Call AskUserQuestion with three questions.", RULED, "←  ☐ Color  ☐ Fruits  ✔ Submit  →", "", "Pick a color", "",
+  "❯ 1. Red", "     Warm", "  2. Green", "     Calm", "  3. Type something.", RULED, "  4. Chat about this", "", "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"].join("\n"));
+assert.deepEqual(askSingle.options.map((o) => [o.label, o.description, o.kind]), [["Red", "Warm", "answer"], ["Green", "Calm", "answer"], ["Type something.", "", "typed"], ["Chat about this", "", "chat"]]);
+assert.equal(askSingle.question, "Pick a color");
+assert.deepEqual(askSingle.steps.map((step) => [step.label, step.isDone, step.isSubmit]), [["Color", false, false], ["Fruits", false, false], ["Submit", false, true]]);
+assert.equal(askSingle.current, 0);
+assert.equal(askSingle.options[0].isCursor, true);
+assert.equal(isTypedOption(askSingle.options[2]), true);
+const askMulti = screenMenu([RULED, "←  ☒ Color  ☐ Fruits  ✔ Submit  →", "", "Pick fruits", "",
+  "❯ 1. [ ] Apple (Recommended)", "         Apple", "  2. [✔] Banana", "         Banana", "  3. [ ] Type something", "     Next", RULED, "  4. Chat about this"].join("\n"));
+assert.deepEqual(askMulti.options.map((o) => [o.label, o.isChecked, o.kind]), [["Apple", false, "answer"], ["Banana", true, "answer"], ["Type something", false, "typed"], ["Next", null, "step"], ["Chat about this", null, "chat"]]);
+assert.equal(askMulti.options[0].isRecommended, true);
+assert.equal(askMulti.current, 1);
+assert.deepEqual(askMulti.options[3].keys, ["down", "down", "down", "enter"]);
+assert.deepEqual(typedAnswer(askSingle, askSingle.options[2]), { keys: ["3"], after: [] });
+assert.deepEqual(typedAnswer(askMulti, askMulti.options[2]), { keys: ["down", "down"], after: ["enter"] });
+// The cursor on the step (Tab took it there); one question has no steps, and its step is Submit.
+const askLast = screenMenu([RULED, "←  ☐ Fruits  ✔ Submit  →", "", "Pick fruits", "", "  1. [✔] Apple", "  2. [✔] Kiwi", "❯    Submit", RULED, "  3. Chat about this"].join("\n"));
+assert.deepEqual(askLast.options.map((o) => o.label), ["Apple", "Kiwi", "Submit", "Chat about this"]);
+assert.deepEqual(askLast.options[2].keys, ["enter"]);
+assert.deepEqual(askLast.steps, []);
+const askReview = screenMenu([RULED, "←  ☒ Color  ☒ Fruits  ✔ Submit  →", "", "Review your answers", "", " ● Pick a color", "   → Green", " ● Pick fruits", "   → Apple, Kiwi", "", "Ready to submit your answers?", "", "❯ 1. Submit answers", "  2. Cancel"].join("\n"));
+assert.equal(askReview.question, "Review your answers");
+assert.deepEqual(askReview.review, [{ question: "Pick a color", answer: "Green" }, { question: "Pick fruits", answer: "Apple, Kiwi" }]);
+assert.equal(askReview.current, 2);
+const askOne = screenMenu(["❯ Ask me one thing.", RULED, " ☐ Push", "", "Push the commits now?", "", "❯ 1. Push now (Recommended)", "     git push origin main", "  2. Not yet", "     Keep them local.", "  3. Type something.", RULED, "  4. Chat about this"].join("\n"));
+assert.equal(askOne.isQuestion, true);
+assert.equal(askOne.question, "Push the commits now?");
+assert.deepEqual(askOne.steps, []);
+assert.deepEqual([askOne.options[0].label, askOne.options[0].description, askOne.options[0].isRecommended], ["Push now", "git push origin main", true]);
+// The step shown follows the questions' order, not the ticks.
+let seenQuestions = placeQuestion(askSingle, []);
+assert.deepEqual([seenQuestions, askSingle.current], [["Pick a color"], 0]);
+const ticked = { ...askMulti, steps: [{ label: "Color", isDone: true }, { label: "Fruits", isDone: true }, { label: "Submit", isSubmit: true }] };
+seenQuestions = placeQuestion(ticked, seenQuestions);
+assert.deepEqual([seenQuestions, ticked.current], [["Pick a color", "Pick fruits"], 1]);
+assert.equal(askReview.review[0].answer, "Green");
+// A chat that comes in on the second step (nothing seen before) shows that step, not the first.
+const cameLate = screenMenu([RULED, "←  ☒ Color  ☐ Fruits  ✔ Submit  →", "", "Pick fruits", "", "❯ 1. [ ] Apple", "  2. [ ] Kiwi", "     Next"].join("\n"));
+assert.deepEqual([placeQuestion(cameLate, []).at(-1), cameLate.current], ["Pick fruits", 1]);
+
+// Image sizes from file headers.
+{
+  const { imageSize, fitSize } = await import("./model.js");
+  const bytes = (...parts) => Uint8Array.from(parts.flat());
+  const be32 = (n) => [n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const text = (s) => [...s].map((c) => c.charCodeAt(0));
+  const png = bytes([0x89], text("PNG\r\n\x1a\n"), be32(13), text("IHDR"), be32(1942), be32(1410));
+  assert.deepEqual(imageSize(png), { width: 1942, height: 1410 });
+  assert.deepEqual(imageSize(bytes(text("GIF89a"), [0x40, 0x01, 0xf0, 0x00])), { width: 320, height: 240 });
+  // JPEG: an APP0 segment, then SOF0 (height 600, width 800).
+  const jpeg = bytes([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x58, 0x03, 0x20, 0x03]);
+  assert.deepEqual(imageSize(jpeg), { width: 800, height: 600 });
+  const webp = (chunk, body) => bytes(text("RIFF"), [0, 0, 0, 0], text("WEBP"), text(chunk), [0, 0, 0, 0], body);
+  assert.deepEqual(imageSize(webp("VP8X", [0, 0, 0, 0, 0x1f, 0x03, 0x00, 0x57, 0x02, 0x00])), { width: 800, height: 600 });
+  assert.deepEqual(imageSize(webp("VP8 ", [0, 0, 0, 0, 0, 0, 0x20, 0x03, 0x58, 0x02])), { width: 800, height: 600 });
+  assert.equal(imageSize(bytes(text("<html>"))), null);
+  assert.deepEqual(fitSize({ width: 1942, height: 1410 }, 736, 320), { width: 441, height: 320 });
+  assert.deepEqual(fitSize({ width: 100, height: 50 }, 736, 320), { width: 100, height: 50 });
+  assert.deepEqual(fitSize({ width: 2000, height: 100 }, 700, 320), { width: 700, height: 35 });
+  console.log("image sizes ok");
+}

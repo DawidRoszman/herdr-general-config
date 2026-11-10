@@ -488,7 +488,7 @@ export function stackDiffs(files, rowsOf) {
   const fileStarts = [];
   files.forEach((file, fileIndex) => {
     fileStarts.push(rows.length);
-    rows.push({ kind: "file", text: file.path, additions: file.additions, deletions: file.deletions, fileIndex, key: String(rows.length) });
+    rows.push({ kind: "file", text: file.path, additions: file.additions, deletions: file.deletions, isViewed: Boolean(file.isViewed), fileIndex, key: String(rows.length) });
     for (const row of rowsOf(file)) rows.push({ ...row, fileIndex, key: String(rows.length) });
   });
   return { rows, fileStarts };
@@ -510,13 +510,24 @@ export function overviewItems(pr) {
   ];
 }
 
-// CheckRuns and StatusContexts in one shape.
+// CheckRuns and StatusContexts in one shape, the latest run of each check only: a workflow run again
+// on the same commit (a re-run, a base change) leaves its older runs in GitHub's rollup, and an old
+// failure must not read as failing. A check run on two events is named with its run's event, as
+// GitHub does: "lint (push)". An mr.py older than workflowEvent gives no event.
 export function checkItems(pr) {
-  return (pr.statusCheckRollup ?? []).map((c, i) => {
+  const latest = new Map(); // workflow|name|event -> the newest run's item
+  (pr.statusCheckRollup ?? []).forEach((c, i) => {
     const isRun = c.__typename === "CheckRun";
     const outcome = isRun ? (c.status === "COMPLETED" ? c.conclusion : c.status) : c.state;
-    return { key: `check-${i}`, name: isRun ? c.name : c.context, workflow: c.workflowName ?? "", outcome: outcome ?? "PENDING", url: isRun ? c.detailsUrl : c.targetUrl };
+    const item = { key: `check-${i}`, name: isRun ? c.name : c.context, workflow: c.workflowName ?? "", event: c.workflowEvent ?? "",
+      outcome: outcome ?? "PENDING", url: isRun ? c.detailsUrl : c.targetUrl, at: c.startedAt ?? c.createdAt ?? "" };
+    const run = `${item.workflow}|${item.name}|${item.event}`;
+    if (!latest.has(run) || item.at >= latest.get(run).at) latest.set(run, item);
   });
+  const items = [...latest.values()].sort((a, b) => Number(a.key.slice(6)) - Number(b.key.slice(6)));
+  const events = new Map(); // workflow|name -> how many events it ran on
+  for (const item of items) events.set(`${item.workflow}|${item.name}`, (events.get(`${item.workflow}|${item.name}`) ?? 0) + 1);
+  return items.map(({ at, ...item }) => (events.get(`${item.workflow}|${item.name}`) > 1 && item.event ? { ...item, name: `${item.name} (${item.event})` } : item));
 }
 
 export function checkMark(outcome) {
@@ -534,6 +545,31 @@ export function commitItems(pr) {
     author: c.authors?.[0]?.login || c.authors?.[0]?.name || "",
     at: c.committedDate,
   }));
+}
+
+// Files marked viewed in a review, per PR: { [prKey]: { head, paths } }. Only an open PR's marks
+// on its present head commit are kept, so new commits ask for a fresh look and the store stays
+// as small as the review's PRs.
+export function pruneViewed(viewed, prs) {
+  const kept = {};
+  for (const pr of prs) {
+    const marks = viewed?.[prKey(pr)];
+    if (pr.state === "OPEN" && marks?.head === pr.headRefOid && Array.isArray(marks.paths) && marks.paths.length) kept[prKey(pr)] = marks;
+  }
+  return kept;
+}
+
+export function isViewed(viewed, pr, path) {
+  const marks = viewed[prKey(pr)];
+  return Boolean(marks && marks.head === pr.headRefOid && marks.paths.includes(path));
+}
+
+// Marks a file viewed, or unmarks it.
+export function toggleViewed(viewed, pr, path) {
+  const marks = viewed[prKey(pr)]?.head === pr.headRefOid ? viewed[prKey(pr)].paths : [];
+  const paths = marks.includes(path) ? marks.filter((p) => p !== path) : [...marks, path];
+  const { [prKey(pr)]: _old, ...others } = viewed;
+  return paths.length ? { ...others, [prKey(pr)]: { head: pr.headRefOid, paths } } : others;
 }
 
 // The Files list of a parsed diff (a commit's: GitHub's PR view lists only the PR's own files).
@@ -639,4 +675,74 @@ export function fixThreadPrompt(pr, thread, isRepo) {
 export function watchPrompt(prs) {
   const urls = prs.map((pr) => pr.url).join(" ");
   return `Watch ${prs.length > 1 ? "these PRs" : "this PR"}: ${urls}. Subscribe to ${prs.length > 1 ? "their" : "its"} activity, and when a check fails or a reviewer comments, look into it and fix what you can.`;
+}
+
+// Where a diff row takes a review comment: a deleted line on the old side (LEFT), an added or
+// unchanged one on the new side (RIGHT). null for headers, hunk lines and notes.
+export function commentAnchor(row) {
+  if (row?.kind === "-") return { side: "LEFT", line: row.number };
+  if (row?.kind === "+" || row?.kind === " ") return { side: "RIGHT", line: row.number };
+  return null;
+}
+
+const lineKey = (path, { side, line }) => `${path} ${side} ${line}`;
+
+// The lines from anchor to focus (indices into one file's diff rows) as { start, end }, start <= end.
+// GitHub takes a multi-line comment only within one hunk, so the range stops at the hunk's edge.
+export function selectedRange(rows, anchor, focus) {
+  const step = focus >= anchor ? 1 : -1;
+  const isHunkEdge = (row) => !row || row.kind === "@" || row.kind === "file";
+  let end = anchor;
+  while (end !== focus && !isHunkEdge(rows[end + step])) end += step;
+  while (!commentAnchor(rows[end])) end -= step; // a note row ("\ No newline") takes no comment
+  return step > 0 ? { start: anchor, end } : { start: end, end: anchor };
+}
+
+/**
+ * The body of POST /repos/{owner}/{repo}/pulls/{number}/comments: one comment on rows start..end of
+ * a file's diff (selectedRange), at the PR's head commit. A range ends at line/side and starts at
+ * start_line/start_side; one line has no start.
+ */
+export function lineCommentRequest({ body, commitId, path, rows, range }) {
+  const first = commentAnchor(rows[range.start]);
+  const last = commentAnchor(rows[range.end]);
+  if (!first || !last) throw new Error(`Rows ${range.start}-${range.end} of ${path} take no comment.`);
+  const request = { body, commit_id: commitId, path, side: last.side, line: last.line };
+  return range.start === range.end ? request : { ...request, start_side: first.side, start_line: first.line };
+}
+
+// A file's diff rows with each current review thread (inline comments, threadOf) under the line it
+// ends on, as { kind: "thread", comments } rows. Every row keeps its index in the file (fileRow).
+// Outdated threads have no line in this diff: the Overview lists them.
+export function withThreads(rows, path, comments) {
+  const threads = new Map();
+  comments.forEach((comment, index) => {
+    if (comment.isReply || comment.isOutdated || comment.path !== path || !comment.line) return;
+    const key = lineKey(path, comment);
+    threads.set(key, [...(threads.get(key) ?? []), threadOf(comments, index)]);
+  });
+  return rows.flatMap((row, fileRow) => {
+    const anchor = commentAnchor(row);
+    const here = (anchor && threads.get(lineKey(path, anchor))) ?? [];
+    return [{ ...row, fileRow }, ...here.map((thread) => ({ kind: "thread", comments: thread }))];
+  });
+}
+
+// Lines as the diff numbers them, GitHub's way: "+24" on the new side, "−12" on the old;
+// a range "+24–+26". first/last: { side, line } (commentAnchor); last may be first.
+export function lineRange(first, last = first) {
+  const one = ({ side, line }) => `${side === "LEFT" ? "−" : "+"}${line}`;
+  return first.side === last.side && first.line === last.line ? one(first) : `${one(first)}–${one(last)}`;
+}
+
+// About how many lines a comment's Markdown takes at a width of columns characters: the diff is a
+// virtual list, so a comment card's height has to be known before it draws. Generous: a blank line
+// is a paragraph's gap, a code block's fences its padding, a list item its spacing.
+export function markdownLines(text, columns) {
+  let lines = 0;
+  for (const line of text.trim().split("\n")) {
+    if (/^\s*```/.test(line)) lines += 1.5;
+    else lines += Math.max(1, Math.ceil(line.length / Math.max(10, columns))) * (/^\s*(?:[-*+]|\d+[.)])\s/.test(line) ? 1.45 : 1);
+  }
+  return Math.ceil(lines);
 }

@@ -28,6 +28,10 @@
               "open the branch's checkout in a space, as g in its review does"
             ],
             [
+              "b",
+              "open the branch's PR on GitHub (its first open one)"
+            ],
+            [
               "h / esc",
               "give the keyboard back to the work area"
             ]
@@ -120,8 +124,16 @@
               "search this tab"
             ],
             [
+              "v",
+              "Files: mark the selected file viewed (its diff folds to its header), or unmark it; marks last until the PR gets a new commit"
+            ],
+            [
+              "click / shift-click a diff line",
+              "select lines (deleted or added, within one hunk) and comment on them: ⌘↵ or Comment posts it to GitHub at once"
+            ],
+            [
               "esc",
-              "leave search, then clear it, then leave a commit's diff, then close the tab"
+              "drop the line selection, then leave search, then clear it, then leave a commit's diff, then close the tab"
             ],
             [
               "r",
@@ -146,15 +158,15 @@
             ],
             [
               "m, m",
-              "merge with a merge commit (press twice); a stacked PR merges with the open PRs below it"
+              "merge with a merge commit, after ↵ confirms (esc or any other key cancels); a stacked PR merges with the open PRs below it"
             ],
             [
               "s",
-              "restack (press twice): rebase each open PR of the stack onto the one below, the bottom onto the base, and force-push what moved; a ⚠ on a stack chip marks a PR that needs it"
+              "restack, after ↵ confirms: rebase each open PR of the stack onto the one below, the bottom onto the base, and force-push what moved; a ⚠ on a stack chip marks a PR that needs it"
             ],
             [
               "d",
-              "ready for review / back to draft"
+              "ready for review / back to draft, after ↵ confirms. Action keys wait 1.5 s after you leave a text box, so typing never becomes an action"
             ],
             [
               "shift-r, click ✎ by Reviewers",
@@ -171,6 +183,14 @@
             [
               "g",
               "open the branch's checkout in a space (gone to when open): the multirepo task, made when missing; a plain repo's worktree, made by the worktree dialog when missing"
+            ],
+            [
+              "y, click the branch",
+              "copy the head branch's name"
+            ],
+            [
+              "shift-y, click #number",
+              "copy the PR's URL"
             ],
             [
               "b",

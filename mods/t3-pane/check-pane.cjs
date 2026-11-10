@@ -48,6 +48,8 @@ let pointer = { x: 50, y: 10 };
 const env = {
   View: class {}, div: element, svg: element, image: (src) => { images.push(src); return element(); }, h_flex: element, v_flex: element, Popup: { new: (id, trigger) => element().id(id).child(trigger) }, keys: () => [],
   theme: () => ({}), props: () => props, panes: () => [pane, shell, review], shared: (k) => sharedValues[k] ?? null, home: () => "/home/me",
+  // Answers at once, so a mod.json title shows on the next render.
+  appHome: () => "/app", readTextFile: (path) => ({ then: (f) => { f(path === "/app/mods/review-pane/mod.json" ? '{"title":"Review"}' : null); return { catch() {} }; } }),
   terminals: () => terms, agents: () => [], spaces: () => [{ tabs: [tab] }], layout: () => sidebar,
   run: (name, args) => calls.push([name, args]), setShared: (k, v) => { sharedValues[k] = v; },
   window: Object.assign(() => ({ platform: "macos", active: true }), { mouse_position: () => pointer, viewport_size: () => ({ width: 1000, height: 800 }) }),
@@ -88,7 +90,10 @@ terms[0].labels["pi.session"] = "Fix login";
 assert.equal(named(), "Fix login");
 delete terms[0].labels["pi.session"];
 assert.equal(named(), "Release");
-tab.named = false; pane.title = "π - Review PR - project";
+tab.name = "pi"; pane.title = "π - Review PR - project";
+assert.equal(named(), "Review PR", "a tab named only after its program names nothing");
+tab.name = "Release";
+tab.named = false;
 assert.equal(named(), "Review PR");
 pane.title = "π - project";
 assert.equal(named(), "Pi", "Pi's unnamed title is only its folder, which the space already says");
@@ -121,9 +126,13 @@ tab.named = true; props = { pane: "p3" };
 assert.equal(named(), "zsh");
 shell.title = "t3";
 assert.equal(named(), "zsh");
-// A mod pane: the title its mod gives itself, else its folder name.
+// A mod pane: the title its mod gives itself, else its tab's name if someone gave it, else its mod.json's title, never the mod's id.
 props = { pane: "p4" };
-assert.equal(texts(header.render())[0], "review-pane");
+assert.equal(texts(header.render())[0], "Release", "a named tab names its mod pane");
+tab.named = false;
+texts(header.render());
+assert.equal(texts(header.render())[0], "Review", "else the mod's title, not its id");
+tab.named = true;
 sharedValues["review-pane.titles"] = { a: "review · other", b: "review · fix" };
 assert.equal(texts(header.render())[0], "review · fix");
 // Its icon, the one its mod gives.

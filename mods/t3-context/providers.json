@@ -1,0 +1,23 @@
+{
+  "// providers": "What an account's settings are (fields; a secret one holds a reference, never a value) and the variables it gives a process (env; {field} is filled in, a null field unsets the variable). Add your own under \"providers\" in profiles.json.",
+  "claude": {
+    "fields": ["configDir"],
+    "env": { "CLAUDE_CONFIG_DIR": "{configDir}" }
+  },
+  "github": {
+    "fields": ["user"],
+    "env": { "GH_TOKEN": { "command": ["gh", "auth", "token", "--user", "{user}"] } }
+  },
+  "git": {
+    "fields": ["name", "email"],
+    "env": {
+      "GIT_AUTHOR_NAME": "{name}",
+      "GIT_AUTHOR_EMAIL": "{email}",
+      "GIT_COMMITTER_NAME": "{name}",
+      "GIT_COMMITTER_EMAIL": "{email}"
+    }
+  },
+  "jira": {
+    "fields": ["site", "email", { "name": "token", "secret": true }]
+  }
+}

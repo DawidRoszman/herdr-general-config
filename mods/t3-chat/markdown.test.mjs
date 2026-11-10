@@ -1,7 +1,7 @@
 // node markdown.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { blocks, gapBefore, tableCells, columnWidths, codeLanguage, codeBodyHeight } from "./markdown.js";
+import { blocks, gapBefore, tableCells, columnWidths, codeLanguage, codeBodyHeight, imageLine, imageSources, imageTarget } from "./markdown.js";
 
 const types = (text) => blocks(text).map((b) => b.type);
 
@@ -55,6 +55,11 @@ assert.equal(Math.round(widths[0] + widths[1]), 600);
 assert.ok(widths[1] > widths[0] * 3);
 const capped = columnWidths({ header: ["a", "b"], rows: [["x".repeat(500), "y".repeat(500)]] }, 600);
 assert.deepEqual(capped.map(Math.round), [300, 300]);
+// In a narrow lane a short column keeps its header word whole; one that can't fit makes the table wider than the lane.
+const narrowTable = columnWidths({ header: ["Column one", "Three"], rows: [["a/very/long/path/in/a/table/cell.js", "3"]] }, 260);
+assert.ok(narrowTable[1] >= 5 * 9 + 24 && Math.round(narrowTable[0] + narrowTable[1]) === 260);
+const tooWide = columnWidths({ header: ["Alpha", "Bravo", "Charlie"], rows: [] }, 100);
+assert.ok(tooWide.reduce((a, b) => a + b, 0) > 100);
 
 // Code: the view's language, and a body's height from its line count.
 assert.deepEqual([codeLanguage("ts"), codeLanguage("zsh"), codeLanguage("text"), codeLanguage("")], ["typescript", "bash", null, null]);
@@ -88,3 +93,26 @@ assert.deepEqual([...new Set(types(fixture))].sort(), ["code", "details", "headi
 assert.equal(blocks(fixture).map((b) => b.raw).join("\n").replace(/\s+/g, ""), fixture.replace(/\s+/g, ""));
 
 console.log("markdown.js ok");
+
+// Images: Markdown images, and a local image path alone on its line (in backticks or not).
+{
+  const image = (src, alt = "") => ({ type: "image", src, alt });
+  const pick = (text) => blocks(text).map((b) => (b.type === "image" ? image(b.src, b.alt) : { type: b.type, raw: b.raw }));
+  assert.deepEqual(pick("/tmp/a b/x.png"), [{ type: "prose", raw: "/tmp/a b/x.png" }], "a path with spaces is text");
+  assert.deepEqual(pick("/tmp/shot.png"), [image("/tmp/shot.png")]);
+  assert.deepEqual(pick("`~/Desktop/Shot.JPEG`"), [image("~/Desktop/Shot.JPEG")]);
+  assert.deepEqual(pick("/tmp/notes.txt"), [{ type: "prose", raw: "/tmp/notes.txt" }]);
+  assert.deepEqual(pick("see /tmp/shot.png here"), [{ type: "prose", raw: "see /tmp/shot.png here" }], "inside a sentence stays text");
+  assert.deepEqual(pick("![A shot](https://x.io/a.png)"), [image("https://x.io/a.png", "A shot")]);
+  assert.deepEqual(pick("![](<file:///tmp/a b.png>) ![b](/tmp/b.gif)"), [image("file:///tmp/a b.png"), image("/tmp/b.gif", "b")]);
+  assert.deepEqual(pick("Before\n/tmp/a.png\nafter: ![x](/tmp/b.webp) done"),
+    [{ type: "prose", raw: "Before" }, image("/tmp/a.png"), { type: "prose", raw: "after:  done" }, image("/tmp/b.webp", "x")]);
+  assert.equal(imageLine("text"), null);
+  assert.deepEqual(imageSources("- /tmp/a.png\n- `/tmp/b.png`\n\n> ![q](/tmp/c.png)\n\n```\n/tmp/code.png\n```\n\n/tmp/a.png"),
+    ["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"]);
+}
+assert.deepEqual(imageTarget("https://x.io/a.png?s=2", "/Users/me"), { url: "https://x.io/a.png?s=2" });
+assert.deepEqual(imageTarget("file:///tmp/a%20b.png", "/Users/me"), { path: "/tmp/a b.png" });
+assert.deepEqual(imageTarget("~/Desktop/x.png", "/Users/me"), { path: "/Users/me/Desktop/x.png" });
+assert.deepEqual(imageTarget("/tmp/x.png", "/Users/me"), { path: "/tmp/x.png" });
+console.log("images ok");

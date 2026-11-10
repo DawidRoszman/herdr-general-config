@@ -51,7 +51,9 @@ export default class NewMenu extends View {
   // The active space's machine first, as ⌘N would use it.
   machineRows() {
     const here = spaces().find(s => s.active)?.machine ?? null;
-    const others = [...machines().map(k => k.name), ...spaces().map(s => s.machine)].filter(Boolean).sort();
+    // t3-context's switch hides the other profiles' machines and spaces here too.
+    const offMachines = new Set(shared("context")?.offMachines ?? []);
+    const others = [...machines().map(k => k.name), ...spaces().map(s => s.machine)].filter((m) => m && !offMachines.has(m)).sort();
     return [...new Set([here, null, ...others])].map(m => {
       const layout = m ? machines().find(k => k.name === m)?.layout ?? "unavailable" : "ready";
       return { key: `machine:${m ?? ""}`, machine: m, name: m ?? "This computer", sub: m ? STATE[layout] : "Local", off: layout !== "ready" };
@@ -64,7 +66,8 @@ export default class NewMenu extends View {
     if (this.picking) return this.machineRows().filter(m => m.name.toLowerCase().includes(q));
     const ps = panes(), here = spaces().find(s => s.active)?.machine ?? null;
     const rank = (s) => (s.active ? 0 : (s.machine ?? null) === here ? 1 : 2);
-    return spaces().filter(s => s.id !== shared("t3-home.space") && `${s.name} ${s.machine ?? ""} ${placeOf(s, ps)}`.toLowerCase().includes(q))
+    const offSpaces = new Set(shared("context")?.offSpaces ?? []);
+    return spaces().filter(s => s.id !== shared("t3-home.space") && !offSpaces.has(s.id) && `${s.name} ${s.machine ?? ""} ${placeOf(s, ps)}`.toLowerCase().includes(q))
       .sort((a, b) => rank(a) - rank(b) || (a.machine ?? "").localeCompare(b.machine ?? ""))
       .map(s => ({ key: `space:${s.id}`, space: s }));
   }

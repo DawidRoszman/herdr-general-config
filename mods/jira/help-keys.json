@@ -10,12 +10,17 @@
           ["click / enter", "details of the issue (j/k and h/l keep browsing, the panel follows)"],
           ["esc", "close the details"],
           ["o", "open the issue in Jira"],
-          ["s", "start work: the multirepo dialog with the task branch filled in"],
+          ["s", "start work on the selected issue, or the one the details show: the multirepo dialog with the task branch filled in"],
+          ["y", "copy the issue's task branch name"],
+          ["g", "go to the issue's task: the space on its branch, or the coordinator board's task"],
           ["/", "search"],
-          ["esc", "leave search, then clear it, then close the tab"],
+          ["esc", "leave search, then clear it, then close the tab (the side panel stays)"],
           ["a", "show / hide the statuses hidden in config.json (waiting for QA)"],
           ["r", "refresh (it refreshes every 5 minutes)"],
           ["?", "this list"]
+        ] },
+        { "title": "Opening it", "rows": [
+          ["cmd-shift-j", "Herdr T3, in a coordinator's space: show / hide this board in the side panel; elsewhere: a Jira tab"]
         ] }
       ]
     }

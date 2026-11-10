@@ -20,6 +20,8 @@ const icon = (t, p) => !p?.icon ? svg("mods/t3-picker/icons/terminal.svg").size(
   : p.tint ? svg(p.icon).size(12).flex_none().text_color(t.muted) : image(p.icon).size(12).flex_none();
 
 
+const CHAT_MODS = ["t3-chat", "agent-chat"];
+
 export default class Picker extends View {
   init() {
     this.at = null;
@@ -38,15 +40,21 @@ export default class Picker extends View {
     const q = this.filter.toLowerCase(), ps = panes(), all = terminals(), name = namer(), kids = subAgents(agents(), all);
     const mine = spaces().find((s) => s.active)?.machine ?? null;
     const rank = (s) => (s.active ? 0 : (s.machine ?? null) === mine ? 1 : 2);
-    const rows = [...spaces()].sort((a, b) => rank(a) - rank(b) || (a.machine ?? "").localeCompare(b.machine ?? "")).flatMap((s) => s.tabs.flatMap((c) =>
+    // t3-context's switch hides the other profiles' spaces here too.
+    const offSpaces = new Set(shared("context")?.offSpaces ?? []);
+    // A chat (t3-chat, the older agent-chat) is zoomed over its Claude Code: one row, the chat's, with its agent's program and status.
+    const chats = new Map(ps.filter((p) => p.zoomed && CHAT_MODS.includes(p.mod)).map((p) => [p.tab, p]));
+    const isBehindChat = (p) => chats.has(p.tab) && chats.get(p.tab).pane !== p.pane;
+    const agentOf = (p) => (chats.get(p.tab)?.pane === p.pane ? ps.find((x) => x.tab === p.tab && x.terminal && isBehindChat(x)) : p.terminal ? p : null);
+    const rows = spaces().filter((s) => !offSpaces.has(s.id)).sort((a, b) => rank(a) - rank(b) || (a.machine ?? "").localeCompare(b.machine ?? "")).flatMap((s) => s.tabs.flatMap((c) =>
       // Home's default page has its own key and nothing to find; what's arranged beside it has a row like any pane.
-      ps.filter((p) => p.tab === c.id && p.mod !== "t3-home").map((p) => {
-        const under = p.terminal ? kids(p.terminal) : [];
+      ps.filter((p) => p.tab === c.id && p.mod !== "t3-home" && !isBehindChat(p)).map((p) => {
+        const agent = agentOf(p), under = agent ? kids(agent.terminal) : [];
         return {
-          key: `pane:${p.pane}`, p, s, label: name(p), program: programOf(p), team: under.length, under, here: s.active && c.active && p.focused,
-          status: p.mod ? modStatus(p) : treeStatus(ownStatus(p.status, p.terminal, all), under),
+          key: `pane:${p.pane}`, p, agent, s, label: name(p), program: programOf(p) ?? agent?.program, team: under.length, under, here: s.active && c.active && p.focused,
+          status: (p.mod && modStatus(p)) || (agent ? treeStatus(ownStatus(agent.status, agent.terminal, all), under) : null),
           // A tab's own name only if someone gave it: else it's its position ("4") or what it was first, not what runs in it.
-          words: [s.name, s.machine ?? "", c.named ? c.name : "", name(p), programOf(p)?.name ?? "", p.program?.key ?? "", (p.cwd ?? "").split(/[\\/]/).pop()],
+          words: [s.name, s.machine ?? "", c.named ? c.name : "", name(p), (programOf(p) ?? agent?.program)?.name ?? "", agent?.program?.key ?? "", (p.cwd ?? "").split(/[\\/]/).pop()],
         };
       })));
     // Not by `focused`: each tab has its own, so another tab's pane would never be a way back.
@@ -69,7 +77,7 @@ export default class Picker extends View {
     // The same marks as the pane headers, tabs and agents list.
     const mark = st === "working" ? svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)
       : st === "blocked" ? div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!")
-      : st === "done" && !notNews(terminals().find(k => k.address === item.p.terminal), item.p.status, item.under) ? div().size(6).flex_none().rounded_full().bg(t.done) : null;
+      : st === "done" && !notNews(terminals().find(k => k.address === item.agent?.terminal), item.agent?.status, item.under) ? div().size(6).flex_none().rounded_full().bg(t.done) : null;
     return h_flex().id(item.key).w_full().h(ROW).px(8).py(6).gap(8).rounded(4).items_center().flex_none()
       .role("button").accessibility_label(item.back ? `Back to ${item.label}` : item.label)
       .when(on, (el) => el.bg(t.selected))

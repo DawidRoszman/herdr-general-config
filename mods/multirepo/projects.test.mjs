@@ -42,6 +42,7 @@ await settle();
 assert.equal(view.place().project.name, "AcmeShop");
 assert.deepEqual(branches(), ["feat/SHOP-130-checkout-flow", "feat/SHOP-132-cart-ui", "fix/SHOP-7-typo-in-readme"]);
 assert.equal(view.listing.tasks[1].on, "feat/SHOP-130-checkout-flow", "a stacked task says what it is on");
+assert.deepEqual(view.tasks().map((t) => [t.depth, t.stack.length]), [[0, 2], [1, 2], [0, 0]], "both layers of the stack show as one, the upper under the lower");
 assert.ok(view.details.get(view.selected().root)?.repos, "the selected task's repos are loaded");
 tab.render(cx);
 
@@ -55,7 +56,7 @@ assert.equal(view.at, 0);
 await key("k");
 assert.equal(view.at, 2, "k wraps around");
 
-// Search narrows; esc clears it, esc again closes the tab.
+// Search narrows; esc leaves the box, esc again clears it, and esc never closes the tab.
 await key("/");
 assert.ok(view.isTyping);
 view.input.type("typo", cx);
@@ -66,7 +67,7 @@ await key("escape");
 assert.equal(view.query, "");
 assert.equal(state.runs.length, 0);
 await key("escape");
-assert.deepEqual(state.runs.at(-1), ["pane.close", undefined]);
+assert.equal(state.runs.length, 0, "esc with nothing to clear does nothing");
 
 // Each action opens the dialog at its step, on this project.
 const task = view.selected();

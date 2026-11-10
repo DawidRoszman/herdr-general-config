@@ -317,10 +317,9 @@ export default class Tabs extends View {
     const space = spaces().find(s => s.active);
     // Out of view, closing it moves nothing.
     if (atHome() || !space?.tabs.find(c => c.id === id)?.active) return;
-    // The space's last tab too: its space goes with it, and Herdr would show another space's tab.
-    if (agents().some(a => a.tab === id)) return goHome(cx);
-    // A space's last tab takes the space, and Herdr may still ask.
-    if (space.tabs.length === 1) return;
+    // A space's last tab takes the space: with an agent in it, Home, as Herdr would show another space's tab;
+    // without, Herdr may still ask. Any other tab, an agent's too, leaves the person in its space.
+    if (space.tabs.length === 1) return agents().some(a => a.tab === id) ? goHome(cx) : undefined;
     this.goBack(space.id, id);
   }
 
@@ -361,9 +360,10 @@ export default class Tabs extends View {
     // already picked the neighbour, and it may have been shown.
     const terms = terminals(), every = agents(), ps = panes();
     if (was && (!alive(was.tab) || (was.pane && !ps.some(p => p.pane === was.pane))) && !home) {
-      // The agent in view lands on Home, as settling it does: what to look at next stays the person's to say.
-      if (was.agent) toHome();
-      else if (space?.id === was.space) this.goBack(was.space, was.tab);
+      // A closed tab's space stays in view, on the tab shown before it. The agent in view whose pane went (its
+      // tab stays) or whose space went lands on Home, as settling it does: what to look at next stays the person's to say.
+      if (space?.id === was.space && !alive(was.tab)) this.goBack(was.space, was.tab);
+      else if (was.agent) toHome();
       // Herdr marked what it showed as seen in the same step it picked it (window active), before any mod hears of it. An agent
       // unread a frame ago that only the pick showed is owed its done back, the way Herdr's Mark unread writes it.
       for (const a of every.filter(a => a.tab === tab?.id)) {
@@ -555,7 +555,9 @@ export default class Tabs extends View {
       const program = lead && programOf(lead);
       const name = nameOf(c, lead);
       // With the Inbox showing, what needs the person is the sidebar's to say, shown or hidden.
-      const status = inbox ? null : statusOf(c), label = c.zoomed ? `${name} Z` : name;
+      // A chat (t3-chat, the older agent-chat) zooms itself over its Claude Code: that zoom is the chat's, not the person's.
+      const isOwnZoom = c.zoomed && !ps.some(p => p.tab === c.id && p.zoomed && (p.mod === "t3-chat" || p.mod === "agent-chat"));
+      const status = inbox ? null : statusOf(c), label = isOwnZoom ? `${name} Z` : name;
       // As T3's panel tabs: 24px, 12px words. Unlike T3's, the icon stays: it tells tabs apart, so hovering puts × over the status mark instead.
       const tabId = `tab-${c.id}`, closeId = `close-${c.id}`;
       const over = this.overTab === c.id || within(this, [tabId, closeId]);

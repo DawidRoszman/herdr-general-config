@@ -5,8 +5,10 @@
       "sections": [
         { "title": "Tasks", "rows": [
           ["j / k, click", "next / previous task (its repos and PRs show on the right)"],
-          ["o / enter / l", "open the task's workspace (or go to it if it's open)"],
+          ["o / enter / l", "open the task's workspace, or go to it if it's open (a dot in the list marks those)"],
           ["v", "review the task's PRs in a tab"],
+          ["y", "copy the task's branch name (or click it)"],
+          ["u", "pull: fast-forward every repo of the task from its upstream"],
           ["p", "push and create / update the cross-linked PRs (a stacked task's go in its GitHub stack)"],
           ["a", "add repos to the task (a repo without its branch takes its one branch for the same ticket, e.g. test/X-1; b in the picker names another)"],
           ["x", "remove the task (the dialog asks first)"],
@@ -15,7 +17,7 @@
           ["[ / ]", "previous / next project"],
           ["/", "search"],
           ["r", "refresh"],
-          ["esc", "leave search, clear it, then close the tab"]
+          ["esc", "leave the search box, then clear the search (cmd-w closes the tab)"]
         ] }
       ]
     },

@@ -7,8 +7,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand, setShared } from "herdr";
-import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, CHANGED } from "./view.js";
-import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace, closeSpacesOn } from "./remote.js";
+import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, stackOrder, CHANGED } from "./view.js";
+import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace, closeSpacesOn, workspaceOf } from "./remote.js";
+import { taskRow, repoRow, itemRow, TASK_ROW, REPO_ROW, ITEM_ROW } from "./rows.js";
 import { ProjectsView } from "./projects.js";
 
 
@@ -76,7 +77,7 @@ export default class Multirepo extends View {
     this.cloneSource = null;
     this.at = 0;
     this.isBusy = false;
-    this.job = null; // { name, label, branch?, removed? } of a long mr command running as a local hc terminal
+    this.job = null; // { name, label, branch?, removed?, isOutputShown? } of a long mr command running as a local hc terminal
     this.confirmRemove = null; // task root that x was pressed on once
     this.error = "";
     this.notice = "";
@@ -100,7 +101,7 @@ export default class Multirepo extends View {
     // Optional props { machine, project } plus one of (the Jira board's start work, the Projects tab):
     //   newTask: branch text   the new-task box filled in
     //   stackOn: task root     with newTask: the new task is stacked on that task
-    //   addTo: task root       the picker of repos to add to that task
+    //   addTo: task root       the picker of repos to add to that task (addRepos: repo names that come ticked)
     //   prTask: task root      create/update its PRs at once (progress shows here)
     //   removeTask: task root  that task selected with its remove confirmation asked
     const given = props() ?? {};
@@ -124,8 +125,8 @@ export default class Multirepo extends View {
       }
       const task = this.tasks.find((t) => t.root === (given.addTo ?? given.prTask ?? given.removeTask));
       if ((given.addTo || given.prTask || given.removeTask) && !task) return "That task isn't there any more.";
-      if (given.addTo) this.openPicker(task.branch, [], task);
-      if (given.prTask) return this.startJob(`PRs for ${task.branch}`, ["pr", "--task", task.root]);
+      if (given.addTo) this.openPicker(task.branch, given.addRepos ?? [], task);
+      if (given.prTask) return this.startPrJob(task);
       if (given.removeTask) {
         this.moveTo(this.items().indexOf(task));
         return this.removeTask(task, false);
@@ -154,15 +155,22 @@ export default class Multirepo extends View {
     return "";
   }
 
+  // Its output is the point (each repo's PR link), so it shows when done.
+  async startPrJob(task) {
+    const error = await this.startJob(`PRs for ${task.branch}`, ["pr", "--task", task.root]);
+    if (!error) this.job.isOutputShown = true;
+    return error;
+  }
+
   async pollJob() {
     const terminal = (await hcJson(["ls", "--json", "--all"])).terminals.find((t) => t.name === this.job?.name && !t.address.includes("/"));
     if (!terminal || terminal.state !== "finished") return;
-    const { label, branch, removed } = this.job;
+    const { label, branch, removed, isOutputShown } = this.job;
     this.job = null;
     const output = (await hc(["read", terminal.address, "--lines", "40"])).stdout.trim().split("\n").filter(Boolean);
     await hc(["rm", terminal.address]);
     if (terminal.exit_code === 0) {
-      this.notice = `${label}: done. ${output.slice(-3).join(" · ")}${branch ? " · o opens its workspace" : ""}`;
+      this.notice = [`${label}: done.`, ...(isOutputShown ? output.slice(-8) : []), branch ? "o opens its workspace." : ""].filter(Boolean).join(" · ");
       this.error = "";
       if (removed) closeSpacesOn(removed.machine, removed.folder);
     } else {
@@ -195,7 +203,7 @@ export default class Multirepo extends View {
     const listed = await this.mrJson(["ls", "--json", "--project", project.root]);
     this.repoNames = listed.repos;
     this.shorts = listed.shorts ?? {}; // mr's short names: acme-shop-backend -> backend
-    this.tasks = listed.tasks;
+    this.tasks = stackOrder(listed.tasks);
   }
 
   async openTask(task) {
@@ -341,6 +349,12 @@ export default class Multirepo extends View {
     return error;
   }
 
+  cancelRemove() {
+    if (!this.confirmRemove) return;
+    this.confirmRemove = null;
+    this.notice = "";
+  }
+
   openPr(cx, repo) {
     if (!repo.pr) return `${this.short(repo.name)} has no PR yet: p pushes and opens the task's PRs.`;
     cx.open_url(repo.pr.url);
@@ -430,7 +444,8 @@ export default class Multirepo extends View {
   items() {
     const all = this.allItems();
     if (!this.query) return all;
-    const text = (item) => JSON.stringify(item).toLowerCase();
+    const t = theme();
+    const text = (item) => { const row = this.rowFor(item, t); return `${row.label} ${row.detail}`.toLowerCase(); };
     return all.filter((item) => text(item).includes(this.query));
   }
 
@@ -438,8 +453,9 @@ export default class Multirepo extends View {
     const item = this.items()[index];
     if (!item) return;
     this.at = index;
-    this.confirmRemove = null;
-    if (this.level === "machines") this.act(cx, async () => { await this.openMachine(item); return ""; });
+    this.cancelRemove();
+    if (this.level === "machines" && item.state !== "connected") this.error = `${machineLabel(item)} is ${item.state}: its projects can't be read now.`;
+    else if (this.level === "machines") this.act(cx, async () => { await this.openMachine(item); return ""; });
     else if (this.level === "projects") this.act(cx, async () => { await this.openProject(item); return ""; });
     else if (this.level === "tasks") this.act(cx, async () => { await this.openTask(item); return ""; });
     else if (this.level === "repos") this.notice = this.openPr(cx, item);
@@ -475,7 +491,7 @@ export default class Multirepo extends View {
     }
     else if (stroke === "/") this.focusInput(cx, "search", this.query);
     else if (stroke === "escape" && this.query) { this.clearSearch(); this.moveTo(0); }
-    else if (stroke === "escape" && this.confirmRemove) { this.confirmRemove = null; this.notice = ""; }
+    else if (stroke === "escape" && this.confirmRemove) this.cancelRemove();
     else if (this.level === "pick" && (stroke === "space" || stroke === "x" || stroke === "l")) { if (this.items()[this.at]) this.togglePick(this.items()[this.at]); }
     else if (this.level === "pick" && stroke === "a") {
       const shown = this.items();
@@ -487,8 +503,8 @@ export default class Multirepo extends View {
     else if (this.level === "pick" && (stroke === "escape" || stroke === "h")) this.leavePicker();
     else if (stroke === "a" && task) this.openPicker(task.branch, [], task);
     else if (stroke === "escape") this.close();
-    else if ((stroke === "down" || stroke === "j") && count) { this.confirmRemove = null; this.moveTo((this.at + 1) % count); }
-    else if ((stroke === "up" || stroke === "k") && count) { this.confirmRemove = null; this.moveTo((this.at + count - 1) % count); }
+    else if ((stroke === "down" || stroke === "j") && count) { this.cancelRemove(); this.moveTo((this.at + 1) % count); }
+    else if ((stroke === "up" || stroke === "k") && count) { this.cancelRemove(); this.moveTo((this.at + count - 1) % count); }
     else if (stroke === "enter" || stroke === "l") this.pick(cx, this.at);
     else if (stroke === "h" && !this.isBusy) this.back();
     else if (stroke === "r" && this.level !== "machines") this.act(cx, async () => { await this.reload(); return ""; });
@@ -499,7 +515,7 @@ export default class Multirepo extends View {
     else if (stroke === "s" && task) { this.stackOn = task; this.focusInput(cx, "new"); }
     else if (stroke === "o" && task) this.act(cx, () => this.openSpace(task));
     else if (stroke === "v" && task) { run("tab.new", reviewTab(this.machine.name, this.project.root, task.branch)); this.close(); }
-    else if (stroke === "p" && task) this.act(cx, () => this.startJob(`PRs for ${task.branch}`, ["pr", "--task", task.root]));
+    else if (stroke === "p" && task) this.act(cx, () => this.startPrJob(task));
     else if ((stroke === "x" || stroke === "shift-x") && task) this.act(cx, () => this.removeTask(task, stroke === "shift-x"));
     else return;
     cx.stop_propagation();
@@ -525,36 +541,34 @@ export default class Multirepo extends View {
         .on_click((_e, cx) => { onClick(cx); cx.notify(); })
         .child(label);
     return h_flex().gap(8).items_center()
-      .child(button("rm-yes", `Remove ${task.branch}`, (cx) => this.act(cx, () => this.removeTask(task, false)), { isPrimary: true }))
+      .child(button("rm-yes", "Remove", (cx) => this.act(cx, () => this.removeTask(task, false)), { isPrimary: true }))
       .child(button("rm-force", "Remove, unpushed work too", (cx) => this.act(cx, () => this.removeTask(task, true)), { isDanger: true }))
-      .child(button("rm-no", "Cancel", () => { this.confirmRemove = null; this.notice = ""; }))
+      .child(button("rm-no", "Cancel", () => this.cancelRemove()))
       .child(div().text_size(11).text_color(t.dim).child("x / shift-x · esc"));
   }
 
+  // What a row says (its words are also what search matches), and for plain items their icon.
   rowFor(item, t) {
     const repoNames = (names) => names.map((n) => this.short(n)).join(", ");
     switch (this.level) {
       case "machines":
-        return { mark: "›", color: t.dim, label: machineLabel(item), detail: `${item.target ?? "local"} · ${item.state}` };
+        return { iconName: "terminal", label: machineLabel(item), detail: `${item.target ?? "local"} · ${item.state}`, isDim: item.state !== "connected" };
       case "projects":
-        return { mark: "›", color: t.dim, label: item.name, detail: `${item.repos.length} repos · ${item.root}` };
+        return { iconName: "folder", label: item.name, detail: `${item.repos.length} repos · ${item.root}` };
       case "clone":
-        return { mark: "⇣", color: t.dim, label: item.name, detail: `from ${machineLabel(item.machine)} · ${item.root}` };
+        return { iconName: "folder", label: item.name, detail: `from ${machineLabel(item.machine)} · ${item.root}` };
       case "tasks": {
-        const status = item.status ?? [];
-        const isDirty = status.some((s) => s.dirty || s.unpushed);
-        const badges = status.map((s) => [this.short(s.name), changeBadge(s)].filter(Boolean).join(" ")).join(" · ");
-        return { mark: isDirty ? "●" : "○", color: isDirty ? t.working : t.dim, label: item.branch, detail: badges || repoNames(item.repos) };
+        const badges = (item.status ?? []).map((s) => [this.short(s.name), changeBadge(s)].filter(Boolean).join(" ")).join(" · ");
+        return { label: item.branch, detail: badges || repoNames(item.repos) };
       }
       case "pick": {
         const isPicked = this.picked.has(item);
         const own = this.pickBranches[item];
         const detail = [this.short(item) === item ? "" : item, own ? `on ${own} (its own branch)` : ""].filter(Boolean).join(" · ");
-        return { mark: isPicked ? "☑" : "☐", color: isPicked ? t.accent : t.dim, label: this.short(item), detail };
+        return { iconName: isPicked ? "check-circle" : null, iconColor: t.accent, label: this.short(item), detail };
       }
       case "repos": {
-        const color = !item.pr ? t.dim : item.pr.state === "MERGED" ? t.done : item.pr.state === "CLOSED" ? t.blocked : t.accent;
-        return { mark: item.pr ? "◆" : "◇", color, label: this.short(item.name), detail: [changeBadge(item) || "clean", baseLabel(item, this.task.branch), prLabel(item.pr)].join(" · ") };
+        return { label: this.short(item.name), detail: [changeBadge(item) || "clean", baseLabel(item, this.task.branch), prLabel(item.pr)].join(" · ") };
       }
     }
   }
@@ -563,23 +577,19 @@ export default class Multirepo extends View {
     if (this.screen) return this.screen.render(cx);
     const t = theme();
     const items = this.items();
-    const labelWidth = { tasks: 230, repos: 150 }[this.level] ?? 150;
+    const short = (n) => this.short(n);
+    // The Projects tab's rows (rows.js); a repo card sits in a frame that shows the selection.
     const rowView = (item, index) => {
-      const row = this.rowFor(item, t);
-      return h_flex()
-        .flex_none()
-        .h(34)
-        .px(10)
-        .gap(10)
-        .items_center()
-        .rounded(7)
-        .cursor_pointer()
-        .when(index === this.at, (el) => el.bg(t.selected))
-        .when(index !== this.at, (el) => el.hover((s) => s.bg(t.hover)))
-        .child(div().flex_none().w(16).text_color(row.color).child(row.mark))
-        .child(div().flex_none().w(labelWidth).truncate().font_semibold().text_color(t.foreground).child(row.label))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(row.detail));
+      const isSelected = index === this.at;
+      if (this.level === "tasks") return taskRow(item, { isSelected, isOpen: Boolean(workspaceOf(item.root, this.machine.name)), short, chipColor: t.background }, t);
+      if (this.level === "repos") {
+        return div().flex_none().h(REPO_ROW + 8).p(4).rounded(10).cursor_pointer()
+          .when(isSelected, (el) => el.bg(t.selected))
+          .child(repoRow(item, this.task.branch, { short }, t));
+      }
+      return itemRow({ ...this.rowFor(item, t), isSelected }, t);
     };
+    const rowHeight = { tasks: TASK_ROW, repos: REPO_ROW + 8 }[this.level] ?? ITEM_ROW;
     const isLoading = this.allItems() === undefined || (this.level !== "machines" && this.isBusy && !this.allItems().length);
     const title = {
       machines: "Multirepo projects on…",
@@ -658,8 +668,8 @@ export default class Multirepo extends View {
           .min_h(0)
           .child(
             isLoading || items.length === 0
-              ? div().p(10).text_color(isLoading ? t.muted : t.dim).child(isLoading ? "…" : empty)
-              : v_virtual_list("mr-list", items.length, 34, (i) => String(i), (range) => items.slice(range.start, range.end).map((item, k) => rowView(item, range.start + k)))
+              ? div().p(10).text_color(isLoading ? t.muted : t.dim).child(isLoading ? "Loading…" : empty)
+              : v_virtual_list("mr-list", items.length, rowHeight, (i) => String(i), (range) => items.slice(range.start, range.end).map((item, k) => rowView(item, range.start + k)))
                   // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
                   .on_item_click((key, cx) => this.pick(cx, Number(key)))
                   .track_scroll(this.listScroll)
@@ -668,7 +678,7 @@ export default class Multirepo extends View {
           .child(Scrollbar.vertical("mr-list").absolute().inset_0()),
       )
       .when(Boolean(this.notice) && !this.error, (el) => el.child(div().text_size(12).text_color(t.muted).child(this.notice)))
-      .when(Boolean(this.error), (el) => el.child(div().text_color(t.blocked).child(this.error)))
+      .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
       .when(Boolean(this.confirmRemove) && !this.job, (el) => el.child(this.confirmBar(t)))
       .child(h_flex().justify_end().text_size(11).text_color(t.dim).truncate().child(`${hint} · ? keys`))
       .when(this.isShowingKeys, (el) => el.child(keyHelp("multirepo-keys", "Multirepo keys", this.keySections, t)));

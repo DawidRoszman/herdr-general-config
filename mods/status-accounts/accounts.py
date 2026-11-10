@@ -2,8 +2,10 @@
 """accounts: which Claude Code account and gh user a terminal in a folder gets, or a running
 agent uses, on this machine. Run by the status-accounts mod (as `python3 -c`, on any machine).
 
-    account <folder>        {"folder", "claude": {email, org, configDir, kind}, "gh", "warning"?}
-    process-account <pid>   {email, org, configDir, kind} of a running process
+    account <folder>        {"folder", "claude": {email, org, configDir, kind}, "gh", "profile", "warning"?}
+    process-account <pid>   {email, org, configDir, kind, profile} of a running process
+
+"profile" is the environment's HERDR_PROFILE ("" without one): the profile it was started as.
 
 A folder's accounts come from a fresh login shell plus direnv's .envrc for that folder, as a new
 terminal there gets them; a process's from its own CLAUDE_CONFIG_DIR. kind: work | personal | unknown.
@@ -103,20 +105,26 @@ def folder_accounts(folder: str) -> dict:
     """The accounts a terminal or chat started in folder uses: Claude Code's and gh's."""
     env, warning = folder_env(folder, login_env())
     return {"folder": folder, "claude": claude_account(env.get("CLAUDE_CONFIG_DIR")), "gh": gh_login(env),
-            **({"warning": warning} if warning else {})}
+            "profile": env.get("HERDR_PROFILE", ""), **({"warning": warning} if warning else {})}
 
 
-def process_claude_account(pid: int) -> dict:
-    """The Claude account of a running process, from its CLAUDE_CONFIG_DIR (an agent in a terminal)."""
+def process_environ(pid: int) -> dict:
+    """The environment a running process was started with."""
     environ = Path(f"/proc/{pid}/environ")
     if environ.exists():
-        pairs = dict(item.split("=", 1) for item in environ.read_bytes().decode(errors="replace").split("\0") if "=" in item)
-        return claude_account(pairs.get("CLAUDE_CONFIG_DIR"))
+        return dict(item.split("=", 1) for item in environ.read_bytes().decode(errors="replace").split("\0") if "=" in item)
     out = subprocess.run(["ps", "eww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
     if not out.strip():
         raise AccountError(f"No process {pid}.")
-    found = [part.split("=", 1)[1] for part in out.split() if part.startswith("CLAUDE_CONFIG_DIR=")]
-    return claude_account(found[-1] if found else None)
+    # ps prints the command and then NAME=value words: the last of a name is the environment's.
+    return dict(part.split("=", 1) for part in out.split() if "=" in part)
+
+
+def process_claude_account(pid: int) -> dict:
+    """The Claude account of a running process, from its CLAUDE_CONFIG_DIR (an agent in a terminal),
+    and the profile it was started as."""
+    environ = process_environ(pid)
+    return {**claude_account(environ.get("CLAUDE_CONFIG_DIR")), "profile": environ.get("HERDR_PROFILE", "")}
 
 
 

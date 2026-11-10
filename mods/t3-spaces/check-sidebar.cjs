@@ -487,12 +487,12 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // A card from another machine says so as T3's does: a server mark before its program, the machine named on hover.
+  // A card from another machine says so: a server mark before its program, and here (unlike T3) the machine named beside it, without hovering.
   const f = fixture(256), root = f.load("t3-inbox").render(cx);
   const card = find(root, "card-vps/t2"), mark = find(card, "machine-vps/t2");
-  assert.ok(strings(find(root, "tip-machine-vps/t2")).includes("vps") === false && find(root, "tip-machine-vps/t2"), "its card waits for the hover");
   assert.ok(walk(mark).some(n => n.source === "mods/t3-inbox/icons/server.svg"));
-  assert.ok(!strings(card).some(s => s.includes("vps")), "the machine isn't spelled out on the card");
+  assert.deepEqual(plain(strings(mark)), ["vps"], "the machine is named beside its mark");
+  assert.equal(mark.style.accessibility_label, "On vps");
   assert.equal(find(find(root, "card-t0"), "machine-t0"), null, "this computer's cards carry no mark");
 }
 {
@@ -1620,21 +1620,18 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.equal(count("/work/p1"), 1);
       assert.equal(watches.filter(w => w.dir === "/work/p1/.git").length, 1, "the old loop ends, so changes aren't looked at twice");
       // The fallback look is for what's in view: with the Inbox in front, or the sidebar hidden, it waits.
-      const due = () => { for (const k in sp.checked) sp.checked[k] = 0; looks.splice(0); sp.checkNew(run); return looks.length; };
+      // A look starts a tick after it's due: the multirepo mark is asked for first (multirepoAt), even when known.
+      const due = async () => { for (const k in sp.checked) sp.checked[k] = 0; looks.splice(0); sp.checkNew(run); await flush(); return looks.length; };
       f.ui.window.active = true;
       f.slots["sidebar-lists"] = { id: "sidebar-lists", active: "inbox" };
-      assert.equal(due(), 0, "under the Inbox");
-      await flush();
+      assert.equal(await due(), 0, "under the Inbox");
       f.slots["sidebar-lists"].active = "lists";
       f.slots.sidebar.hidden = true;
-      assert.equal(due(), 0, "sidebar hidden");
-      await flush();
+      assert.equal(await due(), 0, "sidebar hidden");
       f.slots.sidebar.hidden = false;
-      assert.ok(due() > 0, "back in view");
-      await flush();
+      assert.ok(await due() > 0, "back in view");
       delete f.slots["sidebar-lists"];
-      assert.ok(due() > 0, "docked alone, with no Lists to be hidden in");
-      await flush();
+      assert.ok(await due() > 0, "docked alone, with no Lists to be hidden in");
     }
     {
       // The icon through a cd: until the new place answers, the space keeps it, not a flash of its letter.
@@ -1830,7 +1827,8 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(card("vps/t2").style.opacity, 1, "unfaded");
     assert.deepEqual(strings(card("vps/t2")).slice(1), ["P", "project 2", "vps", "main", "Pi"], "another machine's names it");
     const labelDelay = (id) => { fire(find(inbox.render(cx), `tip-over-${id}`), "on_hover", true, cx); const { ms } = cx.timers.at(-1); fire(find(inbox.render(cx), `tip-over-${id}`), "on_hover", false, cx); return ms; };
-    assert.equal(labelDelay("machine-vps/t2"), 0, "a control's label in the row opens at once too");
+    // The machine is named on the card, so it has no label of its own (see above): Settle is the control here.
+    assert.equal(labelDelay("settle-vps/t2"), 0, "a control's label in the row opens at once too");
     hover("t0", false);
     assert.ok(card("vps/t2"), "the late leave of the row before doesn't close it");
     hover("vps/t2", false);
@@ -1850,7 +1848,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(card("t0"), undefined);
     hover("t0", false);
     inbox.detailsClosed = Date.now() - 400;
-    assert.equal(labelDelay("machine-vps/t2"), 150, "past 400ms a label waits again");
+    assert.equal(labelDelay("settle-vps/t2"), 150, "past 400ms a label waits again");
     hover("t0", true);
     assert.equal(card("t0"), undefined, "and so does the card");
     pass(150);
@@ -2457,7 +2455,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [["tab.select", { id: "rev" }]], "the tab dragged over gone: no drop on it");
     f.agents().pop();
 
-    // Closing the agent in view lands on Home, however it went; nothing else does.
+    // Closing the agent in view's tab stays in its space, on the tab shown before (cff9d6d), however Herdr went; nothing else moves.
     const close = (id) => { const i = tabs.findIndex(c => c.id === id); tabs.splice(i, 1); const a = list.findIndex(x => x.tab === id); if (a >= 0) { f.agents().splice(f.agents().findIndex(x => x.tab === id), 1); f.terminals().splice(f.terminals().findIndex(x => x.tab === id), 1); list.splice(a, 1); } };
     pick("mine", "A"); view.render(cx); taken();
     close("other"); view.render(cx);
@@ -2466,11 +2464,11 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [], "so does a tab with no agent that isn't in view");
     pick("mine", "A"); view.render(cx);
     close("mine"); pick("prog"); view.render(cx);
-    assert.deepEqual(taken(), [["t3-tabs.home", {}]], "the agent in view closing goes Home, past Herdr's neighbour");
+    assert.deepEqual(taken(), [["tab.select", { id: "prog" }]], "the agent in view's tab closing goes back to the tab shown before, past Herdr's neighbour");
     view.render(cx);
     assert.deepEqual(taken(), [], "once");
     inbox(false); pick("kid", "K"); view.render(cx); close("kid"); pick("prog"); view.render(cx);
-    assert.deepEqual(taken(), [["t3-tabs.home", {}]], "Lists close to Home too");
+    assert.deepEqual(taken(), [["tab.select", { id: "prog" }]], "with the Lists too");
   }
 
   // A focus or a zoom this mod didn't go ahead of (a toast, hc, the zoom button): the later of the two wins, once, and what the stale zoom showed gets its done back.
@@ -2615,7 +2613,10 @@ for (const width of [208, 240, 256, 320, 480]) {
       f.state["t3-home.space"] = "h"; f.spaces().push({ id: "h", name: "Home", active: false, tabs: [{ id: "hp", name: "Home" }] });
       see("mine", "A"); taken();
       await say("close-tab-now:mine");
-      assert.deepEqual(taken(), [["space.select", { id: "h" }], ["tab.close", { id: "mine", confirmed: true }]], "the agent in view: Home first, then the close");
+      // As any tab since cff9d6d: back to a tab of its space first (which one is the trail's: here a show within goBack's 500ms isn't counted), then the close.
+      const [back, ...rest] = taken();
+      assert.ok(back[0] === "tab.select" && back[1].id !== "mine" && tabs.some((c) => c.id === back[1].id), "the agent in view: back in its space first");
+      assert.deepEqual(rest, [["tab.close", { id: "mine", confirmed: true }]], "then the close");
       see("mine", "A"); taken();
       const all = tabs.splice(0, tabs.length, ...tabs.filter(c => c.id === "mine"));
       await say("close-tab-now:mine");
@@ -2625,14 +2626,17 @@ for (const width of [208, 240, 256, 320, 480]) {
       see("prog"); see("mine", "A"); taken();
       f.spaces()[0].active = false; f.spaces().at(-1).active = true; closer.render(ctx);
       tabs.forEach(c => { c.active = c.id === "other"; });
-      await say("space:1");
-      assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "back to the tab last shown there, without its active tab showing on the way");
       await say("space-next");
-      assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "walking there too");
+      assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "back to the tab last shown there, without its active tab showing on the way");
       f.slots["sidebar-lists"].active = "lists";
       await say("space:1");
-      assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "Lists restore the last shown tab too");
+      assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "by its number too");
       f.slots["sidebar-lists"].active = "inbox";
+      // With the Inbox shown, ctrl-1…9 is its nth row instead (12f7c1f), in the order it publishes.
+      f.state["t3-inbox.rows"] = { order: ["A"], view: null };
+      await say("space:1");
+      assert.ok(taken().some(([name, args]) => name === "agent.focus" && args.terminal === "A"), "the Inbox's first row");
+      delete f.state["t3-inbox.rows"];
       f.spaces()[0].active = true; f.spaces().at(-1).active = false;
       f.spaces().pop(); delete f.state["t3-home.space"]; f.panes().pop(); gone("new");
     }
@@ -2644,7 +2648,8 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [], "no memory, no jump");
   }
 
-  // The agent in view closed by what this mod doesn't make (its menu, its program ending): the neighbour Herdr shows for a frame isn't somewhere the person went.
+  // The agent in view closed by what this mod doesn't make (its menu, its program ending): the neighbour Herdr shows for a frame isn't somewhere the person went;
+  // its space stays, on the tab shown before (cff9d6d).
   {
     const f = fixture(256), program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
     const tabs = f.spaces()[0].tabs;
@@ -2659,7 +2664,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     pick("was", "W"); pick("mine", "A"); f.calls.length = 0;
     tabs.splice(tabs.findIndex(c => c.id === "mine"), 1); f.agents().splice(f.agents().findIndex(a => a.address === "A"), 1);
     pick("next", "N");
-    assert.deepEqual(plain(f.calls.splice(0)), [["t3-tabs.home", {}]]);
+    assert.deepEqual(plain(f.calls.splice(0)), [["tab.select", { id: "was" }]]);
     pick("prog");
     assert.deepEqual(find(view.render(cx), "tab-strip").items.map(n => walk(n).map(x => x.key).find(k => /^tab-/.test(k ?? "")).slice(4)), ["was", "prog"], "the agent last looked at is still the one the bar holds");
   }

@@ -1,0 +1,39 @@
+{
+  "// profiles": "One entry per profile; the key is its name, and the order here is the order in the sidebar's switch. Copy this file to profiles.json and make it yours. Check it with: python3 mods/t3-context/profiles.py check",
+  "profiles": {
+    "work": {
+      "label": "Work",
+      "// badge, color": "The text and theme colour of the account chips; badge defaults to the label.",
+      "badge": "Acme",
+      "color": "ansi3",
+      "// machines": "Machines (hc machine ls) that are this profile's alone. A machine in no profile is shared: its spaces go by folder.",
+      "machines": ["work-box"],
+      "// folders": "On a shared machine: folders whose spaces are this profile's.",
+      "folders": ["~/work"],
+      "// coordinator": "The folder (in the app home, or absolute) whose CLAUDE.md is this profile's coordinator's instructions.",
+      "coordinator": { "folder": "coordinators/example" },
+      "// agents": "reviewer: the agent that reviews for this profile (its program); leave it out for no reviewer. hc starts it through the template whose command runs it (hc templates). forbidden: programs an agent of this profile must not start.",
+      "agents": { "reviewer": "codex", "forbidden": ["opencode"] },
+      "// accounts": "provider -> its settings. A secret is {\"env\": \"NAME\"} (a variable of your login shell or ~/.profile) or {\"command\": [...]}, never the value.",
+      "accounts": {
+        "claude": { "configDir": "~/.claude-acme" },
+        "github": { "user": "jane-acme" },
+        "git": { "name": "Jane Doe", "email": "jane@acme.example" },
+        "jira": { "site": "acme.atlassian.net", "email": "jane@acme.example", "token": { "env": "ATLASSIAN_API_KEY" } }
+      }
+    },
+    "personal": {
+      "label": "Personal",
+      "badge": "personal",
+      "color": "ansi4",
+      "machines": ["home-box"],
+      "folders": ["~/personal"],
+      "agents": { "forbidden": ["codex"] },
+      "accounts": {
+        "// claude": "null: Claude Code's default config dir (~/.claude).",
+        "claude": { "configDir": null },
+        "github": { "user": "jane" }
+      }
+    }
+  }
+}

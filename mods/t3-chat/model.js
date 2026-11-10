@@ -185,34 +185,103 @@ export function unwrapped(lines) {
 
 // A numbered menu. A long option wraps onto lines of its own under it: they belong to its label.
 const WRAPS = 16; // lines an option may wrap onto (a long path on a narrow terminal)
-const isMore = (line) => /^\s{4,}\S/.test(line) && !OPTION.test(line) && !/^\s*(Esc|Enter) to /.test(line);
-// Claude Code's input box (❯ over a rule line) is on screen: it asks nothing. A menu takes the
-// box's place, so what looks like options above it is the conversation (a numbered list in a
-// reply, an echoed message).
-const hasPromptBox = (lines) => lines.some((line, i) => /^\s*❯/.test(line) && RULE.test(lines[i + 1] ?? ""));
+// A question's multi-select ends in a step, "Next" or "Submit": a row of its own, not an option's words.
+const STEP = /^[\s❯]*(Next|Submit)$/;
+const isStep = (line) => STEP.test(line);
+const isMore = (line) => /^\s{4,}\S/.test(line) && !OPTION.test(line) && !/^\s*(Esc|Enter) to /.test(line) && !isStep(line);
+// Claude Code's input box (❯ between rule lines; the top one may hold a name) is on screen: it
+// asks nothing. A menu takes the box's place, so what looks like options above it is the
+// conversation (a numbered list in a reply, an echoed message: ❯ too, with a rule under it when a
+// question follows).
+const hasPromptBox = (lines) => lines.some((line, i) => /^\s*❯/.test(line) && RULE.test(lines[i + 1] ?? "") && /^\s*[╌─━]{3,}/.test(lines[i - 1] ?? ""));
+// A question (AskUserQuestion) has its questions as tabs over it: ← ☐ Color ☐ Size ✔ Submit →, or
+// one question its header alone: ☐ Color.
+const QUESTION_TABS = /^\s*(?:←.*→|[☐☒]\s+[^☐☒✔→]+)\s*$/;
+// Its "Type something." is answered with what the person writes (the chat's box, see ChatView.submit).
+export const isTypedOption = (option) => option.kind === "typed";
 
 export function screenMenu(screen) {
   const lines = screen.split("\n");
   if (hasPromptBox(lines.filter((line) => line.trim()))) return null;
   const last = lines.findLastIndex((l) => OPTION.test(l));
   if (last < 0) return chooserMenu(lines);
-  // Up to option 1 (or as far as options and their wrapped lines reach).
+  // Up to option 1 (or as far as options and their wrapped lines reach). A question's last
+  // option ("Chat about this") stands under a rule line of its own.
   let first = last;
   while (lines[first].match(OPTION)[1] !== "1") {
     let up = first - 1;
-    while (up >= 0 && first - up <= WRAPS && isMore(lines[up])) up -= 1;
+    while (up >= 0 && first - up <= WRAPS && (isMore(lines[up]) || RULE.test(lines[up]) || isStep(lines[up]))) up -= 1;
     if (up < 0 || !OPTION.test(lines[up])) break;
     first = up;
   }
   let end = last + 1;
   while (end < lines.length && end - last <= WRAPS && isMore(lines[end])) end += 1;
   const options = [];
+  let cursor = 0; // the row ❯ marks
   for (const line of lines.slice(first, end)) {
     const m = line.match(OPTION);
-    if (m) options.push({ key: m[1], label: m[2], keys: [m[1]] });
-    else options[options.length - 1].label += ` ${line.trim()}`;
+    if ((m || isStep(line)) && /^[\s│|]*❯/.test(line)) cursor = options.length;
+    if (m) options.push({ key: m[1], label: m[2], keys: [m[1]], more: [] });
+    else if (isStep(line)) options.push({ key: "→", label: line.match(STEP)[1], keys: [], more: [] });
+    else if (isMore(line)) options[options.length - 1].more.push(line.trim());
   }
-  return { ...asked(lines, first), options };
+  const tabs = lines.slice(0, first).findLastIndex((l) => QUESTION_TABS.test(l));
+  if (tabs >= 0) return questionMenu(lines.slice(tabs, first), options, cursor);
+  // Elsewhere an option's lines under it are its label, wrapped.
+  return { ...asked(lines, first), options: options.map(({ more, ...o }) => ({ ...o, label: [o.label, ...more].join(" ") })) };
+}
+
+// A question (AskUserQuestion), from its lines from the tabs to its options, as the chat draws it:
+// { isQuestion, question, steps, current, review, options, cursor }. steps: its questions (by
+// header) and Submit, when it asks more than one; current: the step shown (the first unanswered:
+// the screen's text doesn't mark it), or -1. review: the answers on the Submit step. Options:
+// { key, label, description, keys, kind: "answer" | "typed" | "chat" | "step", isChecked (null
+// unless a multi-select), isRecommended, isCursor }.
+function questionMenu(head, options, cursor) {
+  const steps = [...head[0].matchAll(/([☐☒✔])\s+(.+?)(?=\s+[☐☒✔→]|\s*$)/g)].map(([, mark, label]) => ({ label: label.trim(), isDone: mark === "☒", isSubmit: mark === "✔" }));
+  const words = head.slice(1).map(clean).filter(Boolean);
+  const isReview = words[0] === "Review your answers";
+  const review = [];
+  for (const [i, word] of words.entries()) if (isReview && word.startsWith("●") && words[i + 1]?.startsWith("→")) review.push({ question: word.slice(1).trim(), answer: words[i + 1].slice(1).trim().replace(/\s*\(Recommended\)$/, "") });
+  // A multi-select's digits only tick; its step is gone to with the cursor and taken with Enter.
+  const moves = (to) => Array(Math.abs(to - cursor)).fill(to > cursor ? "down" : "up");
+  const shown = options.map((option, i) => {
+    const box = option.label.match(/^\[(.)\]\s*/);
+    const label = (box ? option.label.slice(box[0].length) : option.label).replace(/\s*\(Recommended\)$/, "");
+    const kind = option.key === "→" ? "step" : /^Type something\.?$/.test(label) ? "typed" : label === "Chat about this" ? "chat" : "answer";
+    return { key: option.key, label, description: option.more.join(" "), keys: kind === "step" ? [...moves(i), "enter"] : option.keys, kind,
+      isChecked: box ? box[1] !== " " : null, isRecommended: /\(Recommended\)$/.test(option.label), isCursor: i === cursor };
+  });
+  const isSteps = steps.filter((step) => !step.isSubmit).length > 1;
+  return {
+    isQuestion: true, question: isReview ? words[0] : words.join(" "), detail: "", review,
+    steps: isSteps ? steps : [], current: isSteps ? (isReview ? steps.findIndex((step) => step.isSubmit) : steps.findIndex((step) => !step.isDone && !step.isSubmit)) : -1,
+    options: shown, cursor,
+  };
+}
+
+// The step a question shows, as its screen doesn't mark it (a multi-select is ticked answered as
+// soon as one box is): its questions come in their steps' order, so the one shown is where its
+// text first came. seen: the questions' texts so far, anew with a new question (nothing answered).
+// Sets menu.current; returns the texts now. A chat that comes in mid-question (opened, restarted)
+// hasn't seen the steps before: they are taken to be those the screen ticks.
+export function placeQuestion(menu, seen) {
+  if (!menu?.steps?.length || menu.review.length) return seen;
+  const fresh = menu.steps.every((step) => !step.isDone);
+  const now = fresh ? [] : seen.length ? seen : Array(Math.max(0, menu.current)).fill(null);
+  const next = now.includes(menu.question) ? now : [...now, menu.question];
+  menu.current = next.indexOf(menu.question);
+  return next;
+}
+
+// The keys that put a question's cursor in its "Type something" field, for the text to follow;
+// after keys: what takes it. A single answer's digit goes to its field and its text's Enter
+// answers. A multi-select's digit only ticks, so the cursor is moved there, and the field is
+// ticked with an Enter of its own (the text's Enter leaves it unticked).
+export function typedAnswer(menu, option) {
+  if (option.isChecked === null) return { keys: option.keys, after: [] };
+  const at = menu.options.indexOf(option), from = menu.cursor ?? 0;
+  return { keys: Array(Math.abs(at - from)).fill(at > from ? "down" : "up"), after: ["enter"] };
 }
 
 // The chooser's options: the lines touching the ❯ line (a blank line ends them on each side).
@@ -323,9 +392,10 @@ export function fileMatches(files, query) {
 // What to offer for the draft: its slash command when it is one, else files for an @word being typed at the end.
 // Each item: { insert (replaces the token), label, detail }.
 export function suggestionsFor(draft, commands, files) {
-  const trimmed = draft.trim();
-  if (trimmed.startsWith("/") && !trimmed.includes("\n")) {
-    return { token: draft, items: commandMatches(commands, trimmed).map((c) => ({ insert: `${c.id} `, label: c.id, detail: c.detail ?? "" })) };
+  // A command while it is being typed: once a space follows it (a taken one has one), it is written.
+  const head = draft.trimStart();
+  if (head.startsWith("/") && !/\s/.test(head)) {
+    return { token: draft, items: commandMatches(commands, head).map((c) => ({ insert: `${c.id} `, label: c.id, detail: c.detail ?? "" })) };
   }
   const at = draft.match(/(?:^|\s)(@[^\s@]*)$/);
   if (!at) return { token: "", items: [] };
@@ -333,14 +403,40 @@ export function suggestionsFor(draft, commands, files) {
   return { token: at[1], items: fileMatches(files, query).map((path) => ({ insert: `@${path} `, label: path.slice(path.lastIndexOf("/") + 1), detail: path })) };
 }
 
-// The draft with its last token replaced by the chosen suggestion.
+// The draft with its last token replaced by the chosen suggestion, and where the caret goes:
+// right after what was put in (its trailing space included), as a UTF-16 offset (the box's unit).
 export function accepted(draft, token, insert) {
-  return draft.slice(0, draft.length - token.length) + insert;
+  const start = draft.length - token.length;
+  return { text: draft.slice(0, start) + insert, caret: start + insert.length };
 }
 
-// The tab name for a chat titled so (its first message).
+// What Up, Down or Tab does in the box (keys the box would otherwise take for itself, see
+// ChatView.composerKey): "suggest" moves or takes the / and @ menu's highlight; "question" moves
+// Claude Code's cursor over a question's rows (the box empty); "history" brings back what was sent
+// before; "box" leaves the key to the box (the caret, Tab's focus).
+export function composerKeyRoute(key, { hasSuggestions, isQuestion, isEmpty, recalls }) {
+  if (hasSuggestions) return "suggest";
+  if (key === "tab") return "box";
+  if (isQuestion && isEmpty) return "question";
+  return recalls ? "history" : "box";
+}
+
+// A file the chat draws as a picture (what image() and imageSize read), by its name.
+export const isImagePath = (path) => /\.(png|jpe?g|gif|webp)$/i.test(path);
+
+// The tab name for a chat titled so (its first message). The tab's icon says it is a chat.
 export function chatTabName(title) {
-  return `Chat: ${(title || "new").slice(0, 24)}`;
+  return (title || "new").slice(0, 30);
+}
+
+// The name a chat's tab gets from its title, or null to leave it: only a name the chat's makers
+// gave (none, "claude" from New chat and new workspaces) or the one t3-chat gave before
+// ("Chat: <title>") is replaced; a name the person gave stays. tab: the tab's TabInfo.
+export function chatTabRename(tab, title) {
+  if (!tab || !title) return null;
+  const name = chatTabName(title);
+  const isChats = !tab.named || tab.name === "claude" || tab.name === `Chat: ${title.slice(0, 24)}`;
+  return isChats && tab.name !== name ? name : null;
 }
 
 // The conversation as T3's timeline lays it out (MessagesTimeline): the person's messages, the
@@ -414,7 +510,8 @@ export function entryLabel(item) {
   const input = item.input ?? {};
   const file = input.file_path ?? input.path ?? input.notebook_path ?? "";
   switch (item.name) {
-    case "Bash": return { icon: "terminal", heading: "Ran", detail: item.title };
+    // A leading `cd <folder> &&` is the same in every command run there: the line shows what follows.
+    case "Bash": return { icon: "terminal", heading: "Ran", detail: item.title.replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*&&\s*(?=\S)/, "") };
     case "Read": return { icon: "file-text", heading: "Read", detail: basename(file) };
     case "Write": return { icon: "square-pen", heading: "Wrote", detail: basename(file) };
     case "Edit": case "MultiEdit": case "NotebookEdit": return { icon: "square-pen", heading: "Edited", detail: basename(file) };
@@ -551,4 +648,47 @@ export function pendingTool(chat, menu = null) {
 export function screenPlanPath(screen) {
   const tail = screen.split("\n").filter((line) => line.trim()).slice(-6).map((line) => line.trim()).join("");
   return tail.match(/(~?\/[\w.\/-]*\/plans\/[\w.-]+\.md)/)?.[1] ?? null;
+}
+
+// An image file's pixel size from its first bytes (PNG, GIF, JPEG, WebP), so it can be drawn at a
+// size known before it loads; null for anything else. bytes: indexable (a Buffer, a Uint8Array).
+export function imageSize(bytes) {
+  const at = (i) => bytes[i] ?? 0;
+  const be16 = (i) => (at(i) << 8) | at(i + 1);
+  const le16 = (i) => at(i) | (at(i + 1) << 8);
+  const le24 = (i) => le16(i) | (at(i + 2) << 16);
+  const ascii = (i, n) => String.fromCharCode(...Array.from({ length: n }, (_, k) => at(i + k)));
+  if (ascii(1, 3) === "PNG") return { width: (be16(16) << 16) + be16(18), height: (be16(20) << 16) + be16(22) };
+  if (ascii(0, 4) === "GIF8") return { width: le16(6), height: le16(8) };
+  if (at(0) === 0xff && at(1) === 0xd8) {
+    // JPEG: the first start-of-frame segment (C0-CF, less C4 C8 CC) holds the size.
+    for (let i = 2; i + 9 < bytes.length;) {
+      if (at(i) !== 0xff) return null;
+      const marker = at(i + 1);
+      if (marker === 0xff) { i += 1; continue; }
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { width: be16(i + 7), height: be16(i + 5) };
+      i += 2 + be16(i + 2);
+    }
+    return null;
+  }
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") {
+    const chunk = ascii(12, 4);
+    if (chunk === "VP8 ") return { width: le16(26) & 0x3fff, height: le16(28) & 0x3fff };
+    if (chunk === "VP8L") return { width: 1 + (((at(22) & 0x3f) << 8) | at(21)), height: 1 + (((at(24) & 0xf) << 10) | (at(23) << 2) | ((at(22) & 0xc0) >> 6)) };
+    if (chunk === "VP8X") return { width: 1 + le24(24), height: 1 + le24(27) };
+  }
+  return null;
+}
+
+// A picture's size scaled down, its shape kept, to fit maxWidth x maxHeight (never up).
+// The size that covers width x height whole, keeping the picture's shape (CSS object-fit: cover):
+// drawn centred in a box of that size that clips the rest.
+export function coverSize({ width, height }, boxWidth, boxHeight) {
+  const scale = Math.max(boxWidth / width, boxHeight / height);
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
+export function fitSize({ width, height }, maxWidth, maxHeight) {
+  const scale = Math.min(1, maxWidth / width, maxHeight / height);
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }

@@ -1,10 +1,29 @@
 import assert from "node:assert/strict";
-import { toCard, columns, branchFor, matches, isShown, toDetails, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
+import { toCard, columns, branchFor, matches, isShown, clock, boardTasks, taskTarget, toDetails, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
 import { adfToMarkdown } from "./adf.js";
 
 const issue = (key, status, category, priority = "Medium", updated = "2026-11-01T00:00:00.000+0000", type = "Story") => ({
   key, fields: { summary: `Summary ${key}`, status: { name: status, statusCategory: { key: category } }, priority: { name: priority }, issuetype: { name: type }, project: { key: "SHOP" }, updated },
 });
+
+assert.equal(clock(new Date(2026, 10, 9, 7, 5, 31)), "07:05");
+assert.equal(clock(new Date(2026, 10, 9, 21, 40)), "21:40");
+
+assert.equal(boardTasks(null).size, 0);
+assert.equal(boardTasks("{ nope").size, 0);
+assert.equal(boardTasks('{"tasks": {}}').size, 0);
+assert.deepEqual([...boardTasks('{"tasks": [{"key": "SHOP-1", "stage": "pr-open"}, {"stage": "x"}, null]}').keys()], ["SHOP-1"]);
+
+const spacesNow = [
+  { id: "s-main", branch: "main", folder: "/p/main", machine: null },
+  { id: "s-110", branch: "feat/SHOP-110-search", folder: "/p/t110", machine: null },
+  { id: "s-box", branch: null, folder: "/p/t12", machine: "box" },
+];
+assert.deepEqual(taskTarget("SHOP-110", { folder: "/p/t12", machine: "box" }, spacesNow), { space: "s-110" });
+assert.deepEqual(taskTarget("SHOP-11", undefined, spacesNow), null);
+assert.deepEqual(taskTarget("SHOP-12", { folder: "/p/t12", machine: "box", agent: "t7" }, spacesNow), { space: "s-box" });
+assert.deepEqual(taskTarget("SHOP-12", { folder: "/p/t12", agent: "t7" }, spacesNow), { agent: "t7" });
+assert.deepEqual(taskTarget("SHOP-13", { machine: "box", agent: "t7" }, spacesNow), { agent: "box/t7" });
 
 const card = toCard(issue("SHOP-1", "In Progress", "indeterminate"));
 assert.deepEqual(card, { key: "SHOP-1", summary: "Summary SHOP-1", status: "In Progress", category: "indeterminate", priority: "Medium", type: "Story", project: "SHOP", updated: "2026-11-01T00:00:00.000+0000" });

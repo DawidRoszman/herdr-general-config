@@ -4,7 +4,7 @@
 import { InputState } from "gpui-base";
 
 export class Search {
-  constructor({ onChange, onSubmit }) {
+  constructor({ onChange, onSubmit, onBlur = () => {} }) {
     this.query = "";
     this.isTyping = false;
     this.input = InputState.new({ value: "" });
@@ -18,6 +18,7 @@ export class Search {
     this.input.on("submit", (_e, cx) => onSubmit(cx));
     this.input.on("blur", (_e, cx) => {
       this.isTyping = false;
+      onBlur();
       cx.notify();
     });
   }

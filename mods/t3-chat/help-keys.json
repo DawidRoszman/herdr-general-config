@@ -9,7 +9,7 @@
           "rows": [
             [
               "enter",
-              "send the message to Claude Code"
+              "send the message to Claude Code; with the / or @ menu open, take the highlighted one"
             ],
             [
               "shift-enter",
@@ -25,11 +25,11 @@
             ],
             [
               "/command",
-              "any Claude Code slash command (/model, /compact, …); common ones are offered, tab accepts"
+              "any Claude Code slash command (/model, /compact, …); common ones are offered, tab or enter takes one"
             ],
             [
               "@path",
-              "mention a file of the chat's folder (fuzzy): tab accepts, up/down choose"
+              "mention a file of the chat's folder (fuzzy): up/down choose, tab or enter takes one"
             ],
             [
               "1 / 2 / 3…",

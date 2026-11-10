@@ -80,7 +80,7 @@ CHECK_OUTCOMES = {
 # A branch's latest PR with everything the review tab shows, inline comments included, in one round
 # trip. ponytail: lists stop at their first page (100 comments, reviews, threads, commits, checks);
 # only files are paged, since the Files tab must list every one. Page the others if PRs outgrow them.
-PR_SCALARS = ("number title body state isDraft url headRefName baseRefName additions deletions changedFiles "
+PR_SCALARS = ("number title body state isDraft url headRefName headRefOid baseRefName additions deletions changedFiles "
               "mergeable mergeStateStatus reviewDecision createdAt updatedAt").split()
 PR_DETAIL_QUERY = """query($owner: String!, $name: String!, $branch: String!) {
   viewer { login }
@@ -92,12 +92,12 @@ PR_DETAIL_QUERY = """query($owner: String!, $name: String!, $branch: String!) {
       latestReviews(first: 50) { nodes { id author { login } state body submittedAt } }
       reviews(first: 100) { nodes { id author { login } state body submittedAt } }
       comments(first: 100) { nodes { author { login } body createdAt url } }
-      reviewThreads(first: 100) { nodes { comments(first: 100) { nodes { author { login } body createdAt url path line originalLine } } } }
+      reviewThreads(first: 100) { nodes { diffSide startDiffSide isOutdated comments(first: 100) { nodes { author { login } body createdAt url path line originalLine startLine originalStartLine } } } }
       commits(first: 100) { nodes { commit { oid messageHeadline messageBody committedDate authoredDate
         authors(first: 5) { nodes { name email user { login } } } } } }
       lastCommit: commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
         __typename
-        ... on CheckRun { name status conclusion startedAt completedAt detailsUrl checkSuite { workflowRun { workflow { name } } } }
+        ... on CheckRun { name status conclusion startedAt completedAt detailsUrl checkSuite { workflowRun { event workflow { name } } } }
         ... on StatusContext { context state targetUrl createdAt } } } } } } }
       files(first: 100) { pageInfo { hasNextPage endCursor } nodes { path additions deletions changeType } }
       stackEntry { position }
@@ -345,9 +345,11 @@ def _commit(raw: dict) -> dict:
 
 def _check(raw: dict) -> dict:
     if raw["__typename"] == "CheckRun":
-        workflow = ((raw.get("checkSuite") or {}).get("workflowRun") or {}).get("workflow") or {}
+        run = (raw.get("checkSuite") or {}).get("workflowRun") or {}
+        workflow = run.get("workflow") or {}
+        # workflowEvent tells apart one check run twice, e.g. for "push" and for "pull_request".
         return {key: raw[key] for key in ("__typename", "name", "status", "conclusion", "startedAt", "completedAt", "detailsUrl")} | {
-            "workflowName": workflow.get("name", "")}
+            "workflowName": workflow.get("name", ""), "workflowEvent": run.get("event") or ""}
     return {"__typename": raw["__typename"], "context": raw.get("context"), "state": raw.get("state"),
             "targetUrl": raw.get("targetUrl"), "startedAt": raw.get("createdAt")}
 
@@ -367,8 +369,11 @@ def detail_pr(node: dict, name: str, slug: str) -> dict:
         "statusCheckRollup": [_check(c) for c in (rollup["contexts"]["nodes"] if rollup else [])],
         "files": node["files"]["nodes"],
         # A thread's first comment starts it; the rest answer it.
+        # side and isOutdated place a thread on the Files tab's diff: an outdated one has no line there now.
         "inlineComments": [{"author": _login(c["author"]), "body": c["body"], "createdAt": c["createdAt"], "url": c["url"],
-                            "path": c["path"], "line": c["line"] or c["originalLine"], "isReply": i > 0}
+                            "path": c["path"], "line": c["line"] or c["originalLine"], "side": thread.get("diffSide") or "RIGHT",
+                            "startLine": c.get("startLine") or c.get("originalStartLine"), "startSide": thread.get("startDiffSide"),
+                            "isOutdated": bool(thread.get("isOutdated")), "isReply": i > 0}
                            for thread in node["reviewThreads"]["nodes"] for i, c in enumerate(thread["comments"]["nodes"])],
         "stack": _stack(node),
         "repo": name,
@@ -721,17 +726,49 @@ def cmd_add(args) -> None:
 
 
 def task_summaries(project: Project, with_status: bool) -> list[dict]:
-    tasks = []
     if not project.workspaces.exists():
-        return tasks
-    for folder in sorted(project.workspaces.iterdir()):
-        if (folder / TASK_FILE).exists():
-            task = Task.load(folder)
-            summary = {"branch": task.branch, "root": str(folder), "repos": task.repos, "branches": task.branches, "on": task.on}
-            if with_status:
-                summary["status"] = [repo_state(task, name, with_pr=False) for name in task.repos]
-            tasks.append(summary)
+        return []
+    loaded = [Task.load(folder) for folder in sorted(project.workspaces.iterdir()) if (folder / TASK_FILE).exists()]
+    found = found_parents(project, loaded) if with_status else {}
+    tasks = []
+    for task in loaded:
+        summary = {"branch": task.branch, "root": str(task.root), "repos": task.repos, "branches": task.branches, "on": task.on}
+        if with_status:
+            summary["status"] = [repo_state(task, name, with_pr=False) for name in task.repos]
+            summary["stackedOn"] = task.on or found.get(task.branch)
+        tasks.append(summary)
     return tasks
+
+
+def found_parents(project: Project, tasks: list[Task]) -> dict[str, str]:
+    """Task branch -> the task branch it builds on, for tasks that don't record one (made without --on, their
+    PRs retargeted later): in a repo both have, the other task's branch is in this one's history and not in the
+    base's. With several, the nearest (the one the others are below). Local git only, so a layer below with
+    commits this one lacks (not restacked yet) isn't found."""
+    merged: dict[tuple[str, str], set[str]] = {}
+
+    def heads_in(name: str, rev: str) -> set[str]:
+        if (name, rev) not in merged:
+            out = run(["git", "for-each-ref", "--merged", rev, "--format=%(refname:short)", "refs/heads"],
+                      cwd=project.root / name, check=False)
+            merged[(name, rev)] = set(out.split())
+        return merged[(name, rev)]
+
+    def is_below(other: Task, task: Task, name: str) -> bool:
+        mine, theirs = task.branch_of(name), other.branch_of(name)
+        return (theirs in heads_in(name, mine) and mine not in heads_in(name, theirs)
+                and theirs not in heads_in(name, tip_of(project.root / name, project.repo(name)["base"])))
+
+    parents = {}
+    for task in tasks:
+        if task.on:
+            continue
+        below = [(other, shared[0]) for other in tasks if other is not task
+                 for shared in [[n for n in task.repos if n in other.repos]] if shared and is_below(other, task, shared[0])]
+        if below:
+            nearest, _ = max(below, key=lambda b: sum(is_below(o, b[0], b[1]) for o, _ in below if o is not b[0] and b[1] in o.repos))
+            parents[task.branch] = nearest.branch
+    return parents
 
 
 def cmd_ls(args) -> None:
@@ -1180,6 +1217,27 @@ def cmd_pr_act(args) -> None:
     print(run(["gh", "pr", *PR_ACTIONS[args.action], str(args.number), "-R", args.slug, *body]) or f"{args.action}: done")
 
 
+def posted_comment(response: dict) -> dict:
+    """GitHub's answer to a new review comment, as one of detail_pr's inlineComments."""
+    return {"author": _login(response.get("user")), "body": response["body"], "createdAt": response["created_at"],
+            "url": response["html_url"], "path": response["path"], "line": response["line"] or response.get("original_line"),
+            "side": response.get("side") or "RIGHT", "startLine": response.get("start_line"), "startSide": response.get("start_side"),
+            "isOutdated": False, "isReply": False}
+
+
+def cmd_pr_comment(args) -> None:
+    """One review comment on a PR's lines, posted at once: --request is the REST body (the prs mod builds it).
+    Prints the comment as pr-view lists inline comments."""
+    try:
+        request = json.loads(args.request)
+    except json.JSONDecodeError as error:
+        raise MrError(f"--request is not valid JSON: {error}") from None
+    if not isinstance(request, dict) or not str(request.get("body", "")).strip():
+        raise MrError("--request needs a JSON object with a body.")
+    answer = run(["gh", "api", "-X", "POST", f"repos/{args.slug}/pulls/{args.number}/comments", "--input", "-"], stdin=json.dumps(request))
+    print(json.dumps(posted_comment(json.loads(answer))))
+
+
 def cmd_pr_candidates(args) -> None:
     logins = run(["gh", "api", "--paginate", f"repos/{args.slug}/assignees", "--jq", ".[].login"]).split()
     print(json.dumps(sorted(logins, key=str.lower)))
@@ -1273,6 +1331,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("number", type=int)
     p.add_argument("action", choices=sorted([*PR_ACTIONS, "merge-stack"]))
     p.add_argument("--body")
+    p = command("pr-comment", cmd_pr_comment, "post one review comment on a PR's lines")
+    p.add_argument("slug", help="owner/repo")
+    p.add_argument("number", type=int)
+    p.add_argument("--request", required=True, help="the JSON body of POST /repos/{slug}/pulls/{number}/comments")
     p = command("pr-candidates", cmd_pr_candidates, "who can be asked to review in a repo")
     p.add_argument("slug", help="owner/repo")
     p = command("pr-reviewers", cmd_pr_reviewers, "request or withdraw review requests on one PR")

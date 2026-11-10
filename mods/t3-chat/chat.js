@@ -14,23 +14,32 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, TextView, EditorState } from "gpui-base";
-import { theme, run, panes, focused, settings, shared, setShared, spaces, terminals } from "herdr";
-import { startClaude, runningSession, sessionOfTerminal, labelSession, adopt, killTerminal, sendText, pressKeys, readScreen, findTranscript, readFrom, byteLength, oldChat, oldChatIds, attachmentPath, displayableImage, savePastedImage, listFiles, machineLabel, currentPlace } from "./host.js";
-import { COMMANDS, emptyChat, applyTranscript, transcriptLines, timeline, chatState, screenMenu, suggestionsFor, accepted, chatTabName, estimateRowHeight, historyStep, screenStatus, screenPlanPath, pendingTool } from "./model.js";
+import { theme, run, panes, focused, settings, shared, setShared, spaces, terminals, openOverlay } from "herdr";
+import { startClaude, runningSession, sessionOfTerminal, labelSession, adopt, killTerminal, sendText, pressKeys, readScreen, findTranscript, readFrom, TRANSCRIPT_PAGE, byteLength, oldChat, oldChatIds, attachmentPath, displayableImage, referencedImage, resampled, deviceScale, pastedAttachment, listFiles, machineLabel, currentPlace } from "./host.js";
+import { COMMANDS, emptyChat, applyTranscript, transcriptLines, timeline, chatState, screenMenu, suggestionsFor, accepted, composerKeyRoute, chatTabRename, estimateRowHeight, historyStep, screenStatus, screenPlanPath, pendingTool, isTypedOption, typedAnswer, placeQuestion, fitSize, coverSize, isImagePath } from "./model.js";
 import { isHelpKey, keyHelp, loadKeys } from "./keyhelp.js";
-import { blocks, codeLanguage, codeBodyHeight, gapBefore, CODE } from "./markdown.js";
-import { mdBlock, codeHead, codeBody, copyRow, htmlPreview } from "./render-md.js";
-import { userRow, foldRow, entryRow, metaRow, workingRow, dividerRow, noticeRow, changedRow, planRow } from "./timeline.js";
-import { composer, hero, PLACEHOLDER } from "./composer.js";
+import { blocks, codeLanguage, codeBodyHeight, gapBefore, imageSources, CODE } from "./markdown.js";
+import { mdBlock, codeHead, codeBody, copyRow, htmlPreview, IMAGE_BOX } from "./render-md.js";
+import { userRow, foldRow, entryRow, metaRow, workingRow, dividerRow, noticeRow, changedRow, planRow, THUMB_BOX } from "./timeline.js";
+import { composer, hero, PLACEHOLDER, ATTACHMENT_BOX } from "./composer.js";
 import { layout, maxTop, settle, wheel, resized, visibleRange, thumb, dragged, trackPressed } from "./scroll.js";
 import { appHome, readTextFile, home } from "herdr";
 
 const POLL_MS = 400; // while Claude works; slower when idle or hidden (see tick)
+// Reads in a row that saw Claude wait with no menu the chat can draw, before it sends the person
+// to the terminal: right after an answer from here Claude can still be blocked on the next step,
+// or its status a moment behind its screen.
+const UNREAD_WAITS = 2;
 const ACTIVE = new Set(["starting", "working", "waiting"]);
 const BY_TAB = "chats.byTab";
 const EXTERNAL_WAIT = 40; // half seconds a chat waits for a Claude Code its maker starts
 const CONTENT_WIDTH = 736; // T3's --chat-content-max-width: 46rem
 const LANE_INSET = 16; // the conversation's side padding
+// The box takes Up, Down and Tab for itself (the caret, the focus) before the chat hears them:
+// bindings of the chat's own in the box's context come first (ChatView.composerKey). They apply
+// only while the box's context says the chat wants the key (composerContext), so the box keeps
+// its own keys otherwise: Up and Down move the caret over a draft's lines.
+const COMPOSER_KEYS = [["up", "t3_chat_up", "arrows"], ["down", "t3_chat_down", "arrows"], ["tab", "t3_chat_tab", "tabs"]];
 
 // A session id Claude Code accepts (a v4 UUID). Not a secret: Math.random is enough.
 function newSessionId() {
@@ -42,6 +51,8 @@ function newSessionId() {
 }
 
 const localId = (id) => id.replace(/^[^/]+\//, "");
+// The draft less the newline the box put in for the Enter it is about to report as a submit.
+const withoutEnter = (draft) => draft.replace(/\r?\n$/, "");
 const sameTerminal = (a, b) => Boolean(a && b) && localId(a) === localId(b);
 
 export class ChatView {
@@ -57,11 +68,24 @@ export class ChatView {
     this.composer = TextareaState.new({ placeholder: PLACEHOLDER });
     this.composer.set_auto_grow(2, 10);
     this.historyAt = -1; // which sent message ArrowUp has put in the box (-1: none)
-    this.composer.on("submit", (e, cx) => { if (!e.shift) this.submit(cx); });
-    this.composer.on("change", (_e, cx) => { this.suggestAt = 0; cx.notify(); });
+    // Enter takes the highlighted suggestion while the / or @ menu is open (as T3), else sends.
+    // The box has put the Enter's newline in by then: the menu is read without it.
+    this.composer.on("submit", (e, cx) => {
+      if (e.shift) return;
+      const draft = withoutEnter(this.composer.value());
+      if (this.suggestions(draft).items.length) this.acceptSuggestion(cx, this.suggestAt, draft);
+      else this.submit(cx);
+    });
+    // The highlight starts over for another token, not for the Enter's newline.
+    this.composer.on("change", (_e, cx) => {
+      const { token } = this.suggestions(withoutEnter(this.composer.value()));
+      if (token !== this.suggestToken) this.suggestAt = 0;
+      this.suggestToken = token;
+      cx.notify();
+    });
     this.suggestAt = 0; // the highlighted suggestion (slash commands, @files) under the box
     this.files = []; // the chat folder's files, for @ mentions
-    this.composer.on("paste_other", (_e, cx) => this.pasteImage(cx)); // a paste without text: an image, if any
+    this.composer.on("paste_other", (_e, cx) => this.pasteImage(cx)); // a paste without text: a file or an image, if any
     this.isComposerFocused = false;
     this.composer.on("focus", (_e, cx) => { this.isComposerFocused = true; cx.notify(); });
     this.composer.on("blur", (_e, cx) => { this.isComposerFocused = false; cx.notify(); });
@@ -76,8 +100,13 @@ export class ChatView {
     this.expanded = new Set(); // rows opened by hand: work groups, their entries, details
     this.folded = new Set(); // rows folded by hand (a live work group is open otherwise)
     this.images = new Map(); // picture key -> path image() can draw
-    this.attachments = []; // local paths dropped on the chat
+    this.pictures = new Map(); // an image a reply points at (its src) -> { path, open } | { error } | {} while it loads
+    this.scannedForPictures = new Map(); // text item id -> the text its images were looked for in
+    this.attachments = []; // local paths dropped or pasted on the chat, sent with the next message
+    this.attached = new Map(); // an attachment that is an image (its path) -> { path, thumb?, width, height, open } | { error } | {} while it loads
     this.isShowingTerminal = false; // the person asked to see Claude Code's own terminal
+    this.picked = {}; // a question's step header -> what was picked for it here (its screen doesn't say)
+    this.questionsSeen = []; // the question's texts in the order shown (placeQuestion)
     // Where the conversation is scrolled to and how it moves with the content (scroll.js).
     this.scroll = { top: 0, follow: "end" };
     this.anchorKey = null; // the sent message's row id while anchored
@@ -85,9 +114,12 @@ export class ChatView {
     this.viewportWidth = 0;
     this.at = -1; // selected item, for j/k
     this.ticks = 0;
+    this.unreadWaits = 0; // see UNREAD_WAITS
+    this.presses = 0; // keys sent from here, counted as they go and as they land (see tick)
     this.error = "";
     this.keySections = [];
     cx.spawn(async () => { this.keySections = await loadKeys("chat"); });
+    cx.bind_keys(COMPOSER_KEYS.map(([keystroke, action, flag]) => ({ keystroke, action, context: `T3ChatComposer && ${flag} > Input` })));
     cx.timer.every(POLL_MS, (cx) => this.tick(cx));
     cx.timer.every(400, (cx) => this.claimKeyboard(cx));
     this.onOwnTab = (cx) => this.act(cx, (cx) => this.open(cx));
@@ -103,6 +135,11 @@ export class ChatView {
       else this.chat.items.set("text-fixture", { kind: "text", id: "text-fixture", text, at: 0 });
       this.prepareCode();
       if (this.props.at !== "end") this.scroll.follow = "free";
+      // screen: a file holding Claude Code's screen, so its question or approval is drawn too.
+      if (this.props.screen) this.menu = screenMenu(await readTextFile(`${appHome()}/${this.props.screen}`));
+      this.questionsSeen = placeQuestion(this.menu, []);
+      await this.loadTranscriptImages();
+      this.resolvePictures(cx);
       return "";
     }
     const remembered = (shared(BY_TAB) ?? {})[this.ownTab];
@@ -139,7 +176,7 @@ export class ChatView {
   }
 
   // Commands for this mod (keys.json `t3-chat.<command>`, or `herdr-app do t3-chat.<command>:<value>`):
-  // focus, stop, mode (Claude Code's next mode), model (its menu), end, answer:<n>, scroll:<px> (down; negative is back), send:<text>, draft:<text> (puts it in the box), press:<row id>,
+  // focus, stop, mode (Claude Code's next mode), model (its menu), end, answer:<n>, scroll:<px> (down; negative is back), send:<text>, draft:<text> (puts it in the box), attach:<path> (a file for the next message), press:<row id>,
   // show:<row id> (scrolls to it).
   remember() {
     const mine = { machine: this.machine, session: this.session, folder: this.folder, started: this.started };
@@ -175,7 +212,8 @@ export class ChatView {
     else if (name === "end") this.scroll.follow = "end";
     else if (name === "scroll" && this.content) this.scroll = wheel(this.scroll, -Number(value), this.content, this.viewportHeight);
     else if (name === "send") { this.composer.set_value(value); this.submit(cx); }
-    else if (name === "draft") { this.composer.set_value(value); this.composer.focus(); }
+    else if (name === "draft") { this.composer.focus(); this.setDraft(value); }
+    else if (name === "attach" && value) this.attach([value], cx);
     else if (option) this.answer(cx, option);
     else if (row) this.rowAction(row)?.(cx);
     else if (name === "show" && this.rows().some((r) => r.id === value)) this.select(this.rows().findIndex((r) => r.id === value));
@@ -185,7 +223,8 @@ export class ChatView {
   act(cx, work) {
     cx.spawn(async (cx) => {
       try {
-        this.error = (await work(cx)) || "";
+        const failure = await work(cx);
+        if (failure) this.error = failure; // a failure stays until dismissed: a later success doesn't hide it
       } catch (error) {
         this.error = String(error.message ?? error);
       }
@@ -282,6 +321,11 @@ export class ChatView {
     return live ? chatState(live.status ?? "unknown") : "stopped";
   }
 
+  // Claude waits for something the chat can't draw: its terminal answers.
+  isWaitingUnread() {
+    return this.state() === "waiting" && !this.menu && this.unreadWaits >= UNREAD_WAITS;
+  }
+
   isVisible() {
     return focused()?.tab === this.ownTab;
   }
@@ -292,6 +336,7 @@ export class ChatView {
     const every = ACTIVE.has(state) || this.pending.size ? 1 : this.isVisible() ? 5 : 15;
     if (!this.session || this.isPulling || this.ticks % every) return;
     cx.spawn(async (cx) => {
+      const presses = this.presses;
       try {
         // Between turns, and soon after a slash command: is Claude Code still on this session?
         this.pulls = (this.pulls ?? 0) + 1;
@@ -299,16 +344,22 @@ export class ChatView {
         if (this.sessionChecks > 0) this.sessionChecks -= 1;
         const moved = isDue && await this.followSession();
         const changed = (await this.pull()) || moved;
+        if (changed) this.resolvePictures(cx);
         const address = this.runTerminal()?.address;
         // Claude Code asks before it reports a status too (trusting a folder): read while starting.
         const screen = address ? await readScreen(address) : "";
+        // Keys went in since: this screen can be from before them, and bring back what they answered.
+        if (presses !== this.presses) return changed && cx.notify();
         const menu = (state === "waiting" || state === "starting" || this.menu) && screen ? screenMenu(screen) : null;
+        this.questionsSeen = placeQuestion(menu, this.questionsSeen);
+        this.unreadWaits = state === "waiting" && !menu ? this.unreadWaits + 1 : 0;
         // A menu covers Claude Code's footer: its mode is as it was.
         const status = screen && !menu ? screenStatus(screen) : { ...this.status, mode: this.chat.mode ?? this.status.mode };
         await this.readPlan(menu ? screenPlanPath(screen) : null);
         if (changed || JSON.stringify([menu, status, this.plan?.path]) !== JSON.stringify([this.menu, this.status, this.shownPlan])) {
           this.shownPlan = this.plan?.path;
           this.menu = menu;
+          if (menu?.steps?.every((step) => !step.isDone)) this.picked = {}; // a new question
           this.status = status;
           cx.notify();
         }
@@ -327,26 +378,134 @@ export class ChatView {
     try {
       this.transcript ??= await findTranscript(this.machine, this.session);
       if (!this.transcript) return false;
-      const { entries, bytes } = transcriptLines(await readFrom(this.machine, this.transcript, this.offset), byteLength);
-      this.offset += bytes;
-      if (!entries.length) return false;
-      const before = this.chat.title;
-      applyTranscript(this.chat, entries);
-      this.prepareCode();
-      this.matchPending();
-      // A new chat's tab is named by its first message; a tab taken over with its terminal keeps its name.
-      if (this.chat.title && this.chat.title !== before && this.ownTab && !this.props.terminal && !this.props.keepName) run("tab.rename", { id: this.ownTab, name: chatTabName(this.chat.title) });
-      for (const picture of [...this.chat.items.values()].flatMap((i) => i.images ?? []).filter((p) => !this.images.has(p.key))) {
-        try {
-          this.images.set(picture.key, await displayableImage(picture));
-        } catch {
-          this.images.set(picture.key, null); // shown as a label instead
+      let isChanged = false;
+      for (;;) {
+        const page = await readFrom(this.machine, this.transcript, this.offset);
+        const { entries, bytes } = transcriptLines(page, byteLength);
+        if (!bytes) {
+          if (byteLength(page) >= TRANSCRIPT_PAGE) throw new Error(`A transcript line is over ${TRANSCRIPT_PAGE} bytes: the chat can't read past it.`);
+          break;
+        }
+        this.offset += bytes;
+        if (entries.length) {
+          applyTranscript(this.chat, entries);
+          await this.loadTranscriptImages(); // page by page, so the images' base64 goes before the next page
+          isChanged = true;
         }
       }
+      if (!isChanged) return false;
+      this.prepareCode();
+      this.matchPending();
+      // A chat's tab is named by its first message, unless the person named it; a tab taken over
+      // with its terminal keeps its name.
+      const tab = spaces().flatMap((s) => s.tabs).find((t) => t.id === this.ownTab);
+      const name = !this.props.terminal && !this.props.keepName ? chatTabRename(tab, this.chat.title) : null;
+      if (name) run("tab.rename", { id: this.ownTab, name });
       return true;
     } finally {
       this.isPulling = false;
     }
+  }
+
+  // The images in the transcript itself (pasted ones, a tool's screenshots) as files image() can draw.
+  async loadTranscriptImages() {
+    for (const picture of [...this.chat.items.values()].flatMap((i) => i.images ?? []).filter((p) => !this.images.has(p.key))) {
+      try {
+        this.images.set(picture.key, await displayableImage(picture));
+      } catch {
+        this.images.set(picture.key, null); // shown as a label instead
+      }
+      // The image is a file now: its base64 (screenshots run to megabytes each) would otherwise
+      // stay in memory for the chat's life, and big chats ran the mods' shared heap out.
+      delete picture.data;
+    }
+  }
+
+  // The images replies point at (paths, URLs), made drawable in a task of their own, so a slow
+  // download doesn't hold up the transcript. A path on another machine can't be read here.
+  resolvePictures(cx) {
+    this.sharpenPictures(cx);
+    const wanted = [];
+    for (const item of this.chat.items.values()) {
+      if (item.kind !== "text" || this.scannedForPictures.get(item.id) === item.text) continue;
+      this.scannedForPictures.set(item.id, item.text);
+      wanted.push(...imageSources(item.text).filter((src) => !this.pictures.has(src) && !wanted.includes(src)));
+    }
+    if (!wanted.length) return;
+    for (const src of wanted) this.pictures.set(src, {});
+    cx.spawn(async (cx) => {
+      for (const src of wanted) {
+        const isElsewhere = this.machine !== null && !/^https?:\/\//i.test(src);
+        try {
+          this.pictures.set(src, isElsewhere ? { error: `on ${machineLabel(this.machine)}, not readable here` } : await referencedImage(src));
+        } catch (error) {
+          this.pictures.set(src, { error: String(error.message ?? error) });
+        }
+        cx.notify();
+      }
+      this.sharpenPictures(cx);
+    });
+  }
+
+  // Sharp copies (withThumb) of the pictures shown without one yet, one at a time in the
+  // background: they draw from the original until then, and the transcript never waits for them.
+  sharpenPictures(cx) {
+    if (this.isSharpening) return;
+    const next = () => [...[...this.images].map(([key, shown]) => [this.images, key, shown, THUMB_BOX]),
+      ...[...this.pictures].map(([src, shown]) => [this.pictures, src, shown, IMAGE_BOX]),
+      ...[...this.attached].map(([path, shown]) => [this.attached, path, shown, shown?.path && coverSize(shown, ATTACHMENT_BOX.width, ATTACHMENT_BOX.height)])].find(([, , shown]) => shown?.path && !shown.thumb);
+    if (!next()) return;
+    this.isSharpening = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (let found = next(); found; found = next()) {
+          const [map, key, shown, box] = found;
+          // A copy that can't be made leaves the original drawn (only less sharp); the loop moves on.
+          map.set(key, await this.withThumb(shown, box).catch(() => ({ ...shown, thumb: shown.path })));
+          cx.notify();
+        }
+      } finally {
+        this.isSharpening = false;
+      }
+    });
+  }
+
+  // A picture with a sharp copy (thumb) for the largest it is drawn: box, at this zoom, in device pixels.
+  async withThumb(picture, box) {
+    const shown = fitSize(picture, box.width, box.height);
+    const pixels = Math.max(shown.width, shown.height) * (settings().zoom ?? 1) * deviceScale();
+    return { ...picture, thumb: await resampled(picture, pixels) };
+  }
+
+  // Every image the chat shows, in order: pasted and tool images, and those its replies point at.
+  // id: a transcript picture's key, or a reply image's src.
+  gallery() {
+    const items = new Map();
+    // The images waiting in the composer come last, after the conversation's.
+    const waiting = this.attachments.flatMap((path) => (this.attached.get(path)?.path ? [[path, this.attached.get(path)]] : []));
+    for (const item of this.chat.items.values()) {
+      for (const picture of item.images ?? []) {
+        const shown = this.images.get(picture.key);
+        if (!shown) continue;
+        const file = `${appHome()}/${shown.path}`;
+        items.set(picture.key, { ...shown, id: picture.key, name: `${item.kind === "user" ? "Pasted image" : `${item.name ?? "Tool"} image`} · ${file}`, open: `file://${encodeURI(file)}` });
+      }
+      if (item.kind !== "text") continue;
+      for (const src of imageSources(item.text)) {
+        const shown = this.pictures.get(src);
+        if (shown?.path) items.set(src, { ...shown, id: src, name: src });
+      }
+    }
+    for (const [path, shown] of waiting) items.set(path, { ...shown, id: path, name: `Attached image · ${path}` });
+    return [...items.values()];
+  }
+
+  // The chat's images in a lightbox over the window, at the one clicked.
+  openImage(id) {
+    const items = this.gallery().map(({ id: key, path, width, height, open, name }) => ({ id: key, path, width, height, open, name }));
+    const at = items.findIndex((item) => item.id === id);
+    if (at < 0) return;
+    openOverlay({ mod: "t3-chat", kind: "dialog", frame: "none", width: 1, height: 1, props: { view: "lightbox", items, at } });
   }
 
   // A sent message leaves the pending list once the transcript has it (the anchor moves with it).
@@ -364,7 +523,11 @@ export class ChatView {
 
   submit(cx) {
     const text = this.composer.value().trim();
+    // Enter in an empty box takes the question's row Claude Code's cursor is on.
+    if (!text && !this.attachments.length && this.menu?.isQuestion) return this.answer(cx, this.menu.options[this.menu.cursor] ?? { keys: ["enter"] }, ["enter"]);
     if (!text && !this.attachments.length) return;
+    const typed = text && this.menu?.options.find(isTypedOption);
+    if (typed) return this.answerTyped(cx, typed, text);
     if (this.state() === "waiting" || this.menu) return (this.error = "Claude is waiting for an answer: pick one above, or open its terminal.");
     this.composer.set_value("");
     this.historyAt = -1;
@@ -387,7 +550,7 @@ export class ChatView {
         // Not sent (Claude Code asks something first, say): the message goes back to the composer.
         this.pending.delete(id);
         this.attachments = files;
-        this.composer.set_value(text);
+        this.setDraft(text);
         throw error;
       }
     });
@@ -409,33 +572,64 @@ export class ChatView {
     }
   }
 
-  suggestions() {
-    return suggestionsFor(this.composer.value(), COMMANDS, this.files);
+  suggestions(draft = this.composer.value()) {
+    return suggestionsFor(draft, COMMANDS, this.files);
   }
 
-  acceptSuggestion(cx, index) {
-    const { token, items } = this.suggestions();
+  acceptSuggestion(cx, index, draft = this.composer.value()) {
+    const { token, items } = this.suggestions(draft);
     const item = items[index];
     if (!item) return;
-    this.composer.set_value(accepted(this.composer.value(), token, item.insert));
-    this.suggestAt = 0;
+    const { text, caret } = accepted(draft, token, item.insert);
     this.composer.focus();
+    this.setDraft(text, caret);
+    this.suggestAt = 0;
     cx.notify();
   }
 
-  // A pasted image becomes a file in ~/.herdr/attachments and an attachment of the next message.
+  // The box's text, with the caret at `caret` (a UTF-16 offset), by default its end: set_value
+  // alone puts the caret at the start.
+  setDraft(text, caret = text.length) {
+    this.composer.set_value(text);
+    this.composer.set_selected_range({ start: caret, end: caret });
+  }
+
+  // A pasted file, or image (kept as a file in ~/.herdr/attachments), is an attachment of the next message.
   pasteImage(cx) {
-    this.act(cx, async () => {
-      this.attachments.push(await savePastedImage());
+    this.act(cx, async (cx) => {
+      this.attach([await pastedAttachment()], cx);
       return "";
+    });
+  }
+
+  // Files become attachments of the next message; the images among them are shown as thumbnails
+  // (copied into the app folder, where image() draws from, and sharpened as the replies' are).
+  attach(paths, cx) {
+    this.attachments.push(...paths);
+    const images = paths.filter((path) => isImagePath(path) && !this.attached.has(path));
+    for (const path of images) this.attached.set(path, {});
+    cx.notify();
+    if (!images.length) return;
+    cx.spawn(async (cx) => {
+      for (const path of images) {
+        try {
+          this.attached.set(path, await referencedImage(path));
+        } catch (error) {
+          this.attached.set(path, { error: String(error.message ?? error) }); // drawn as a file chip
+        }
+        cx.notify();
+      }
+      this.sharpenPictures(cx);
     });
   }
 
   keys(cx, ...keys) {
     const address = this.runTerminal()?.address;
     if (!address) return (this.error = "Claude Code isn't running: send a message to start it.");
+    this.presses += 1;
     this.act(cx, async () => {
       await pressKeys(address, ...keys);
+      this.presses += 1;
       return "";
     });
   }
@@ -463,9 +657,43 @@ export class ChatView {
     return pendingTool(this.chat, this.menu);
   }
 
-  answer(cx, option) {
+  // A question's "Type something." is answered from the box: picking it only puts the keyboard there.
+  // keys: what picks it, when not its own (Enter on the cursor's row).
+  answer(cx, option, keys = option.keys) {
+    if (isTypedOption(option)) return this.composer.focus();
+    this.rememberPick(option);
+    // A multi-select's box only ticks: Claude Code still asks, so the question stays (ticked as the
+    // screen will be). Anything else answers it: the panel goes until the screen shows what follows.
+    if (option.isChecked === null) this.menu = null;
+    else option.isChecked = !option.isChecked;
+    this.keys(cx, ...keys);
+  }
+
+  // What was picked for the question shown, for its step chip (a multi-select's ticks, as it moves on).
+  rememberPick(option, text = option.label) {
+    const step = this.menu?.steps?.[this.menu.current];
+    if (!step || step.isSubmit || option.kind === "chat" || option.isChecked !== null) return;
+    const ticked = this.menu.options.filter((o) => o.isChecked).map((o) => o.label);
+    this.picked[step.label] = option.kind === "step" ? ticked.join(", ") : text;
+  }
+
+  // What the person wrote, as the question's own answer: the cursor goes to its field, which is
+  // typed into (forced: Claude Code is blocked on the question) and confirmed.
+  answerTyped(cx, option, text) {
+    const address = this.runTerminal()?.address;
+    if (!address) return (this.error = "Claude Code isn't running: send a message to start it.");
+    const { keys, after } = typedAnswer(this.menu, option);
+    this.rememberPick(option, text);
+    this.composer.set_value("");
     this.menu = null;
-    this.keys(cx, ...option.keys);
+    this.presses += 1;
+    this.act(cx, async () => {
+      if (keys.length) await pressKeys(address, ...keys);
+      await sendText(address, text, true);
+      if (after.length) await pressKeys(address, ...after);
+      this.presses += 1;
+      return "";
+    });
   }
 
   interrupt(cx) {
@@ -600,17 +828,10 @@ export class ChatView {
     const menuKey = this.menu && (!isComposing || this.composer.value() === "") && this.menu.options.find((o) => o.key === stroke);
     if (menuKey) {
       this.answer(cx, menuKey);
+    } else if (this.menu?.isQuestion && (!isComposing || this.composer.value() === "") && (stroke === "up" || stroke === "down")) {
+      this.keys(cx, stroke); // Claude Code's cursor over the question's rows
     } else if (stroke === "shift-tab") {
       this.keys(cx, "shift+tab"); // Claude Code's next mode
-    } else if (isComposing && this.suggestions().items.length && (stroke === "tab" || stroke === "down" || stroke === "up")) {
-      const count = this.suggestions().items.length;
-      if (stroke === "tab") this.acceptSuggestion(cx, this.suggestAt);
-      else this.suggestAt = (this.suggestAt + (stroke === "down" ? 1 : count - 1)) % count;
-    } else if (isComposing && (stroke === "up" || stroke === "down") && this.recalls()) {
-      // T3's prompt history: ArrowUp in an empty box brings back what was sent before.
-      const { at, text } = historyStep(this.sent(), this.historyAt, stroke === "up" ? 1 : -1);
-      this.historyAt = at;
-      this.composer.set_value(text);
     } else if (isComposing) {
       if (stroke === "escape") {
         if (this.isPickingModel) this.isPickingModel = false;
@@ -633,6 +854,35 @@ export class ChatView {
       else return;
     }
     cx.stop_propagation();
+    cx.notify();
+  }
+
+  // What the box's keys would do now (composerKeyRoute).
+  composerRoute(key) {
+    return composerKeyRoute(key, { hasSuggestions: this.suggestions().items.length > 0, isQuestion: Boolean(this.menu?.isQuestion),
+      isEmpty: this.composer.value() === "", recalls: this.recalls() });
+  }
+
+  // The box's key context: its name, and which of its keys the chat takes now (COMPOSER_KEYS).
+  composerContext() {
+    return ["T3ChatComposer", this.composerRoute("up") !== "box" && "arrows", this.composerRoute("tab") !== "box" && "tabs"].filter(Boolean).join(" ");
+  }
+
+  // Up, Down or Tab in the box (COMPOSER_KEYS): the / and @ menu's highlight, a question's rows,
+  // or the messages sent before (T3's prompt history).
+  composerKey(key, cx) {
+    const { token, items } = this.suggestions();
+    const route = this.composerRoute(key);
+    if (route === "box") return cx.propagate();
+    this.suggestToken = token; // the highlight moved for this token (the change handler keeps it)
+    if (route === "suggest" && key === "tab") this.acceptSuggestion(cx, this.suggestAt);
+    else if (route === "suggest") this.suggestAt = (this.suggestAt + (key === "down" ? 1 : items.length - 1)) % items.length;
+    else if (route === "question") this.keys(cx, key);
+    else {
+      const { at, text } = historyStep(this.sent(), this.historyAt, key === "up" ? 1 : -1);
+      this.historyAt = at;
+      this.setDraft(text);
+    }
     cx.notify();
   }
 
@@ -706,12 +956,12 @@ export class ChatView {
 
   // A row's content at the lane's width.
   item(row, t, mono) {
-    const ctx = { t, mono, p: "", now: Date.now() / 1000, images: this.images, copied: this.copied, hovered: this.hovered, folder: this.folder };
+    const ctx = { view: this, t, mono, p: "", now: Date.now() / 1000, images: this.images, openImage: (key) => this.openImage(key), copied: this.copied, hovered: this.hovered, folder: this.folder };
     switch (row.kind) {
-      case "md": return mdBlock(row.block, row.previous, `md-${row.id}`, t, { isOpen: this.isOpen(row), width: this.laneWidth() });
-      case "code-head": return codeHead(row.block, row.fixedHeight, t, mono, this.copied === row.id);
+      case "md": return mdBlock(row.block, row.previous, `md-${row.id}`, t, { isOpen: this.isOpen(row), width: this.laneWidth(), pictures: this.pictures, onOpenImage: (src) => this.openImage(src) });
+      case "code-head": return codeHead(this, `copy-${row.id}`, row.block, row.fixedHeight, t, mono, this.copied === row.id);
       case "code-body": return codeBody(row.block, row.fixedHeight, this.editors.get(row.id)?.state, t, mono);
-      case "table-copy": return copyRow(t, this.copied === row.id);
+      case "table-copy": return copyRow(this, `copy-${row.id}`, t, this.copied === row.id);
       case "html-preview": return htmlPreview(row.block, `html-${row.id}`, t);
       case "text-end": return div().h(8);
       case "user": return userRow(row, ctx, this.laneWidth());
@@ -789,19 +1039,17 @@ export class ChatView {
     const isHero = rows.length === 0;
     const foot = composer(this, t, mono, { isActive, state, lane: this.laneWidth() });
     return v_flex().id("t3-chat").on_size_change((_size, cx) => this.learnTab(cx)).track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
-      .on_drop((event, cx) => { this.attachments.push(...event.paths); cx.notify(); })
+      .on_drop((event, cx) => this.attach(event.paths, cx))
       .on_mouse_move((e, cx) => { if (this.drag(e, zoom)) cx.notify(); })
       .on_mouse_up("left", (_e, cx) => { if (this.dragging) { this.dragging = null; cx.notify(); } })
       .size_full().min_h(0).relative().bg(t.background).text_color(t.foreground)
       // The conversation.
       .child(v_flex().relative().flex_1().min_h(0).px(LANE_INSET)
         .on_size_change((size, cx) => {
-          const lane = this.laneWidth();
           this.viewportHeight = size.height / zoom;
           this.viewportWidth = size.width / zoom;
-          // A lane of another width wraps every row anew; each then reports its new size. While
-          // the lane keeps its width, rows report nothing, so their heights must be kept.
-          if (Math.abs(this.laneWidth() - lane) > 0.5) this.heights.clear();
+          // A lane of another width wraps rows anew: those that change height report it. The
+          // known heights stay, as a row whose height doesn't change reports nothing.
           cx.notify();
         })
         .child(isHero ? v_flex().size_full().justify_center().child(hero(this, t, this.project())).child(foot) : this.conversation(rows, t, mono, zoom))

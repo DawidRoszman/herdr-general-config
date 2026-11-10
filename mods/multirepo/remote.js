@@ -72,14 +72,20 @@ export function reviewTab(machine, project, branch) {
 }
 
 
+// The space whose panes work in folder (or inside it) on machine, or null.
+export function workspaceOf(folder, machine) {
+  const tabs = new Map(spaces().filter((s) => (s.machine ?? null) === (machine ?? null)).flatMap((s) => s.tabs.map((t) => [t.id, s])));
+  const pane = panes().find((p) => tabs.has(p.tab) && (p.cwd === folder || Boolean(p.cwd?.startsWith(`${folder}/`))));
+  return pane ? tabs.get(pane.tab) : null;
+}
+
 // The task's workspace: the space already on its folder (a pane working in it), else a new one with
 // claude, a terminal and nvim, in that order, as in the `wts` tmux flow (new tabs go next to the
 // selected one, so the order is set at the end). machine: a Herdr machine name, or null here.
 export async function openWorkspace(folder, machine) {
-  const tabs = new Map(spaces().filter((s) => (s.machine ?? null) === (machine ?? null)).flatMap((s) => s.tabs.map((t) => [t.id, s])));
-  const pane = panes().find((p) => p.cwd?.startsWith(folder) && tabs.has(p.tab));
-  if (pane) {
-    run("space.select", { id: tabs.get(pane.tab).id });
+  const open = workspaceOf(folder, machine);
+  if (open) {
+    run("space.select", { id: open.id });
     return;
   }
   // Claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.

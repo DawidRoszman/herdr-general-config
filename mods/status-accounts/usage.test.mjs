@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudeTokenScript, parseClaudeAccounts, claudeAccountFor, DEFAULT_CLAUDE_ACCOUNTS, parseClaudeUsage, parseClaudeCredentials, parseCodexLogs, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, shouldRefresh, retryAtFrom, REFRESH_MS } from "./usage.js";
+import { claudeTokenScript, parseClaudeAccounts, claudeAccountFor, claudeAccountsOfProfiles, DEFAULT_CLAUDE_ACCOUNTS, parseClaudeUsage, parseClaudeCredentials, parseCodexLogs, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, shouldRefresh, retryAtFrom, REFRESH_MS } from "./usage.js";
 
 const claude = parseClaudeUsage({
   five_hour: { utilization: 42.0, resets_at: "2026-11-10T11:10:00.719877+00:00" },
@@ -83,6 +83,13 @@ assert.deepEqual(claudeAccountFor("work", DEFAULT_CLAUDE_ACCOUNTS), { name: "def
 assert.throws(() => parseClaudeAccounts("{"), /isn't JSON/);
 assert.throws(() => parseClaudeAccounts("{}"), /needs "claudeConfigDirs"/);
 assert.throws(() => parseClaudeAccounts('{"claudeConfigDirs":{"work":1}}'), /needs "claudeConfigDirs"/);
+
+// Profiles: each one's Claude config dir; a profile without a Claude account has no usage to show.
+const profiles = { work: { accounts: { claude: { configDir: "~/.claude-alt" } } }, personal: { accounts: { claude: { configDir: null } } }, client: { accounts: {} } };
+assert.deepEqual(claudeAccountsOfProfiles(profiles), { work: "~/.claude-alt", personal: null });
+assert.equal(claudeAccountFor("client", claudeAccountsOfProfiles(profiles)), null);
+assert.equal(claudeAccountsOfProfiles({ client: { accounts: {} } }), null, "no Claude account declared: config.json's map");
+assert.equal(claudeAccountsOfProfiles(undefined), null);
 
 // One copy asks; the others wait for its answer, a 429's wait, or the refresh interval.
 {

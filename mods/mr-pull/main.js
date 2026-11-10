@@ -1,5 +1,6 @@
-// `mr pull` for the task workspace the focused terminal is in (palette: "Pull task repos"): every
-// repo of the task fast-forwards from its upstream, one line per repo here. The multirepo mod's
+// `mr pull` for the task workspace the focused terminal is in (palette: "Pull task repos"), or for
+// props { machine, folder } (the Projects tab; machine null is this Mac): every repo of the task
+// fast-forwards from its upstream, one line per repo here. The multirepo mod's
 // mr.py runs on the space's machine over ssh (mods can't import across folders, so the call is
 // repeated here as in the prs mod).
 
@@ -44,13 +45,15 @@ export default class MrPull extends View {
     this.handle.focus();
     this.lines = ["Pulling…"];
     this.isOk = null;
+    const given = props() ?? {};
     const space = spaces().find((s) => s.id === focused()?.space);
-    this.folder = focused()?.cwd ?? space?.folder ?? "";
-    this.where = space?.machine ?? "this computer";
+    const machine = "machine" in given ? given.machine : space?.machine ?? null;
+    this.folder = given.folder ?? focused()?.cwd ?? space?.folder ?? "";
+    this.where = machine ?? "This Mac";
     cx.spawn(async (cx) => {
       try {
         if (!this.folder) throw new Error("No focused terminal to take the task folder from.");
-        ({ lines: this.lines, isOk: this.isOk } = await mrPull(await sshTarget(space?.machine ?? null), this.folder));
+        ({ lines: this.lines, isOk: this.isOk } = await mrPull(await sshTarget(machine), this.folder));
       } catch (error) {
         this.lines = [String(error.message ?? error)];
         this.isOk = false;
@@ -67,7 +70,7 @@ export default class MrPull extends View {
         if (e.key === "escape" || e.key === "enter") { closeOverlay(props()?.overlay); cx.stop_propagation(); }
       })
       .child(h_flex().flex_none().h(40).px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().flex_1().text_size(13).font_semibold().child("mr pull"))
+        .child(div().flex_1().text_size(13).font_semibold().child("Pull task repos"))
         .child(div().text_size(11).text_color(t.dim).child(this.where)))
       .child(div().flex_none().px(14).pt(8).text_size(11).text_color(t.dim).truncate().child(this.folder))
       .child(v_flex().flex_1().min_h(0).px(14).py(8).gap(4).overflow_y_scrollbar()

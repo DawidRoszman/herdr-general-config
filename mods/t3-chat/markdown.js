@@ -9,6 +9,7 @@
 //   list { items: [{ ordered, marker, task, text }], isLoose }   (text: the item's own Markdown; task: "open" | "done" | null)
 //   quote { text, alert }        (alert: "note" | "tip" | "important" | "warning" | "caution" | null)
 //   details { summary, body }    html { }                  hr { }
+//   image { src, alt }           (src: a local path, file:// or web URL, as written; see imageLine)
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`]*)$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
@@ -121,9 +122,65 @@ export function blocks(markdown) {
     if (under) {
       i += 1;
       take("heading", start, i, { level: under[1][0] === "=" ? 1 : 2, text: lines.slice(start, i - 1).join(" ").trim() });
-    } else take("prose", start, i);
+    } else out.push(...proseWithImages(lines.slice(start, i)));
   }
   return out;
+}
+
+// Images a reply shows: a Markdown image (a path, file:// or web URL), or a local image file's
+// absolute or ~ path alone on its line, in backticks or not. A bare path inside a sentence stays text.
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp)$/i;
+const MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
+const BARE_IMAGE = /^\s*(`?)((?:~\/|\/)[^\s`]+)\1\s*$/;
+const imageRef = (match) => ({ type: "image", raw: match[0], alt: match[1], src: match[2].replace(/^<|>$/g, "") });
+
+// The images a line is made of only, else null.
+export function imageLine(line) {
+  const bare = line.match(BARE_IMAGE);
+  if (bare && IMAGE_FILE.test(bare[2])) return [{ type: "image", raw: line.trim(), alt: "", src: bare[2] }];
+  const refs = [...line.matchAll(MD_IMAGE)];
+  return refs.length && !line.replace(MD_IMAGE, "").trim() ? refs.map(imageRef) : null;
+}
+
+// A paragraph with its images as blocks of their own, in order: a line of images only becomes
+// them; an image inside a sentence is taken out of it and follows the text.
+function proseWithImages(lines) {
+  const out = [];
+  let text = [];
+  let after = [];
+  const flush = () => {
+    if (text.some((line) => line.trim())) out.push({ type: "prose", raw: text.join("\n") });
+    out.push(...after);
+    text = [];
+    after = [];
+  };
+  for (const line of lines) {
+    const only = imageLine(line);
+    if (only) {
+      flush();
+      out.push(...only);
+      continue;
+    }
+    after.push(...[...line.matchAll(MD_IMAGE)].map(imageRef));
+    text.push(line.replace(MD_IMAGE, "").trimEnd());
+  }
+  flush();
+  return out;
+}
+
+// Where an image reference points: { url } on the web, else { path } on the machine that wrote it
+// (file:// and ~ resolved against homeDir there).
+export function imageTarget(src, homeDir) {
+  if (/^https?:\/\//i.test(src)) return { url: src };
+  if (/^file:\/\//i.test(src)) return { path: decodeURIComponent(src.replace(/^file:\/\/(?:localhost)?/i, "")) };
+  return { path: src.startsWith("~/") ? `${homeDir}${src.slice(1)}` : src };
+}
+
+// Every image a message shows, in lists, quotes and details too (not in code), once each.
+export function imageSources(markdown) {
+  const inner = (block) => ({ list: block.items?.map((item) => item.text), quote: [block.text], details: [block.body] }[block.type] ?? []);
+  const walk = (text) => blocks(text).flatMap((block) => (block.type === "image" ? [block.src] : inner(block).flatMap(walk)));
+  return [...new Set(walk(markdown))];
 }
 
 // A list's lines as items. An item starts at a marker no deeper than the first one's; the lines
@@ -162,16 +219,29 @@ export function gapBefore(previous, block) {
 }
 
 // A table's column widths in px for a lane: each column as wide as its longest cell needs
-// (T3 caps a cell at 24rem), shrunk together when they don't fit, stretched to fill when they do.
+// (T3 caps a cell at 24rem), shrunk together when they don't fit, stretched to fill when they do,
+// but never below its longest word (up to WORD_CAP: a longer one may break): past the lane, the
+// table scrolls sideways.
 const CELL_CHAR = 7.4; // an average glyph at 14px
+const CELL_PAD = 24;
+const WORD_CHAR = 9; // a wide glyph, as in a bold header: a word must never break
+const WORD_CAP = 160;
 export function columnWidths(table, lane) {
   const plain = (cell) => cell.replace(/[`*_~]|\[([^\]]*)\]\([^)]*\)/g, "$1");
-  const wanted = table.header.map((head, c) => {
-    const longest = Math.max(plain(head).length, ...table.rows.map((row) => plain(row[c]).length));
-    return Math.min(384, Math.max(40, longest * CELL_CHAR + 24));
-  });
-  const total = wanted.reduce((sum, w) => sum + w, 0);
-  return wanted.map((w) => (w * lane) / total);
+  const longestWord = (cell) => Math.max(0, ...plain(cell).split(/\s+/).map((word) => word.length));
+  const columns = table.header.map((head, c) => [head, ...table.rows.map((row) => row[c] ?? "")]);
+  const wanted = columns.map((cells) => Math.min(384, Math.max(40, Math.max(...cells.map((cell) => plain(cell).length)) * CELL_CHAR + CELL_PAD)));
+  const least = columns.map((cells) => Math.min(WORD_CAP, Math.max(...cells.map(longestWord)) * WORD_CHAR + CELL_PAD));
+  // Shared in proportion; a column that would get less than its least gets that, the rest share what is left.
+  const atLeast = new Set();
+  for (;;) {
+    const free = lane - [...atLeast].reduce((sum, c) => sum + least[c], 0);
+    const rest = wanted.reduce((sum, w, c) => (atLeast.has(c) ? sum : sum + w), 0);
+    const widths = wanted.map((w, c) => (atLeast.has(c) ? least[c] : (w * free) / rest));
+    const under = widths.findIndex((w, c) => !atLeast.has(c) && w < least[c]);
+    if (under < 0) return widths;
+    atLeast.add(under);
+  }
 }
 
 // A fence's language as the code view names it (Herdr's Editor); null: drawn without colours.

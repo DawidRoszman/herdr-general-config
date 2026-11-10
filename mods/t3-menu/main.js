@@ -4,10 +4,43 @@
 // a command "worktree" opens the worktree dialog instead.
 // t3-menu: Herdr's menu (mod.clone), with a tab's and a pane's Close going through the tab bar (t3-tabs), which asks first
 // while a program runs and leaves first, so Herdr's pick of a neighbour never shows. Only choose() and T3's measures differ from the shipped one.
+// And profiles (t3-context): a space's menu has "Profile…", which opens this menu again with
+// props { tab: "profile", target: { kind: "folder" | "machine", value } }: one row per profile and
+// one for none. Choosing one runs profiles.py's `assign`. A machine's row opens that menu directly.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec } from "herdr";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, shared, appHome, home, notify } from "herdr";
+
+const PROFILES_PY = `${appHome()}/mods/t3-context/profiles.py`;
+
+// "Profile…" for a space: where there are profiles, on this computer (declared folders are its),
+// and not for a coordinator's space, which is its profile's whatever its folder.
+function profileItem(space) {
+  const context = shared("context");
+  const isOffered = space && !space.machine && Object.keys(context?.profiles ?? {}).length > 0
+    && !Object.values(context.coordinators ?? {}).includes(space.id) && place(space);
+  return isOffered ? [["Profile…", "profile.menu", { kind: "folder", value: place(space) }]] : [];
+}
+
+// A profile's folder as a path ("~/work" is the home's).
+const expanded = (folder) => (folder === "~" || folder.startsWith("~/") ? home() + folder.slice(1) : folder).replace(/\/+$/, "");
+
+// The profiles to give a machine or a folder to, the one that has it marked, and none.
+function profileItems(target) {
+  const profiles = shared("context")?.profiles ?? {};
+  const has = (profile) => target.kind === "machine" ? profile.machines.includes(target.value)
+    : profile.folders.some((folder) => target.value === expanded(folder) || target.value.startsWith(`${expanded(folder)}/`));
+  return [
+    ...Object.entries(profiles).map(([name, profile]) => [`${profile.label}${has(profile) ? " ✓" : ""}`, "profile.assign", { ...target, profile: name }]),
+    [target.kind === "machine" ? "Shared (no profile)" : "No profile (by its accounts)", "profile.assign", { ...target, profile: "-" }],
+  ];
+}
+
+async function assignProfile({ kind, value, profile }) {
+  const r = await exec("python3", [PROFILES_PY, "assign", kind, value, profile]).catch((error) => ({ code: 1, stderr: String(error.message ?? error), stdout: "" }));
+  if (r.code !== 0) notify({ title: `Couldn't change the profile of ${value}`, body: (r.stderr || r.stdout).trim().replace(/^profiles: /gm, ""), level: "error" });
+}
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -60,8 +93,11 @@ function items(p, git) {
         ["Rename", "space.rename", { id: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
+        ...profileItem(spaces().find((s) => s.id === tg.id)),
         ["Close", "space.close", { id: tg.id }],
       ];
+    case "profile":
+      return profileItems(tg);
     default:
       return [
         ["New space", "space.new", {}],
@@ -75,7 +111,7 @@ function items(p, git) {
 }
 
 function menuIcon(command) {
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" || command.startsWith("profile.") ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
 
@@ -108,6 +144,8 @@ export default class Menu extends View {
     if (!it) return;
     closeOverlay(props()?.overlay);
     if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+    else if (it[1] === "profile.menu") openOverlay({ mod: "t3-menu", kind: "popup", width: 220, height: 260, props: { tab: "profile", target: it[2] } });
+    else if (it[1] === "profile.assign") assignProfile(it[2]);
     // The item keeps Herdr's command, for its icon, its divider and its key; only where it goes changes.
     else if (it[1] === "tab.close") run(`t3-tabs.close-tab:${it[2].id}`);
     else if (it[1] === "pane.close") run(`t3-tabs.close-pane:${it[2].pane}`);

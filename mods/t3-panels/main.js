@@ -1,15 +1,17 @@
-// The Herdr T3 tab bar's right side: Files, Changes and Pull requests toggles, each showing the
-// layout's `panel` column on that child of `panel-body` (or hiding it when it is the one shown),
+// The Herdr T3 tab bar's right side: Files, Changes and Pull requests toggles (and Jira in a
+// coordinator's space), each showing the layout's `panel` column on that child of `panel-body` (or
+// hiding it when it is the one shown). A coordinator's space opens with its board, which has no
+// button: there, hiding another panel goes back to the board (the `board` command still toggles it),
 // and the notification bell. The work layout's status bar keeps the bell's history there; this
 // layout has no status bar, so this mod does: blocked agents go into it, as status-accounts does.
 // Its block is always shown, so it also takes the layout's keys (keys.json `t3-panels.<command>`):
-// files, changes, prs (toggle that panel), new-space and new-tab (T3's pickers, as the sidebar's buttons),
+// files, changes, prs, board, jira (toggle that panel; jira outside a coordinator's space: a Jira tab), new-space and new-tab (T3's pickers, as the sidebar's buttons),
 // github (the focused pane's repo on GitHub, github.js), reveal (its folder in Finder, reveal.js).
 // And, as the work layout's tab bar does, it moves a new tab to the end of its space (tab-order.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, focused, keys, layout, machines, nextCommand, notify, openOverlay, run, spaces, theme } from "herdr";
+import { agents, focused, keys, layout, machines, nextCommand, notify, openOverlay, props, run, settings, setShared, shared, spaces, theme } from "herdr";
 import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
 import { newTabsToEnd } from "./tab-order.js";
 import { openRepoOnGitHub } from "./github.js";
@@ -20,6 +22,19 @@ const PANELS = [
   { id: "changes", label: "Changes", icon: "mods/changes/changes.svg" },
   { id: "prs", label: "Pull requests", icon: "mods/prs/icons/pull-request.svg" },
 ];
+// Shared: the panel buttons are icons only (t3-actions draws its control the same way).
+const COMPACT = "panels.compact";
+// The coordinator's board (coordinator-board) and the Jira board (jira): a coordinator's space's
+// panels. Only Jira has a button; the board is what that space's panel falls back to.
+const BOARD = { id: "board", label: "Board", icon: "mods/t3-chrome/icons/layout-list.svg" };
+const JIRA = { id: "jira", label: "Jira", icon: "mods/jira/jira.svg" };
+const COORDINATOR_PANELS = [BOARD, JIRA];
+
+// The shown space is a context's coordinator (t3-context's shared "context").
+function isCoordinatorSpace() {
+  const id = spaces().find((s) => s.active)?.id;
+  return Boolean(id) && Object.values(shared("context")?.coordinators ?? {}).includes(id);
+}
 
 const find = (node, id) => {
   if (!node) return null;
@@ -54,7 +69,10 @@ function newSpace() {
 }
 
 const COMMANDS = {
-  ...Object.fromEntries(PANELS.map(({ id }) => [id, () => toggle(id, isPanelShown(id))])),
+  ...Object.fromEntries([...PANELS, ...COORDINATOR_PANELS].map(({ id }) => [id, () => toggle(id, isPanelShown(id))])),
+  // Outside a coordinator's space Jira has no toggle to close its panel with, so there it opens
+  // as a tab, as the other layouts' key does.
+  jira: () => (isCoordinatorSpace() ? toggle(JIRA.id, isPanelShown(JIRA.id)) : run("tab.new", { name: "Jira", mod: "jira" })),
   "new-space": newSpace,
   "new-tab": () => run("mod.open", { name: NEW_MENU }), // pick the space, then a new tab there
   reveal: () => {
@@ -64,10 +82,15 @@ const COMMANDS = {
   github: (cx) => openRepoOnGitHub(cx).catch((error) => notify({ title: "Open on GitHub", body: String(error.message ?? error), level: "error" })),
 };
 
-function toggle(id, isShown) {
-  if (isShown) return run("layout.hide", { id: "panel" });
+function showPanel(id) {
   run("layout.select", { stack: "panel-body", child: id });
   run("layout.show", { id: "panel" });
+}
+
+function toggle(id, isShown) {
+  if (!isShown) return showPanel(id);
+  if (id !== BOARD.id && isCoordinatorSpace()) return showPanel(BOARD.id);
+  run("layout.hide", { id: "panel" });
 }
 
 export default class T3Panels extends View {
@@ -101,7 +124,19 @@ export default class T3Panels extends View {
     const { moves, known } = newTabsToEnd(spaces(), this.knownTabs);
     this.knownTabs = known;
     for (const move of moves) run("tab.move", move);
+    // The board opens with a coordinator's space; it and Jira go when another space is shown.
+    const isCoordinator = isCoordinatorSpace();
+    if (isCoordinator !== this.wasCoordinator) {
+      if (isCoordinator) showPanel(BOARD.id);
+      else if (this.wasCoordinator !== undefined && COORDINATOR_PANELS.some(({ id }) => isPanelShown(id))) run("layout.hide", { id: "panel" });
+      this.wasCoordinator = isCoordinator;
+    }
     const t = theme();
+    const shown = isCoordinator ? [...PANELS, JIRA] : PANELS;
+    // With Jira the buttons are icons, named by their tooltips, and so is t3-actions' (beside them,
+    // one group): labelled, they leave the tabs too little room.
+    const isCompact = shown.length > PANELS.length;
+    if (shared(COMPACT) !== isCompact) setShared(COMPACT, isCompact);
     const button = ({ id, label, icon }) => {
       const isShown = isPanelShown(id);
       return h_flex().id(`panel-${id}`).h(24).px(6).gap(4).flex_none().items_center().rounded(8).border(1)
@@ -112,8 +147,18 @@ export default class T3Panels extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => toggle(id, isShown))
         .child(svg(icon).size(14).flex_none())
-        .child(div().child(label));
+        .when(!isCompact, (el) => el.child(div().child(label)));
     };
-    return h_flex().size_full().gap(6).items_center().justify_end().children(PANELS.map(button)).child(this.bell(t));
+    return h_flex().size_full().items_center().justify_end()
+      .child(h_flex().id("panels-fit").flex_none().gap(6).items_center().on_size_change((size) => this.fit(size)).children(shown.map(button)).child(this.bell(t)));
+  }
+
+  // As t3-actions does: with the block's id in props.block, it sizes that block to the buttons
+  // (layout.resize), so they sit right beside Add action. on_size_change reports zoomed pixels.
+  fit(size) {
+    const id = props()?.block, px = Math.ceil(size.width / (Number(settings()?.zoom) || 1));
+    if (!id || px === this.fitted) return;
+    this.fitted = px;
+    run("layout.resize", { id, px });
   }
 }

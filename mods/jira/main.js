@@ -1,20 +1,27 @@
-// Jira board (a tab): my open issues, one column per status.
+// Jira board (a tab, or the T3 layout's side panel: props.panel): my open issues, one column per status.
+// Narrower than NARROW_PX (the panel) it shows one column at a time, picked from a row of
+// status chips, and an issue's details in place of the board.
 // s starts work on an issue: the multirepo dialog opens on the issue's project with
 // the task branch filled in (config.json maps Jira project keys to multirepo projects).
 //
-// Issues come from Jira's REST API, signed in with config.json "email" and an API token
-// (https://id.atlassian.com/manage-profile/security/api-tokens) set as ATLASSIAN_API_KEY in ~/.profile.
+// Issues come from Jira's REST API, signed in as the shown profile's Jira account (profiles.json:
+// accounts.jira), else with config.json "site" and "email" and an API token
+// (https://id.atlassian.com/manage-profile/security/api-tokens) set as ATLASSIAN_API_KEY in ~/.profile (account.js).
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input, TextView } from "gpui-base";
-import { theme, exec, run, appHome, readTextFile, openOverlay, panes, spaces, settings } from "herdr";
-import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
+import { theme, exec, run, appHome, readTextFile, openOverlay, panes, spaces, settings, shared, notify } from "herdr";
+import { signIn } from "./account.js";
+import { JQL, FIELDS, DETAIL_FIELDS, toCard, toDetails, columns, branchFor, matches, isShown, inOrder, movedOrder, codeFor, codeMismatch, clock, boardTasks, taskTarget } from "./board.js";
 import { projectCode } from "./code.js";
 
 const ORDER_KEY = "columns.order"; // localStorage: the status names in the order they were dragged into
 
 const REFRESH_MS = 5 * 60000;
+const BOARD_MS = 30000; // the coordinator's board.json: a small file, read again this often
 const CARD_HEIGHT = 90;
+// The columns (260 px at least) beside the details (540 px): narrower, they take turns.
+const NARROW_PX = 820;
 
 // This view's key list, from help-keys.json in this mod's folder (the keybinds tab reads the same file).
 async function loadKeys(mod, viewId) {
@@ -42,26 +49,24 @@ function keyHelp(id, title, sections, t, keyWidth = 120) {
           .child(div().flex_1().min_w(0).text_color(t.foreground).child(what)))))));
 }
 
+// The shown profile's coordinator board.json (the folder coordinator-board reads), or null.
+function boardFile() {
+  const context = shared("context");
+  const folder = context?.profiles?.[context?.current]?.coordinator?.folder;
+  return folder ? `${folder}/board.json` : null;
+}
+
 async function readConfig() {
   const path = `${appHome()}/mods/jira/config.json`;
   const text = await readTextFile(path);
-  if (!text) throw new Error(`${path} is missing: copy config.example.json beside it to config.json and fill in your Jira site and projects.`);
-  const config = JSON.parse(text);
-  if (!config.site) throw new Error(`${path} needs "site", e.g. "your-company.atlassian.net".`);
-  if (!config.email) throw new Error(`${path} needs "email": the Atlassian account the API token belongs to.`);
-  return { projects: {}, hiddenStatuses: [], statusStages: {}, ...config };
+  if (!text) throw new Error(`${path} is missing: copy config.example.json beside it to config.json and fill in your projects.`);
+  return { projects: {}, hiddenStatuses: [], statusStages: {}, ...JSON.parse(text) };
 }
 
-// Read from ~/.profile on every call: an app opened from the Dock doesn't get the login shell's
-// variables, and a changed token works without restarting.
-const READ_CREDENTIAL = '[ -f "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null; [ -n "$ATLASSIAN_API_KEY" ] || exit 3; printf "%s:%s" "$1" "$ATLASSIAN_API_KEY" | base64 | tr -d "\\n"';
-
-async function authorization(email) {
-  const r = await exec("sh", ["-c", READ_CREDENTIAL, "sh", email]);
-  if (r.code === 3) throw new Error("ATLASSIAN_API_KEY is not set: add ATLASSIAN_API_KEY=<token> to ~/.profile (make one at https://id.atlassian.com/manage-profile/security/api-tokens).");
-  if (r.code !== 0) throw new Error(`Could not read ATLASSIAN_API_KEY from ~/.profile: ${r.stderr.trim() || `sh exit ${r.code}`}`);
-  return `Basic ${r.stdout.trim()}`;
-}
+// ponytail: the account is the shown profile's when the board loads; after a switch to a profile
+// with another Jira it follows at the next refresh (REFRESH_MS) or r. Reload on the switch when
+// two profiles each have a Jira.
+const account = (config) => signIn({ config, profile: shared("context")?.current ?? null, profilesPy: `${appHome()}/mods/t3-context/profiles.py`, exec });
 
 // Jira answers errors as { errorMessages: [], errors: { field: message } }.
 function jiraError(text) {
@@ -74,15 +79,15 @@ function jiraError(text) {
 }
 
 async function jira(config, path) {
-  const url = `https://${config.site}/rest/api/3/${path}`;
+  const { site, authorization, from } = await account(config);
   let response;
   try {
-    response = await fetch(url, { headers: { Authorization: await authorization(config.email), Accept: "application/json" } });
+    response = await fetch(`https://${site}/rest/api/3/${path}`, { headers: { Authorization: authorization, Accept: "application/json" } });
   } catch (error) {
-    throw new Error(`Could not reach ${config.site}: ${error.message ?? error}`);
+    throw new Error(`Could not reach ${site}: ${error.message ?? error}`);
   }
   const text = await response.text();
-  if (response.status === 401) throw new Error(`Jira refused the token (401): check ATLASSIAN_API_KEY in ~/.profile and "email" in mods/jira/config.json.`);
+  if (response.status === 401) throw new Error(`Jira refused the token (401): check ${from}.`);
   if (!response.ok) throw new Error(`Jira answered ${response.status}: ${jiraError(text).trim()}`);
   return JSON.parse(text);
 }
@@ -99,11 +104,14 @@ async function searchIssues(config) {
 }
 
 export default class Jira extends View {
-  init(_props, cx) {
+  init(given, cx) {
     this.handle = cx.focus_handle();
     this.keySections = [];
     cx.spawn(async (cx) => { this.keySections = await loadKeys("jira", "board"); cx.notify(); });
-    this.handle.focus();
+    // A panel is made with the layout, shown or not: it takes the keyboard when clicked, never by itself.
+    this.isPanel = Boolean(given?.panel);
+    this.isNarrow = false;
+    if (!this.isPanel) this.handle.focus();
     this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
     // focus() can't run in render, so a light timer does the claiming (no redraw).
     cx.timer.every(400, (cx) => this.claimKeyboard(cx));
@@ -115,6 +123,7 @@ export default class Jira extends View {
     this.code = new Map(); // Jira project key -> { prs, branches }, from its multirepo project
     this.codeError = "";
     this.config = null;
+    this.site = null; // the Jira site of the account the board was loaded with
     this.column = 0;
     this.at = 0;
     this.order = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
@@ -138,6 +147,9 @@ export default class Jira extends View {
     this.input.on("blur", (_e, cx) => { this.isTyping = false; cx.notify(); });
     cx.timer.every(REFRESH_MS, (cx) => this.load(cx));
     this.load(cx);
+    this.boardTasks = new Map(); // issue key -> the coordinator board's task
+    cx.timer.every(BOARD_MS, (cx) => this.readBoard(cx));
+    this.readBoard(cx);
   }
 
   load(cx) {
@@ -147,6 +159,7 @@ export default class Jira extends View {
     cx.spawn(async (cx) => {
       try {
         this.config = await readConfig();
+        this.site = (await account(this.config)).site;
         this.cards = await searchIssues(this.config);
         this.details.clear();
         if (this.isShowingDetails && this.detailKey) this.loadDetails(cx, this.detailKey);
@@ -158,6 +171,17 @@ export default class Jira extends View {
         this.error = String(error.message ?? error);
       }
       this.isLoading = false;
+      cx.notify();
+    });
+  }
+
+  readBoard(cx) {
+    cx.spawn(async (cx) => {
+      const file = boardFile();
+      const text = file ? await readTextFile(file).catch(() => null) : null;
+      if (text === this.boardText) return;
+      this.boardText = text;
+      this.boardTasks = boardTasks(text);
       cx.notify();
     });
   }
@@ -263,17 +287,56 @@ export default class Jira extends View {
     if (count) this.moveTo((this.at + step + count) % count);
   }
 
-  openIssue(cx, key = this.selected()?.key) {
-    if (!key) return;
-    cx.open_url(`https://${this.config.site}/browse/${key}`);
+  // The statuses config.json hides (waiting on others), shown or not.
+  toggleHidden() {
+    this.isShowingHidden = !this.isShowingHidden;
+    this.column = 0;
+    this.moveTo(0);
   }
 
-  startWork() {
-    const card = this.selected();
-    if (!card) return "";
-    const target = [this.config.projects[card.project]].flat()[0]; // listed on several computers: the first
-    if (!target) return `No multirepo project for ${card.project}: add "${card.project}": { "machine", "root" } under "projects" in mods/jira/config.json.`;
-    openOverlay({ mod: "multirepo", kind: "dialog", width: 760, height: 480, props: { machine: target.machine, project: target.root, newTask: branchFor(card) } });
+  // The branch Start task would make, for starting by hand or telling an agent.
+  copyBranch(cx, key = this.shownKey()) {
+    const issue = this.issue(key);
+    if (!issue) return;
+    const branch = branchFor(issue);
+    cx.write_to_clipboard(branch);
+    notify({ title: "Branch copied", body: branch, timeout: 3000 });
+  }
+
+  // The issue's running task (taskTarget), or null.
+  taskOf(key) {
+    return key ? taskTarget(key, this.boardTasks.get(key), spaces()) : null;
+  }
+
+  goToTask(key = this.shownKey()) {
+    const target = this.taskOf(key);
+    if (target?.space) run("space.select", { id: target.space });
+    else if (target?.agent) run("agent.focus", { terminal: target.agent });
+    else if (key) notify({ title: `${key} has no task yet`, body: "s starts one.", timeout: 3000 });
+  }
+
+  openIssue(cx, key = this.selected()?.key) {
+    if (!key) return;
+    cx.open_url(`https://${this.site}/browse/${key}`);
+  }
+
+  // The issue the keys act on: the one the details show, else the selected card.
+  shownKey() {
+    return this.isShowingDetails ? this.detailKey : this.selected()?.key;
+  }
+
+  // A card, or a loaded issue's details (a parent or subtask opened inside the details has no card).
+  issue(key) {
+    const issue = this.cards?.find((card) => card.key === key) ?? this.details.get(key)?.issue;
+    return issue && { ...issue, project: issue.project ?? key.split("-")[0] };
+  }
+
+  startWork(key = this.shownKey()) {
+    const issue = this.issue(key);
+    if (!issue) return "";
+    const target = [this.config.projects[issue.project]].flat()[0]; // listed on several computers: the first
+    if (!target) return `No multirepo project for ${issue.project}: add "${issue.project}": { "machine", "root" } under "projects" in mods/jira/config.json.`;
+    openOverlay({ mod: "multirepo", kind: "dialog", width: 760, height: 480, props: { machine: target.machine, project: target.root, newTask: branchFor(issue) } });
     return "";
   }
 
@@ -293,7 +356,7 @@ export default class Jira extends View {
     } else if (stroke === "escape") {
       if (this.isShowingDetails) this.isShowingDetails = false;
       else if (this.query) { this.query = ""; this.input.set_value(""); this.moveTo(0); }
-      else run("pane.close");
+      else if (!this.isPanel) run("pane.close");
     } else if (stroke === "/") {
       this.isTyping = true;
       cx.timer.after(0, () => this.input.focus());
@@ -304,10 +367,12 @@ export default class Jira extends View {
     else if (stroke === "h" || stroke === "left") this.moveColumn(-1);
     else if (stroke === "l" || stroke === "right") this.moveColumn(1);
     else if (stroke === "enter") this.showDetails(cx);
-    else if (stroke === "o") this.openIssue(cx, this.isShowingDetails ? this.detailKey : undefined);
+    else if (stroke === "o") this.openIssue(cx, this.shownKey());
     else if (stroke === "s") this.error = this.startWork();
+    else if (stroke === "y") this.copyBranch(cx);
+    else if (stroke === "g") this.goToTask();
     else if (stroke === "r") this.load(cx);
-    else if (stroke === "a") { this.isShowingHidden = !this.isShowingHidden; this.column = 0; this.moveTo(0); }
+    else if (stroke === "a") this.toggleHidden();
     else return;
     // Browsing with the panel open: it follows the selection.
     if (this.isShowingDetails && ["j", "k", "h", "l", "up", "down", "left", "right"].includes(stroke)) this.showDetails(cx);
@@ -317,13 +382,15 @@ export default class Jira extends View {
 
   card(card, isSelected, t) {
     const priorityColor = { Highest: t.blocked, High: t.blocked, Medium: t.working, Low: t.dim, Lowest: t.dim }[card.priority] ?? t.dim;
-    const mismatch = this.mismatch(card);
+    const mismatch = this.mismatch(card), stage = this.boardTasks.get(card.key)?.stage;
     return div().flex_none().h(CARD_HEIGHT).pb(6).child(
       v_flex().size_full().p(10).gap(4).rounded(8).border(1).cursor_pointer()
         .border_color(isSelected ? t.accent : t.border).bg(isSelected ? t.selected : t.background)
         .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
         .child(h_flex().gap(8).items_center().text_size(11.5)
           .child(div().flex_none().font_semibold().text_color(t.accent).child(card.key))
+          // Started: where the coordinator's board says it stands.
+          .when(Boolean(stage), (el) => el.child(div().flex_none().px(5).rounded(5).border_1().border_color(t.input).text_size(11).text_color(t.muted).child(stage)))
           .when(Boolean(mismatch), (el) => el.child(svg("mods/jira/alert.svg").size(13).flex_none().text_color(t.working)))
           .child(div().flex_1().min_w(0).truncate().text_color(mismatch ? t.working : t.dim).child(mismatch ? `Not ${card.status}? ${mismatch}` : card.type))
           .child(div().flex_none().text_color(priorityColor).child(card.priority)))
@@ -333,22 +400,30 @@ export default class Jira extends View {
   detailsPanel(t) {
     const key = this.detailKey;
     const state = this.details.get(key) ?? { isLoading: true };
-    const panel = v_flex().w(540).flex_none().h_full().border_l(1).border_color(t.border).bg(t.background);
+    const task = this.taskOf(key);
+    const panel = (this.isNarrow ? v_flex().flex_1().min_w(0) : v_flex().w(540).flex_none().border_l(1).border_color(t.border)).h_full().bg(t.background);
+    // Narrow, the top keeps room for its links: type and priority go to the facts.
     const top = h_flex().flex_none().px(16).h(42).gap(8).items_center().border_b(1).border_color(t.border)
-      .child(div().font_semibold().text_color(t.accent).child(key))
+      .child(div().flex_none().font_semibold().text_color(t.accent).child(key))
       .when(Boolean(state.issue), (el) => el
-        .child(div().text_size(12).text_color(t.dim).child(state.issue.type))
-        .child(div().px(7).h(20).flex().items_center().rounded(10).bg(t.raised).text_size(11.5).text_color(t.foreground).child(state.issue.status))
-        .child(div().text_size(12).text_color(t.dim).child(state.issue.priority)))
+        .when(!this.isNarrow, (el) => el.child(div().text_size(12).text_color(t.dim).child(state.issue.type)))
+        .child(div().id("jira-details-status").min_w(0).px(7).h(20).flex().items_center().rounded(10).bg(t.raised).text_size(11.5).text_color(t.foreground)
+          .tooltip(state.issue.status).child(div().truncate().child(state.issue.status)))
+        .when(!this.isNarrow, (el) => el.child(div().text_size(12).text_color(t.dim).child(state.issue.priority))))
       .child(div().flex_1())
-      .child(div().id("jira-details-web").text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
-        .on_click((_e, cx) => this.openIssue(cx, key)).child("open in Jira ↗"))
-      .child(div().id("jira-details-close").text_size(14).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
-        .on_click((_e, cx) => { this.isShowingDetails = false; cx.notify(); }).child("×"));
+      // A started issue goes to its task instead (s still starts another).
+      .when(Boolean(state.issue), (el) => el.child(task
+        ? this.detailsButton(t, "jira-details-go", "Go to task", `Go to its task's ${task.space ? "space" : "agent"} · g`, () => this.goToTask(key))
+        : this.detailsButton(t, "jira-details-start", "Start task", "Start a multirepo task on its branch · s",
+          (cx) => { this.error = this.startWork(key); cx.notify(); })))
+      .child(div().id("jira-details-web").flex_none().text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .tooltip("Open in Jira · o").on_click((_e, cx) => this.openIssue(cx, key)).child(this.isNarrow ? "Jira ↗" : "open in Jira ↗"))
+      .child(div().id("jira-details-close").flex_none().text_size(14).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .tooltip("Close · esc").on_click((_e, cx) => { this.isShowingDetails = false; cx.notify(); }).child("×"));
     if (!state.issue) {
       return panel.child(top).child(div().p(16).text_size(12.5).text_color(state.error ? t.blocked : t.muted).child(state.error ?? "Loading…"));
     }
-    const issue = state.issue;
+    const issue = state.issue, branch = branchFor(this.issue(key));
     const when = (iso) => iso ? iso.slice(0, 16).replace("T", " ") : "";
     const fact = (label, value) => h_flex().gap(10).text_size(12.5).items_start()
       .child(div().flex_none().w(84).text_color(t.dim).child(label))
@@ -364,10 +439,15 @@ export default class Jira extends View {
     const section = (title) => div().pt(6).text_size(11.5).font_medium().text_color(t.dim).child(title);
     return panel.child(top).child(v_flex().id(`jira-details-${key}`).flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(8)
       .child(div().text_size(15).font_semibold().text_color(t.foreground).child(issue.summary))
+      .when(this.isNarrow, (el) => el.child(fact("Type", `${issue.type} · ${issue.priority} priority`)))
       .child(fact("Assignee", issue.assignee))
       .child(fact("Reporter", issue.reporter))
       .when(issue.labels.length > 0, (el) => el.child(fact("Labels", issue.labels.join(", "))))
       .child(fact("Updated", `${when(issue.updated)} · created ${when(issue.created)}`))
+      .child(h_flex().gap(10).text_size(12.5).items_center()
+        .child(div().flex_none().w(84).text_color(t.dim).child("Branch"))
+        .child(div().id("jira-details-branch").flex_1().min_w(0).truncate().text_color(t.foreground).tooltip(branch).child(branch))
+        .child(this.detailsButton(t, "jira-details-copy", "Copy", "Copy the branch name · y", (cx) => this.copyBranch(cx, key))))
       .when(Boolean(issue.parent), (el) => el.child(section("Parent")).child(related("jira-parent", issue.parent)))
       .when(issue.subtasks.length > 0, (el) => el.child(section(`Subtasks · ${issue.subtasks.length}`))
         .children(issue.subtasks.map((item) => related(`jira-sub-${item.key}`, item))))
@@ -384,6 +464,13 @@ export default class Jira extends View {
           .child(div().font_semibold().text_color(t.foreground).child(c.author))
           .child(div().text_color(t.dim).child(when(c.created))))
         .child(TextView.markdown(`jira-comment-${key}-${c.id}`, c.body || "_(empty)_").text_size(13).text_color(t.foreground)))));
+  }
+
+  // A small bordered button in the details' header.
+  detailsButton(t, id, label, tooltip, onClick) {
+    return div().id(id).flex_none().h(22).px(7).flex().items_center().rounded(6).border(1).border_color(t.border).bg(t.background)
+      .text_size(11.5).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(tooltip).on_click((_e, cx) => onClick(cx)).child(label);
   }
 
   // The tab this pane is in: the shown one at its first layout (a pane is laid out only while
@@ -407,78 +494,128 @@ export default class Jira extends View {
     cx.notify();
   }
 
+  // The cards of one column, scrolled as one list.
+  columnList(column, columnIndex, t) {
+    const isColumnSelected = columnIndex === this.column;
+    const listId = `jira-col-${columnIndex}`;
+    const list = v_virtual_list(listId, column.cards.length, CARD_HEIGHT, (i) => column.cards[i].key,
+      (range) => column.cards.slice(range.start, range.end).map((card, k) => this.card(card, isColumnSelected && range.start + k === this.at, t)))
+      // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+      .on_item_click((key, cx) => {
+        this.column = columnIndex;
+        this.moveTo(this.board()[columnIndex].cards.findIndex((c) => c.key === key));
+        this.showDetails(cx, key);
+      })
+      .size_full();
+    const scroll = this.scrolls.get(column.name);
+    return v_flex().relative().flex_1().min_h(0)
+      .child(scroll ? list.track_scroll(scroll) : list)
+      .child(Scrollbar.vertical(listId).absolute().inset_0());
+  }
+
+  // Every column side by side, the details beside them.
+  wideBoard(board, t) {
+    return h_flex().flex_1().min_h(0).child(h_flex().id("jira-columns").flex_1().min_w(0).h_full().p(12).gap(12).overflow_x_scrollbar()
+      .children(board.map((column, columnIndex) => {
+        const isColumnSelected = columnIndex === this.column;
+        const pressedAt = board.findIndex((c) => c.name === this.pressedColumn);
+        const isDropTarget = pressedAt >= 0 && this.overColumn === column.name && pressedAt !== columnIndex;
+        return v_flex().id(`jira-column-${column.name}`).relative().flex_1().min_w(260).max_w(420).h_full().gap(8)
+          // Dragged as a tab is: the source fades, a line on the side it lands shows where.
+          .when(pressedAt === columnIndex && this.overColumn !== null && this.overColumn !== column.name, (el) => el.opacity(0.5))
+          .when(isDropTarget, (el) => el.child(div().absolute().top(0).bottom(0).w(2).rounded(1).bg(t.accent)
+            .when(pressedAt < columnIndex, (line) => line.right(-7)).when(pressedAt > columnIndex, (line) => line.left(-7))))
+          .on_mouse_move((e, cx) => {
+            if (this.pressedColumn === null || this.overColumn === column.name) return;
+            if (this.overColumn === null && Math.hypot(e.position.x - this.pressAt.x, e.position.y - this.pressAt.y) < 6 * settings().zoom) return;
+            this.overColumn = column.name;
+            cx.notify();
+          })
+          .on_mouse_up("left", (_e, cx) => {
+            if (this.overColumn !== null) this.reorder(this.pressedColumn, this.overColumn);
+            this.endDrag(cx);
+          })
+          .child(h_flex().id(`jira-head-${column.name}`).flex_none().gap(6).items_center().px(2).cursor_pointer()
+            .on_mouse_down("left", (e) => { this.pressedColumn = column.name; this.overColumn = null; this.pressAt = e.position; })
+            .child(div().text_size(12).font_semibold().text_color(isColumnSelected ? t.foreground : t.muted).child(column.name))
+            .child(div().text_size(11).text_color(t.dim).child(String(column.cards.length))))
+          .child(this.columnList(column, columnIndex, t));
+      }))
+      .when(this.isShowingDetails && Boolean(this.detailKey), (el) => el.child(this.detailsPanel(t))));
+  }
+
+  // One column at a time, picked from its status chip (or h/l); the details in place of it.
+  narrowBoard(board, t) {
+    if (this.isShowingDetails && this.detailKey) return h_flex().flex_1().min_h(0).child(this.detailsPanel(t));
+    const column = board[this.column];
+    return v_flex().flex_1().min_h(0).p(12).gap(10)
+      .child(h_flex().flex_none().flex_wrap().gap(6)
+        .children(board.map((c, columnIndex) => {
+          const isSelected = columnIndex === this.column;
+          return h_flex().id(`jira-chip-${c.name}`).h(24).px(8).gap(6).items_center().rounded(12).border(1).cursor_pointer()
+            .border_color(isSelected ? t.accent : t.border).bg(isSelected ? t.selected : t.background)
+            .text_size(12).text_color(isSelected ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => { this.moveColumn(columnIndex - this.column); cx.notify(); })
+            .child(c.name)
+            .child(div().text_size(11).text_color(t.dim).child(String(c.cards.length)));
+        })))
+      .when(Boolean(column), (el) => el.child(this.columnList(column, this.column, t)));
+  }
+
+  // Learns this view's tab at its first layout, and whether it is narrow.
+  sized(size, cx) {
+    this.learnTab(cx);
+    const isNarrow = size.width < NARROW_PX;
+    if (isNarrow === this.isNarrow) return;
+    this.isNarrow = isNarrow;
+    cx.notify();
+  }
+
   render() {
     const t = theme();
     const board = this.board();
     this.column = Math.min(this.column, Math.max(0, board.length - 1));
-    const title = this.config ? `Jira · ${this.config.site}` : "Jira";
+    const title = this.site && !this.isNarrow ? `Jira · ${this.site}` : "Jira";
     const count = this.cards?.length;
+    const shownCount = board.reduce((n, column) => n + column.cards.length, 0);
     const isEmpty = this.cards !== undefined && !board.length;
-    return v_flex().id("jira").on_size_change((_size, cx) => this.learnTab(cx)).track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
+    const hiddenCount = this.hiddenCount();
+
+    return v_flex().id("jira").on_size_change((size, cx) => this.sized(size, cx)).track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .on_mouse_down("left", () => this.handle.focus())
       // A release anywhere ends a drag; Herdr reports none outside the pane, so leaving it does too.
       .on_mouse_up("left", (_e, cx) => this.endDrag(cx))
       .on_hover((isOver, cx) => { if (!isOver) this.endDrag(cx); })
       .size_full().min_h(0).relative().bg(t.surface).text_size(13).text_color(t.foreground)
-      .child(h_flex().flex_none().px(16).h(48).gap(10).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child(title))
-        .when(count !== undefined, (el) => el.child(div().text_size(12).text_color(t.muted).child(`${count} open issue${count === 1 ? "" : "s"} assigned to me`)))
-        .when(this.hiddenCount() > 0, (el) => el.child(div().text_size(12).text_color(t.dim)
-          .child(this.isShowingHidden ? `incl. ${this.hiddenCount()} waiting on others · a hides them` : `${this.hiddenCount()} hidden (${this.config.hiddenStatuses.join(", ")}) · a shows them`)))
+      // In the side panel, a card with a 42 px header, as Files and Changes beside it.
+      .when(this.isPanel, (el) => el.rounded(10).overflow_hidden().border_1().border_color(t.border).bg(t.background))
+      .child(h_flex().flex_none().px(this.isPanel ? 14 : 16).h(this.isPanel ? 42 : 48).gap(10).items_center().border_b(1).border_color(t.border)
+        .child(div().flex_none().font_semibold().child(title))
+        // The count is what the board shows; the hidden ones are said apart.
+        .when(count !== undefined, (el) => el.child(div().min_w(0).truncate().text_size(12).text_color(t.muted).child(this.isNarrow ? `${shownCount} mine` : `${shownCount} open issue${shownCount === 1 ? "" : "s"} assigned to me`)))
+        .when(hiddenCount > 0, (el) => el.child(div().id("jira-hidden").min_w(0).truncate().px(4).rounded(5).text_size(12).text_color(t.dim)
+          .cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(`${this.isShowingHidden ? "Hide" : "Show"} ${this.config.hiddenStatuses.join(", ")} · a`)
+          .on_click((_e, cx) => { this.toggleHidden(); cx.notify(); })
+          .child(`${this.isShowingHidden ? "incl. " : ""}${hiddenCount} hidden${this.isNarrow ? "" : ` (${this.config.hiddenStatuses.join(", ")})`}`)))
         .child(div().flex_1())
-        .child(div().id("jira-refresh").text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .child(div().id("jira-refresh").flex_none().px(4).rounded(5).text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(this.loadedAt ? `Loaded at ${clock(this.loadedAt)} · refresh · r` : "Refresh · r")
           .on_click((_e, cx) => this.load(cx))
           .when(this.isLoading, (el) => el.frames(["◐", "◓", "◑", "◒"], 160))
-          .when(!this.isLoading, (el) => el.child(this.loadedAt ? `↻ ${this.loadedAt.toLocaleTimeString()}` : "↻"))))
+          .when(!this.isLoading, (el) => el.child(this.loadedAt ? `↻ ${clock(this.loadedAt)}` : "↻"))))
       .when(this.isTyping || Boolean(this.query), (el) => el.child(div().px(16).pt(10).child(
         Input.new(this.input).h(30).px(10).items_center().rounded(6).border(1)
           .border_color(this.isTyping ? t.accent : t.input).bg(t.background).text_color(t.foreground))))
       .child(this.cards === undefined || isEmpty
         ? div().flex_1().p(16).text_color(t.dim).child(this.cards === undefined ? (this.error ? "" : "Loading issues…") : this.query ? `Nothing matches "${this.query}".` : "Nothing assigned to you is open.")
-        : h_flex().flex_1().min_h(0).child(h_flex().id("jira-columns").flex_1().min_w(0).h_full().p(12).gap(12).overflow_x_scrollbar()
-          .children(board.map((column, columnIndex) => {
-            const isColumnSelected = columnIndex === this.column;
-            const listId = `jira-col-${columnIndex}`;
-            const list = v_virtual_list(listId, column.cards.length, CARD_HEIGHT, (i) => column.cards[i].key,
-              (range) => column.cards.slice(range.start, range.end).map((card, k) => this.card(card, isColumnSelected && range.start + k === this.at, t)))
-              // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
-              .on_item_click((key, cx) => {
-                this.column = columnIndex;
-                this.moveTo(this.board()[columnIndex].cards.findIndex((c) => c.key === key));
-                this.showDetails(cx, key);
-              })
-              .size_full();
-            const scroll = this.scrolls.get(column.name);
-            const pressedAt = board.findIndex((c) => c.name === this.pressedColumn);
-            const isDropTarget = pressedAt >= 0 && this.overColumn === column.name && pressedAt !== columnIndex;
-            return v_flex().id(`jira-column-${column.name}`).relative().flex_1().min_w(260).max_w(420).h_full().gap(8)
-              // Dragged as a tab is: the source fades, a line on the side it lands shows where.
-              .when(pressedAt === columnIndex && this.overColumn !== null && this.overColumn !== column.name, (el) => el.opacity(0.5))
-              .when(isDropTarget, (el) => el.child(div().absolute().top(0).bottom(0).w(2).rounded(1).bg(t.accent)
-                .when(pressedAt < columnIndex, (line) => line.right(-7)).when(pressedAt > columnIndex, (line) => line.left(-7))))
-              .on_mouse_move((e, cx) => {
-                if (this.pressedColumn === null || this.overColumn === column.name) return;
-                if (this.overColumn === null && Math.hypot(e.position.x - this.pressAt.x, e.position.y - this.pressAt.y) < 6 * settings().zoom) return;
-                this.overColumn = column.name;
-                cx.notify();
-              })
-              .on_mouse_up("left", (_e, cx) => {
-                if (this.overColumn !== null) this.reorder(this.pressedColumn, this.overColumn);
-                this.endDrag(cx);
-              })
-              .child(h_flex().id(`jira-head-${column.name}`).flex_none().gap(6).items_center().px(2).cursor_pointer()
-                .on_mouse_down("left", (e) => { this.pressedColumn = column.name; this.overColumn = null; this.pressAt = e.position; })
-                .child(div().text_size(12).font_semibold().text_color(isColumnSelected ? t.foreground : t.muted).child(column.name))
-                .child(div().text_size(11).text_color(t.dim).child(String(column.cards.length))))
-              .child(v_flex().relative().flex_1().min_h(0)
-                .child(scroll ? list.track_scroll(scroll) : list)
-                .child(Scrollbar.vertical(listId).absolute().inset_0()));
-          }))
-          .when(this.isShowingDetails && Boolean(this.detailKey), (el) => el.child(this.detailsPanel(t)))))
+        : this.isNarrow ? this.narrowBoard(board, t) : this.wideBoard(board, t))
       .when(Boolean(this.error), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.blocked).child(this.error)))
       .when(Boolean(this.codeError), (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.working).child(this.codeError)))
       .child(div().flex_none().px(16).py(8).border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
-        .child("? keys · h/l column · drag a header or H/L to move it · j/k issue · click/↵ details · o open in Jira · s start work (multirepo task) · a hidden statuses · / search · r refresh"))
+        .child(this.isNarrow
+          ? "? keys · h/l column · j/k issue · ↵ details · s start work · / search"
+          : "? keys · h/l column · drag a header or H/L to move it · j/k issue · click/↵ details · o open in Jira · s start work (multirepo task) · a hidden statuses · / search · r refresh"))
       .when(this.isShowingKeys, (el) => el.child(keyHelp("jira-keys", "Jira board keys", this.keySections, t)));
   }
 }

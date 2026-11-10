@@ -105,14 +105,14 @@ detail_node = {key: None for key in mr.PR_SCALARS} | {
     "latestReviews": {"nodes": []},
     "reviews": {"nodes": [{"id": "r1", "author": {"login": "a"}, "state": "APPROVED", "body": "", "submittedAt": "t"}]},
     "comments": {"nodes": [{"author": {"login": "a"}, "body": "hi", "createdAt": "t", "url": "u"}]},
-    "reviewThreads": {"nodes": [{"comments": {"nodes": [
+    "reviewThreads": {"nodes": [{"diffSide": "LEFT", "isOutdated": True, "comments": {"nodes": [
         {"author": {"login": "a"}, "body": "b", "createdAt": "t", "url": "u", "path": "p", "line": None, "originalLine": 4},
         {"author": None, "body": "c", "createdAt": "t2", "url": "u2", "path": "p", "line": 5, "originalLine": 5}]}}]},
     "commits": {"nodes": [{"commit": {"oid": "abc", "messageHeadline": "h", "messageBody": "", "committedDate": "t", "authoredDate": "t",
                                       "authors": {"nodes": [{"name": "A", "email": "e", "user": None}]}}}]},
     "lastCommit": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
         {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "s", "completedAt": "c",
-         "detailsUrl": "d", "checkSuite": {"workflowRun": {"workflow": {"name": "CI"}}}},
+         "detailsUrl": "d", "checkSuite": {"workflowRun": {"event": "pull_request", "workflow": {"name": "CI"}}}},
         {"__typename": "StatusContext", "context": "deploy", "state": "PENDING", "targetUrl": "t", "createdAt": "s"}]}}}}]},
     "files": {"nodes": [{"path": "a.py", "additions": 1, "deletions": 0, "changeType": "MODIFIED"}]},
 }
@@ -126,10 +126,20 @@ assert detail["stack"]["entries"][0] == {"position": 1, "number": 6, "title": "A
 assert detail["author"] == {"login": "ghost"} and detail["repo"] == "api" and detail["slug"] == "o/api"
 assert detail["reviewRequests"] == [{"__typename": "User", "login": "bob"}]
 assert detail["inlineComments"] == [
-    {"author": "a", "body": "b", "createdAt": "t", "url": "u", "path": "p", "line": 4, "isReply": False},
-    {"author": "ghost", "body": "c", "createdAt": "t2", "url": "u2", "path": "p", "line": 5, "isReply": True}]
+    {"author": "a", "body": "b", "createdAt": "t", "url": "u", "path": "p", "line": 4, "side": "LEFT", "startLine": None, "startSide": None, "isOutdated": True, "isReply": False},
+    {"author": "ghost", "body": "c", "createdAt": "t2", "url": "u2", "path": "p", "line": 5, "side": "LEFT", "startLine": None, "startSide": None, "isOutdated": True, "isReply": True}]
+assert mr.posted_comment({"user": {"login": "me"}, "body": "x", "created_at": "t", "html_url": "h", "path": "a.py", "line": 9, "side": "LEFT", "start_line": 7, "start_side": "LEFT"}) == {
+    "author": "me", "body": "x", "createdAt": "t", "url": "h", "path": "a.py", "line": 9, "side": "LEFT", "startLine": 7, "startSide": "LEFT",
+    "isOutdated": False, "isReply": False}
+for bad in ("not json", '{"path": "a.py"}', '["x"]'):
+    try:
+        mr.cmd_pr_comment(mr.parser().parse_args(["pr-comment", "o/api", "7", "--request", bad]))
+        raise AssertionError(f"{bad} should be refused before gh runs")
+    except mr.MrError:
+        pass
 assert detail["commits"][0]["authors"] == [{"name": "A", "email": "e", "login": ""}]
 assert [c.get("workflowName", c.get("context")) for c in detail["statusCheckRollup"]] == ["CI", "deploy"]
+assert detail["statusCheckRollup"][0]["workflowEvent"] == "pull_request"
 assert detail["comments"][0]["author"] == {"login": "a"}
 
 # Restack plan: merged layers drop out; the first open one goes onto the base, after the merged tip.
@@ -217,7 +227,21 @@ with tempfile.TemporaryDirectory() as tmp:
     bases = {r["name"]: (r["base"], r["ahead"]) for r in json.loads(mrcmd("status", "--json", "--no-pr", cwd=child).stdout)["repos"]}
     assert bases == {"proj-backend": ("feat/T-1-thing", 0), "proj-portal": ("develop", 0)}, bases
     assert (child / "proj-backend" / "new.txt").exists()
-    mrcmd("rm", cwd=child)
+    # Layers that don't record their parent (made without --on, then rebuilt on it) are found from git,
+    # each on the nearest one below it.
+    def loose_layer(branch: str, on: str) -> Path:
+        folder = tmp / ".herdr" / "projects" / "Proj" / branch.replace("/", "-")
+        mrcmd("new", branch, "backend", cwd=project)
+        sh("git", "-C", str(folder / "proj-backend"), "reset", "-q", "--hard", on)
+        sh("git", "-C", str(folder / "proj-backend"), "commit", "-q", "--allow-empty", "-m", f"feat: {branch}")
+        return folder
+    loose = loose_layer("feat/T-1d", "feat/T-1-thing")
+    looser = loose_layer("feat/T-1e", "feat/T-1d")
+    stacked = {t["branch"]: (t["on"], t["stackedOn"]) for t in json.loads(mrcmd("ls", "--json", "--project", str(project)).stdout)["tasks"]}
+    assert stacked == {"feat/T-1-thing": (None, None), "feat/T-1b": ("feat/T-1-thing", "feat/T-1-thing"),
+                       "feat/T-1d": (None, "feat/T-1-thing"), "feat/T-1e": (None, "feat/T-1d")}, stacked
+    for folder in (looser, loose, child):
+        mrcmd("rm", "--force", cwd=folder)
     nowhere = mrcmd("new", "feat/T-1c", "portal", "--on", "feat/T-1-thing", cwd=project, check=False)
     assert nowhere.returncode == 1 and "to stack on" in nowhere.stderr and not (child.parent / "feat-T-1c").exists()
 

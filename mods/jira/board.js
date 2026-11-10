@@ -69,6 +69,12 @@ export function isShown(card, hiddenStatuses, isShowingHidden) {
   return isShowingHidden || !hiddenStatuses.includes(card.status);
 }
 
+// "21:07": a time's local hours and minutes. The app's JS engine ignores toLocaleTimeString's
+// options (it gives "09:07:31 PM"), so it is built by hand.
+export function clock(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 // What the details panel asks Jira for, and the issue shaped for it.
 export const DETAIL_FIELDS = ["summary", "status", "assignee", "reporter", "priority", "issuetype", "parent", "labels", "description", "comment", "subtasks", "issuelinks", "created", "updated"];
 
@@ -99,10 +105,36 @@ export function toDetails(issue) {
   };
 }
 
-// Where the code is for an issue: the PRs and multirepo task branches named after its key
-// (feat/SHOP-110-search-filters is SHOP-110's, not SHOP-11's).
+// A branch named after an issue: feat/SHOP-110-search-filters is SHOP-110's, not SHOP-11's.
+export const keyPattern = (key) => new RegExp(`(^|[^A-Za-z0-9])${key}(?![0-9])`, "i");
+
+// The coordinator's board.json tasks by issue key. A missing, unreadable or other-shaped file has
+// none: the board is a hint on the cards, never an error on them.
+export function boardTasks(text) {
+  let tasks;
+  try {
+    tasks = JSON.parse(text ?? "")?.tasks;
+  } catch {
+    return new Map();
+  }
+  return new Map((Array.isArray(tasks) ? tasks : []).filter((task) => typeof task?.key === "string" && task.key).map((task) => [task.key, task]));
+}
+
+// Where an issue's task runs: a space on a branch named after it, else the coordinator board's
+// task's space (its folder on its machine), else that task's agent. Null when it has no task.
+export function taskTarget(key, task, spaces) {
+  const pattern = keyPattern(key);
+  const isOnTaskMachine = (space) => (space.machine ?? null) === (task?.machine ?? null);
+  const space = spaces.find((s) => s.branch && pattern.test(s.branch))
+    ?? (task?.folder ? spaces.find((s) => s.folder === task.folder && isOnTaskMachine(s)) : undefined);
+  if (space) return { space: space.id };
+  if (task?.agent) return { agent: task.machine && !task.agent.includes("/") ? `${task.machine}/${task.agent}` : task.agent };
+  return null;
+}
+
+// Where the code is for an issue: the PRs and multirepo task branches named after its key.
 export function codeFor(key, prs, branches) {
-  const pattern = new RegExp(`(^|[^A-Za-z0-9])${key}(?![0-9])`, "i");
+  const pattern = keyPattern(key);
   return { prs: prs.filter((pr) => pattern.test(pr.branch)), hasBranch: branches.some((branch) => pattern.test(branch)) };
 }
 

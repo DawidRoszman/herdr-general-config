@@ -44,24 +44,25 @@ function deleteAction(id) {
   setShared(KEY, { ...s, list: s.list.filter(x => x.id !== id) });
 }
 
-// The bar's control: "▶ Dev | ▾", or "Add action" before there is one. Outlined, not filled: a fill would read as an active tab.
+// The bar's control: "▶ Dev | ▾", or "Add action" before there is one, drawn as t3-panels' buttons beside it.
 function control(view, t, stopPress) {
-  // A narrow bar's layout sets it (Herdr T3's bar-measure): the icon alone, the name left to the hover label. Unset, the full control.
-  const s = state(), main = primary(s), compact = shared("bar.compact");
-  // T3's xs outline button: its svg hangs 2px into each side, its label sits 4 on, and with the icon alone it's 24 square.
-  const ends = (el, wide) => wide ? el.pl(5).pr(7).gap(4) : el.justify_center();
-  const box = (id) => h_flex().id(id).h(24).flex_none().items_center().rounded(8).border(1).border_color(t.border).text_size(12).on_mouse_down("left", stopPress);
-  if (!main) return tip(view, t, "action-add", "Add action", stop(view, t, "action-add", ends(box("action-add"), !compact).when(Boolean(compact), el => el.w(24)).text_color(lit(view, "action-add")).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-add"))
+  // A narrow bar's layout sets it (Herdr T3's bar-measure), and t3-panels when its buttons beside this are icons:
+  // the icon alone, the name left to the hover label. Unset, the full control.
+  const s = state(), main = primary(s), compact = shared("bar.compact") || shared("panels.compact");
+  // As t3-panels' buttons, one group with them: 24 high, 6 in, 4 between icon and label, filled with the chrome.
+  const ends = (el, wide) => wide ? el.px(6).gap(4) : el.justify_center();
+  const box = (id) => h_flex().id(id).h(24).flex_none().items_center().rounded(8).border(1).border_color(t.border).bg(t.chrome).text_size(12).on_mouse_down("left", stopPress);
+  if (!main) return tip(view, t, "action-add", "Add action", stop(view, t, "action-add", ends(box("action-add"), !compact).when(Boolean(compact), el => el.w(24)).text_color(lit(view, "action-add", t.muted)).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-add"))
     // The dialog covers it, before the pointer can report leaving it.
     .role("button").accessibility_label("Add action").on_click((_e, cx) => { view.hot = null; editor(null); cx.notify(); })
     .child(svg("mods/t3-actions/icons/plus.svg").size(14)).when(!compact, el => el.child("Add action")), 8), { below: true });
-  return box("actions").text_color(t.dim)
+  return box("actions").text_color(t.muted)
     // 22, the outline's inside: a hover card's wrapper has no height for h_full to fill.
-    .child(tip(view, t, "action-run", `Run ${main.name}`, stop(view, t, "action-run", ends(h_flex().id("action-run").h(22).items_center().rounded_l(8), !compact).when(Boolean(compact), el => el.w(23)).text_color(lit(view, "action-run")).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-run"))
+    .child(tip(view, t, "action-run", `Run ${main.name}`, stop(view, t, "action-run", ends(h_flex().id("action-run").h(22).items_center().rounded_l(8), !compact).when(Boolean(compact), el => el.w(23)).text_color(lit(view, "action-run", t.muted)).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-run"))
       .role("button").accessibility_label(`Run ${main.name}`).on_click(() => runAction(main))
       .child(icon(main.icon).size(14)).when(!compact, el => el.child(div().max_w(140).truncate().child(main.name))), 8), { below: true }))
     .child(div().w(1).h(22).flex_none().bg(t.border))
-    .child(tip(view, t, "action-more", "Actions", stop(view, t, "action-more", div().id("action-more").h(22).w(23).flex().items_center().justify_center().rounded_r(8).text_color(lit(view, "action-more")).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-more"))
+    .child(tip(view, t, "action-more", "Actions", stop(view, t, "action-more", div().id("action-more").h(22).w(23).flex().items_center().justify_center().rounded_r(8).text_color(lit(view, "action-more", t.muted)).hover(st => st.bg(t.hover)).on_hover(glow(view, "action-more"))
       .role("button").accessibility_label("Actions").on_click((_e, cx) => {
         view.hot = null; // The menu covers it, before the pointer can report leaving it.
         if (!justClosed(view, MENU_CLOSED)) openOverlay({ mod: MOD, kind: "popup", at: underBar(view.actionPress), width: 280, height: Math.min(MENU_MAX, MENU_REST + s.list.length * 28), props: { actions: "menu" } });
@@ -252,7 +253,7 @@ export default class Actions extends View {
     const stopPress = (_e, cx) => cx.stop_propagation(), home = shared("t3-home.space");
     return focusRoot(this, h_flex().size_full().items_center().justify_end()
       // Home has no project to run them in.
-      .when(!home || !spaces().some(s => s.active && s.id === home), el => el.child(h_flex().id("actions-fit").flex_none().pr(8).items_center().on_size_change((size) => this.fit(size)).child(control(this, theme(), stopPress)))));
+      .when(!home || !spaces().some(s => s.active && s.id === home), el => el.child(h_flex().id("actions-fit").flex_none().pr(6).items_center().on_size_change((size) => this.fit(size)).child(control(this, theme(), stopPress)))));
   }
 
   // With the block's id in props.block, it sizes that block to the control: layout.resize, which Herdr keeps with the

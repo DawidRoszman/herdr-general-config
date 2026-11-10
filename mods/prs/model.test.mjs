@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
   remoteCommand, prState, shortBranch, reviewTab, isCoveredByProject, machineLabel, groupByBranch, checksSummary, reviewSummary, commentCount, prChanges, stackNeighbor, mergedWith, reviewKey, projectSpace, spaceAt, preferredCopy, parsePlace, worktreeOf,
-  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, commitItems, diffFiles, threadOf, fixThreadPrompt, watchPrompt,
+  parseDiff, stackDiffs, requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts, canReRequest, optimisticPr, shortTime, overviewItems, DEFAULT_FILTERS, filterOptions, matchesFilters, cycleFilter, sectionOf, sectionRows, groupTitle, prStateIcon, checksIcon, age, checksStatus, reviewStatus, mergeStatus, prActions, checkState, isSettling, hasSameHeads, checkItems, checkMark, pruneViewed, isViewed, toggleViewed, commitItems, diffFiles, threadOf, fixThreadPrompt, watchPrompt, commentAnchor, selectedRange, lineCommentRequest, withThreads,
 } from "./model.js";
 
 const pr = (over = {}) => ({
@@ -156,6 +156,17 @@ const full = {
 assert.deepEqual(overviewItems(full).map((i) => i.kind), ["description", "reviews", "review", "inline", "comment"]);
 assert.equal(overviewItems(full)[0].body, "_No description._");
 assert.deepEqual(checkItems(full).map((c) => [c.name, c.outcome, checkMark(c.outcome)]), [["lint", "SUCCESS", "✓"], ["e2e", "IN_PROGRESS", "●"], ["deploy", "FAILURE", "✗"]]);
+const twice = { statusCheckRollup: [
+  { __typename: "CheckRun", name: "test", workflowName: "ci", workflowEvent: "push", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-09T10:00:00Z" },
+  { __typename: "CheckRun", name: "test", workflowName: "ci", workflowEvent: "pull_request", status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-11-09T10:00:00Z" },
+  { __typename: "CheckRun", name: "test", workflowName: "ci", workflowEvent: "pull_request", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-10T08:00:00Z" },
+  { __typename: "CheckRun", name: "lint", workflowName: "ci", workflowEvent: "push", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-09T10:00:00Z" },
+  { __typename: "CheckRun", name: "old", status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-11-09T10:00:00Z" },
+  { __typename: "CheckRun", name: "old", status: "IN_PROGRESS", startedAt: "2026-11-10T08:00:00Z" },
+] };
+assert.deepEqual(checkItems(twice).map((c) => [c.name, c.outcome]),
+  [["test (push)", "SUCCESS"], ["test (pull_request)", "SUCCESS"], ["lint", "SUCCESS"], ["old", "IN_PROGRESS"]]);
+assert.equal(checksStatus(twice).text, "1 of 4 checks running");
 assert.deepEqual(commitItems(full)[0], { key: "79dd210bf0801107", oid: "79dd210", headline: "feat: x", author: "bob", at: "2026-11-05T15:45:31Z" });
 assert.match(shortTime("2026-11-05T15:45:31Z"), /^Nov 5, \d\d:45$/);
 const mine = pr({ author: "me", viewer: "me", project: "P" });
@@ -289,3 +300,73 @@ assert.equal(watchPrompt([threadPr]), "Watch this PR: https://gh/o/backend/pull/
 assert.ok(watchPrompt([threadPr, { url: "x" }]).startsWith("Watch these PRs: https://gh/o/backend/pull/107 x. Subscribe to their"));
 
 console.log("model.js ok");
+
+// Line comments on the Files tab's diff.
+{
+  const rows = parseDiff([
+    "diff --git a/a.js b/a.js", "@@ -10,3 +10,3 @@", " same", "-old", "+new", "\\ No newline at end of file", "@@ -40,1 +40,2 @@", " keep", "+added",
+  ].join("\n")).get("a.js");
+  assert.deepEqual(commentAnchor(rows[0]), null);
+  assert.deepEqual(commentAnchor(rows[2]), { side: "LEFT", line: 11 });
+  assert.deepEqual(commentAnchor(rows[3]), { side: "RIGHT", line: 11 });
+  assert.deepEqual(selectedRange(rows, 1, 1), { start: 1, end: 1 });
+  assert.deepEqual(selectedRange(rows, 3, 1), { start: 1, end: 3 });
+  assert.deepEqual(selectedRange(rows, 1, 7), { start: 1, end: 3 }, "stops at the hunk's edge and skips the note row");
+  const commitId = "abc123";
+  // One line, new side.
+  assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 3, end: 3 } }),
+    { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 11 });
+  // One line, old side.
+  assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 2, end: 2 } }),
+    { body: "b", commit_id: commitId, path: "a.js", side: "LEFT", line: 11 });
+  // A range across both sides: from the deleted line to the added one.
+  assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 2, end: 3 } }),
+    { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 11, start_side: "LEFT", start_line: 11 });
+  // A range on the new side only.
+  assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 6, end: 7 } }),
+    { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 41, start_side: "RIGHT", start_line: 40 });
+  assert.throws(() => lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 0, end: 1 } }), /take no comment/);
+
+  const comments = [
+    { path: "a.js", side: "LEFT", line: 11, isReply: false, isOutdated: false, url: "t1" },
+    { path: "a.js", side: "LEFT", line: 11, isReply: true, isOutdated: false, url: "t1r" },
+    { path: "a.js", side: "RIGHT", line: 11, isReply: false, isOutdated: true, url: "old" },
+    { path: "b.js", side: "RIGHT", line: 11, isReply: false, isOutdated: false, url: "other" },
+  ];
+  const shown = withThreads(rows, "a.js", comments);
+  assert.equal(shown.length, rows.length + 1);
+  assert.equal(shown[3].kind, "thread");
+  assert.deepEqual(shown[3].comments.map((c) => c.url), ["t1", "t1r"]);
+  assert.equal(shown[4].fileRow, 3);
+}
+console.log("line comments ok");
+
+// Thread cards: line ranges and body heights.
+{
+  const { lineRange, markdownLines } = await import("./model.js");
+  assert.equal(lineRange({ side: "RIGHT", line: 24 }), "+24");
+  assert.equal(lineRange({ side: "RIGHT", line: 24 }, { side: "RIGHT", line: 26 }), "+24–+26");
+  assert.equal(lineRange({ side: "LEFT", line: 12 }, { side: "RIGHT", line: 12 }), "−12–+12");
+  assert.equal(markdownLines("one line", 80), 1);
+  assert.equal(markdownLines("a".repeat(170), 80), 3);
+  assert.equal(markdownLines("para\n\nnext\n```js\nx()\n```", 80), 7);
+  assert.equal(markdownLines("- a\n- b", 80), 3);
+  console.log("thread cards ok");
+}
+
+{
+  const pr = { slug: "o/backend", number: 7, state: "OPEN", headRefOid: "a1" };
+  let viewed = toggleViewed({}, pr, "src/x.js");
+  assert.ok(isViewed(viewed, pr, "src/x.js"));
+  assert.ok(!isViewed(viewed, pr, "src/y.js"));
+  viewed = toggleViewed(viewed, pr, "src/y.js");
+  assert.ok(isViewed(viewed, pr, "src/y.js"));
+  assert.deepEqual(toggleViewed(toggleViewed(viewed, pr, "src/x.js"), pr, "src/y.js"), {});
+  assert.deepEqual(pruneViewed(viewed, [pr]), viewed);
+  assert.deepEqual(pruneViewed(viewed, [{ ...pr, headRefOid: "b2" }]), {}, "a new head commit drops the marks");
+  assert.deepEqual(pruneViewed(viewed, [{ ...pr, state: "MERGED" }]), {}, "a closed PR's marks go");
+  assert.deepEqual(pruneViewed(viewed, []), {}, "a PR gone from the review drops its marks");
+  assert.deepEqual(pruneViewed("junk", [pr]), {});
+  assert.ok(!isViewed(viewed, { ...pr, headRefOid: "b2" }, "src/x.js"));
+  console.log("viewed ok");
+}

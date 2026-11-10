@@ -118,6 +118,8 @@
     "cmd-alt-f": "t3-panels.files",
     "cmd-alt-c": "t3-panels.changes",
     "cmd-alt-p": "t3-panels.prs",
+    "cmd-shift-j": "t3-panels.jira",
+    "cmd-alt-b": "t3-panels.board",
     "cmd-alt-g": "t3-panels.github",
     "cmd-alt-r": "t3-panels.reveal",
     "cmd-n": "t3-panels.new-space",
@@ -130,6 +132,7 @@
           "view": "chat"
         }
       }
-    }
+    },
+    "ctrl-alt-tab": "t3-context.next"
   }
 }

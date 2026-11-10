@@ -642,7 +642,7 @@ export default class Changes extends View {
       .on_mouse_down("left", () => this.handle.focus())
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Changes"))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${shown.length} files`))
+        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${shown.length} file${shown.length === 1 ? "" : "s"}`))
         .when(this.scope && this.scope.kind !== "repo", (e) => e.child(div().min_w(0).truncate().text_size(11).text_color(t.dim)
           .child(`${this.scope.kind} ${this.scope.label} · ${this.scope.repos.length} repos`)))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
