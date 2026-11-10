@@ -48,7 +48,7 @@ export async function mrJson(target, args) {
 }
 
 // Where a plain repo has the branch checked out (a worktree can be anywhere), on its machine; null when
-// it isn't, or git can't say. A multirepo task's folder is found by its name instead (projectSpace).
+// it isn't, or git can't say. A multirepo task's is taskCheckoutOf.
 async function checkoutOf(machine, repo, branch) {
   try {
     const r = await exec("git", ["-C", repo, "worktree", "list", "--porcelain"], { on: machine ?? undefined });
@@ -98,12 +98,27 @@ export async function openSpaceAt(machine, folder) {
   return id;
 }
 
+// The folder of the multirepo task on branch (a repo's own branch in the task counts), from its
+// .mr-task.json, never from the folder's name: a task's branch can be renamed after it was made.
+async function taskFolder(target, project, branch) {
+  const isOn = (t) => t.branch === branch || Object.values(t.branches ?? {}).includes(branch);
+  return (await mrJson(target, ["ls", "--json", "--project", project])).tasks.find(isOn)?.root ?? null;
+}
+
+// Where a multirepo task has the branch, on its machine; null when no task has it, or mr can't say.
+async function taskCheckoutOf(machine, project, branch) {
+  try {
+    return await taskFolder(await sshTarget(machine), project, branch);
+  } catch {
+    return null;
+  }
+}
+
 // A multirepo task's folder for branch, made with mr new on repos (their short names) when missing;
 // a branch another tool already has checked out is linked, not checked out again. report: progress.
 export async function ensureTaskFolder(machine, project, branch, repos, report = () => {}) {
   const target = await sshTarget(machine);
-  const isOn = (t) => t.branch === branch || Object.values(t.branches ?? {}).includes(branch); // a repo's own branch in the task counts
-  const taskOf = async () => (await mrJson(target, ["ls", "--json", "--project", project])).tasks.find(isOn)?.root;
+  const taskOf = () => taskFolder(target, project, branch);
   const existing = await taskOf();
   if (existing) return existing;
   report(`Checking out ${branch} on ${machineLabel(machine)}…`);
@@ -159,7 +174,7 @@ export async function openReview(machine, project, branch, isRepo = false, name 
   if (open) return run("tab.select", { id: open.id });
   const published = shared(OPEN_REVIEWS) ?? {};
   const tab = reviewTab(machine, project, branch, isRepo, branches);
-  const checkout = isRepo ? await checkoutOf(machine, project, branch) : null;
+  const checkout = await (isRepo ? checkoutOf : taskCheckoutOf)(machine, project, branch);
   const home = projectSpace(spaces(), { machine, root: project, name, branch, checkout }) ?? spaces().find((s) => s.id === focused()?.space);
   if (home && home.id !== focused()?.space) run("space.select", { id: home.id });
   // A review tab opened before tabs published themselves: found by its name, in that space. Not one
@@ -170,10 +185,10 @@ export async function openReview(machine, project, branch, isRepo = false, name 
 }
 
 // The command that opens a PR's review (a notification's action): its open tab, as it is when the
-// notification goes out, else a new one in its project's space.
-export function reviewCommand(machine, project, branch, isRepo = false, name = "") {
+// notification goes out, else a new one in its project's space. checkout: the branch's task folder (mr prs' task).
+export function reviewCommand(machine, project, branch, isRepo = false, name = "", checkout = null) {
   const open = openReviewTab(machine, project, branch);
   if (open) return { name: "tab.select", args: { id: open.id } };
-  const home = projectSpace(spaces(), { machine, root: project, name, branch });
+  const home = projectSpace(spaces(), { machine, root: project, name, branch, checkout });
   return { name: "tab.new", args: { ...reviewTab(machine, project, branch, isRepo), ...(home ? { space: home.id } : {}) } };
 }

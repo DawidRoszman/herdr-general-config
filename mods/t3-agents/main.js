@@ -158,7 +158,9 @@ export default class Agents extends View {
 
   compute() {
     const sort = sortOf();
-    let list = agents();
+    // t3-context keeps the other context's agents out.
+    const offAgents = new Set(shared("context")?.offAgents ?? []);
+    let list = agents().filter((a) => !offAgents.has(a.address));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     // A mod pane has no agent of its own, and Herdr's is then the chosen one, else the first of all: it counts only in that tab, as in the inbox.

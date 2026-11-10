@@ -273,24 +273,13 @@
         {
           "id": "status",
           "type": "block",
-          "hidden": true,
           "size": {
             "px": 28
           },
           "content": {
-            "mod": "workspace-status"
-          }
-        },
-        {
-          "id": "accounts-watch",
-          "type": "block",
-          "size": {
-            "px": 0
-          },
-          "content": {
             "mod": "status-accounts",
             "props": {
-              "publish": true
+              "bell": false
             }
           }
         },

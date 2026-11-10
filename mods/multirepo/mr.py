@@ -977,8 +977,11 @@ def cmd_prs(args) -> None:
     if not viewers:
         raise MrError(f"GitHub answered for none of the repos ({next(iter(failed.values()), 'no reason given')}); is gh logged in here?")
     topics = scope.topics()
-    prs = [{**pr, "short": scope.shorts[pr["repo"]], "topic": topics.get((pr["repo"], pr["branch"]), pr["branch"])}
-           for _, repo_list, _ in results if repo_list for pr in repo_list]
+    # The task folder of each task branch: its folder name can be an older branch's (a renamed task).
+    task_roots = {branch: t["root"] for t in scope.tasks() for branch in (t["branch"], *t["branches"].values())}
+    prs = [{**pr, "short": scope.shorts[pr["repo"]], "topic": topic, "task": task_roots.get(topic)}
+           for _, repo_list, _ in results if repo_list for pr in repo_list
+           for topic in [topics.get((pr["repo"], pr["branch"]), pr["branch"])]]
     print(json.dumps({**header, "viewer": viewers[0], "prs": prs, "failed": list(failed), "failedWhy": failed}))
 
 

@@ -189,9 +189,11 @@ export default class Inbox extends View {
 
   compute(cx, publish = true) {
     const now = Date.now();
-    const runs = agents(), all = terminals(), ps = panes(), sp = spaces(), f = focused();
+    // t3-context keeps the other context's agents and spaces out.
+    const offAgents = new Set(shared("context")?.offAgents ?? []), offSpaces = new Set(shared("context")?.offSpaces ?? []);
+    const runs = agents().filter((a) => !offAgents.has(a.address)), all = terminals(), ps = panes(), sp = spaces(), f = focused();
     // `pane:<id>` is a mod card's address, in t3-inbox.rows too. Docked alone, keep the original one-card-per-agentless-tab rule.
-    const every = [...runs, ...sp.flatMap((s) => s.tabs.flatMap((c) => {
+    const every = [...runs, ...sp.filter((s) => !offSpaces.has(s.id)).flatMap((s) => s.tabs.flatMap((c) => {
       const cards = ps.filter(x => x.tab === c.id && x.mod && programOf(x)?.inbox);
       return (props()?.home ? cards : runs.some(a => a.tab === c.id) ? [] : cards.slice(0, 1)).map(p => ({ ...p,
         address: `pane:${p.pane}`, status: modStatus(p) ?? "idle", focused: p.pane === f?.pane,

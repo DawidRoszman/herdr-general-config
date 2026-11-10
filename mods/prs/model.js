@@ -74,10 +74,10 @@ function isOnBranch(space, name, branch) {
 
 // Which machine's copy of a PR the list shows when its project is on several machines (copies sorted by
 // machine name, each with machine, root, project and branch): where you work on it, so a click and g go
-// there. The machine with a space on the PR's branch in that project, else the focused space's machine,
-// else the first by name.
+// there. The machine with a space on the PR's branch in that project (or in its task folder, task from
+// mr prs), else the focused space's machine, else the first by name.
 export function preferredCopy(copies, spaces, focusedMachine) {
-  const hasBranchSpace = (c) => spaces.some((s) => (s.machine ?? null) === (c.machine ?? null)
+  const hasBranchSpace = (c) => Boolean(c.task && spaceAt(spaces, c.machine, c.task)) || spaces.some((s) => (s.machine ?? null) === (c.machine ?? null)
     && isInsideProject(s.folder, c.root, c.project) && isOnBranch(s, c.project, c.branch));
   return copies.find(hasBranchSpace) ?? copies.find((c) => (c.machine ?? null) === (focusedMachine ?? null)) ?? copies[0];
 }

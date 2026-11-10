@@ -161,7 +161,7 @@ export class Monitor {
     for (const change of changes.slice(0, MAX_NOTIFICATIONS)) {
       const { pr } = change;
       // A repo on a branch of its own in a task (topic): the review of the task, which covers that PR too.
-      notify({ title: change.title, body: change.body, level: change.level, action: reviewCommand(pr.machine, pr.root, pr.topic ?? pr.branch, pr.isRepo, pr.project) });
+      notify({ title: change.title, body: change.body, level: change.level, action: reviewCommand(pr.machine, pr.root, pr.topic ?? pr.branch, pr.isRepo, pr.project, pr.task) });
     }
     if (changes.length > MAX_NOTIFICATIONS) notify({ title: `${changes.length - MAX_NOTIFICATIONS} more PR changes`, body: "See the PR list.", level: "info" });
   }
@@ -205,7 +205,8 @@ export class Monitor {
     const row = this.rows()[index];
     if (!row) return;
     this.moveTo(index);
-    if (row.kind === "group") openReview(row.group.machine, row.group.root, row.group.branch, row.group.isRepo, row.group.project, row.group.branches);
+    if (row.kind === "group") openReview(row.group.machine, row.group.root, row.group.branch, row.group.isRepo, row.group.project, row.group.branches)
+      .catch((error) => notify({ title: `Could not open ${row.group.branch}`, body: String(error.message ?? error), level: "warning" }));
     else if (row.kind === "section") this.toggleSection(row.section.id);
     cx.notify();
   }

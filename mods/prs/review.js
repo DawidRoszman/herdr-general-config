@@ -3,7 +3,7 @@
 
 import { div, list, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, TextareaState, Textarea, TextView } from "gpui-base";
-import { theme, run, settings, panes, focused, spaces, exec, shared, setShared, openOverlay } from "herdr";
+import { theme, run, settings, panes, focused, spaces, exec, shared, setShared, openOverlay, notify } from "herdr";
 import { sshTarget, mr, mrArgv, mrJson, openReview, ensureTaskFolder, openBranchCheckout, askClaude } from "./host.js";
 import { prKey, prState, overviewItems, checkItems, checkMark, commitItems, diffFiles, parseDiff, stackDiffs, optimisticPr, stackNeighbor, mergedWith, shortBranch, canReRequest, reviewKey, OPEN_REVIEWS, requestedLogins, shortTime, matches, machineLabel, prStateIcon, checksStatus, reviewStatus, mergeStatus, prActions, checksIcon, checkState, isSettling, hasSameHeads, threadOf, fixThreadPrompt, watchPrompt } from "./model.js";
 import { Search } from "./search.js";
@@ -33,13 +33,9 @@ export class Review {
     this.handle = cx.focus_handle();
     // Its key list lives in help-keys.json (also read by the keybinds tab), loaded once.
     this.keySections = [];
-    cx.spawn(async (cx) => { this.keySections = await loadKeys("review"); cx.notify(); });
     this.handle.focus();
     this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
-    // focus() can't run in render, so a light timer does the claiming (no redraw).
-    cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.refreshOnEnter(cx); });
-    cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
-    cx.timer.every(10000, (cx) => this.retryLostLoad(cx));
+    this.isStarted = false; // its loads and timers start at the first layout (start)
     this.isAutoRefreshing = false;
     this.scrolls = Object.fromEntries([...TABS, "diff"].map((name) => [name, VirtualListScrollHandle.new()]));
     this.search = new Search({ onChange: () => this.moveTo(0), onSubmit: (cx) => this.openItem(cx) });
@@ -74,7 +70,20 @@ export class Review {
     // machine null is this Mac; project is a multirepo project's root, or with isRepo a plain repo's folder.
     const missing = ["project", "branch"].filter((name) => !props[name]).concat("machine" in props ? [] : ["machine"]);
     if (missing.length) this.error = `The review tab needs props { machine, project, branch, isRepo? }; missing ${missing.join(", ")}.`;
-    else this.act(cx, () => this.load());
+  }
+
+  // Started from the first layout's cx, not the constructor's: the constructor runs inside whatever
+  // opened the tab (run("tab.new") from an overlay: here.js, a toast), and that overlay closing ends
+  // the tasks and timers started there, so the first load would never end.
+  start(cx) {
+    if (this.isStarted) return;
+    this.isStarted = true;
+    cx.spawn(async (cx) => { this.keySections = await loadKeys("review"); cx.notify(); });
+    // focus() can't run in render, so a light timer does the claiming (no redraw).
+    cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.refreshOnEnter(cx); });
+    cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
+    cx.timer.every(10000, (cx) => this.retryLostLoad(cx));
+    if (!this.error) this.act(cx, () => this.load());
   }
 
   command(name) {
@@ -387,7 +396,8 @@ export class Review {
 
   openStackEntry(entry) {
     const { machine, project, isRepo } = this.props;
-    openReview(machine, project, entry.headRefName, isRepo, this.data?.project);
+    openReview(machine, project, entry.headRefName, isRepo, this.data?.project)
+      .catch((error) => notify({ title: `Could not open ${entry.headRefName}`, body: String(error.message ?? error), level: "warning" }));
   }
 
   // The multirepo task's folder, the task made quietly when missing (ensureTaskFolder).
@@ -1020,6 +1030,7 @@ export class Review {
   // The tab this pane is in: the shown one at its first layout (a pane is laid out only while
   // its tab shows; at init, focused() can still name the tab that was shown before).
   learnTab(cx) {
+    this.start(cx);
     if (this.ownTab) return;
     this.ownTab = spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id ?? null;
     if (this.ownTab) this.publishTab();

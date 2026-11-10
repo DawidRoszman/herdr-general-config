@@ -34,6 +34,11 @@ const ROW = 32, STACK = 1, PITCH = ROW + STACK;
 const find = (n, id) => n?.id === id ? n : (n?.children ?? []).map((c) => find(c, id)).find(Boolean);
 // Docked alone there's no Inbox to be behind.
 const listInView = (root = layout()) => find(root, "sidebar-lists")?.active !== "inbox" && !find(root, "sidebar")?.hidden;
+// Spaces t3-context keeps out of this list: the other context's, and the coordinators (its pinned row shows them).
+function hiddenByContext() {
+  const context = shared("context");
+  return new Set([...(context?.offSpaces ?? []), ...Object.values(context?.coordinators ?? {})]);
+}
 
 export default class Spaces extends View {
   async close() { stopsEnd(this); }
@@ -394,7 +399,9 @@ export default class Spaces extends View {
       }
       this.ordering.machines = [...moved];
     }
-    return out.filter(r => (r.head || this.shown.has(r.w.id)) && !r.folded && r.w.id !== homeId);
+    const hidden = hiddenByContext();
+    const isHidden = (r) => r.head ? r.members.length > 0 && r.members.every((id) => hidden.has(id)) : hidden.has(r.w.id);
+    return out.filter(r => (r.head || this.shown.has(r.w.id)) && !r.folded && r.w.id !== homeId && !isHidden(r));
   }
 
   toggleRepo(repo, cx) {
@@ -411,7 +418,9 @@ export default class Spaces extends View {
     const draw = (r, ghost) => r.head ? this.repoHead(r, t, ps, ghost) : this.row(r, t, ps, ghost);
     const entry = (r) => ({ key: r.head ? r.w.id : `space-${r.w.id}`, h: PITCH, m: r.w.machine ?? null, r, el: draw(r), ghost: () => draw(r, true) });
     const plain = (key, m, draw) => ({ key, h: PITCH, m, el: draw(false), ghost: () => draw(true) });
-    const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.filter(m => !m.temporary).map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
+    const offMachines = new Set(shared("context")?.offMachines ?? []);
+    const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.filter(m => !m.temporary).map(m => m.name), ...Object.keys(this.reconnecting)])]
+      .filter((m) => !offMachines.has(m)).sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))

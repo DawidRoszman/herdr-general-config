@@ -12,7 +12,8 @@ const SCOPE_ROW = 32, SCOPE_SHOWN = 9;
 
 export function inboxMatches(view) {
   const q = view.search.value().toLowerCase();
-  return [{ id: null, name: "All spaces" }, ...spaces().filter((s) => s.id !== shared("t3-home.space"))].filter((s) => s.name.toLowerCase().includes(q));
+  const offSpaces = new Set(shared("context")?.offSpaces ?? []);
+  return [{ id: null, name: "All spaces" }, ...spaces().filter((s) => s.id !== shared("t3-home.space") && !offSpaces.has(s.id))].filter((s) => s.name.toLowerCase().includes(q));
 }
 
 // A click shows that space alone; shift-click adds or removes it and keeps the menu open, as in T3.

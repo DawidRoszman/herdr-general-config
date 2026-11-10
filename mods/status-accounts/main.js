@@ -8,15 +8,22 @@
 // gets the chips.
 // On the right: the shown space's machine's cpu, ram and temperatures (system.js), and the bell:
 // how many notifications are unread; a click opens their history (the notifications mod). Agent
-// alerts go in that history from here: an agent turning blocked while not on screen.
+// alerts go in that history from here (props { bell: false } leaves the bell out, not the logging): an agent turning blocked while not on screen.
+// Beside them: the Claude (of the shown context's account) and Codex 5-hour and weekly limits (usage.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, agents, panes, focused, theme, run, window, keys, exec, hc, appHome, readTextFile, shared, setShared, props } from "herdr";
 import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
 import { System, bytes, pct, level, heat } from "./system.js";
+import { USAGE_SHARED_KEY, shouldRefresh, parseClaudeAccounts, claudeAccountFor, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, asOf } from "./usage.js";
 
 const ACCOUNTS = `${appHome()}/mods/status-accounts/accounts.py`;
+const CONFIG = `${appHome()}/mods/status-accounts/config.json`;
+
+// Usage figures, one cache for every copy of the bar: "claude:<context>" | "codex" -> { at, value, error, claimedAt, retryAt }.
+const usageCache = () => shared(USAGE_SHARED_KEY) ?? {};
+const setUsage = (key, entry) => setShared(USAGE_SHARED_KEY, { ...usageCache(), [key]: entry });
 const STALE_MS = 2 * 60000; // looked up again after this, so a changed .envrc shows
 const PALETTE_ACTIONS = ["app.palette", "mod.open:command-palette"];
 const PERSONAL = "personal";
@@ -59,11 +66,24 @@ export default class StatusAccounts extends View {
     this.agentChecks = new Map(); // address -> { at, pid, account }
     cx.timer.every(5000, (cx) => this.lookUpAgents(cx));
     this.isPublishOnly = Boolean(props()?.publish);
+    this.hasBell = props()?.bell !== false; // { bell: false }: the layout's navbar has one (Herdr T3)
     if (this.isPublishOnly) return;
     this.accounts = new Map(); // "machine|folder" -> { at, value | error }
     cx.timer.every(1500, (cx) => this.lookUp(cx));
     this.sys = new System();
     this.sys.start(cx);
+    this.claudeAccounts = null; // context -> Claude config dir, from config.json (usage.js); null until read
+    this.claudeConfigError = null;
+    cx.spawn(async (cx) => {
+      try {
+        this.claudeAccounts = parseClaudeAccounts(await readTextFile(CONFIG));
+      } catch (error) {
+        this.claudeConfigError = `${CONFIG}: ${error.message ?? error}`;
+      }
+      this.refreshUsage(cx);
+      cx.notify();
+    });
+    cx.timer.every(5000, (cx) => this.refreshUsage(cx));
     this.agentStatuses = null; // address -> status at the last look; null before the first
     cx.timer.every(1500, () => { this.agentStatuses = logAgentAlerts(agents(), this.agentStatuses); });
   }
@@ -159,6 +179,63 @@ export default class StatusAccounts extends View {
     return chips;
   }
 
+  // The shown context (T3's Work | Personal switch), else the account of the shown folder.
+  usageContext() {
+    const context = shared("context")?.current;
+    if (context) return context;
+    const place = currentPlace();
+    return place && this.accounts.get(`${place.machine}|${place.folder}`)?.value?.claude.kind;
+  }
+
+  // Each source at most once per REFRESH_MS across all copies of the bar (shouldRefresh). Never awaited by render.
+  refreshUsage(cx) {
+    const account = this.claudeAccounts && claudeAccountFor(this.usageContext(), this.claudeAccounts);
+    const sources = [["codex", () => fetchCodexUsage({ exec })]];
+    if (account) sources.push([`claude:${account.name}`, () => fetchClaudeUsage(account.configDir, { exec, fetch })]);
+    for (const [key, load] of sources) {
+      const known = usageCache()[key];
+      if (!shouldRefresh(known, Date.now())) continue;
+      setUsage(key, { ...known, claimedAt: Date.now() });
+      cx.spawn(async (cx) => {
+        try {
+          setUsage(key, { at: Date.now(), value: await load() });
+        } catch (error) {
+          // A failed refresh keeps the last figures; a 429 waits as long as it asks.
+          setUsage(key, { at: Date.now(), value: known?.value, error: String(error.message ?? error), retryAt: error.retryAt ?? null });
+        }
+        cx.notify();
+      });
+    }
+  }
+
+  // "Claude 5h 42% · wk 61%": each figure coloured by its level; reset times and failures in the tooltip.
+  usageChip(t, id, name, entry, about) {
+    const value = entry?.value;
+    const figure = (label, w) => h_flex().gap(3).child(div().text_color(t.dim).child(label))
+      .child(div().text_color(usageColor(t, w?.percent)).child(percentText(w)));
+    const tip = value
+      ? [about, windowLine("5-hour", value.fiveHour), windowLine("Weekly", value.week), asOf(value.at),
+        ...(entry.error ? [`Last refresh failed: ${entry.error}`] : [])].join("\n")
+      : `${about}\n${entry?.error ?? "Loading…"}`;
+    return h_flex().id(id).gap(5).items_center().tooltip(tip)
+      .child(div().text_color(t.dim).child(name))
+      .child(figure("5h", value?.fiveHour)).child(div().text_color(t.dim).child("·")).child(figure("wk", value?.week));
+  }
+
+  usageChips(t) {
+    const context = this.usageContext();
+    const account = this.claudeAccounts && claudeAccountFor(context, this.claudeAccounts);
+    const claude = account ? usageCache()[`claude:${account.name}`]
+      : this.claudeConfigError ? { error: this.claudeConfigError }
+      : this.claudeAccounts ? { error: `No Claude account in config.json for ${context ?? "the shown folder"}` }
+      : null;
+    const about = account ? `Claude ${account.name} account (${account.configDir ?? "~/.claude"}), from Claude Code's usage endpoint` : "Claude";
+    return [
+      this.usageChip(t, "usage-claude", "Claude", claude, about),
+      this.usageChip(t, "usage-codex", "Codex", usageCache().codex, "Codex, from its last turn's log in ~/.codex/sessions"),
+    ];
+  }
+
   // cpu, ram and temperatures of the shown space's machine; a reading it can't get stays out.
   machineStats(t) {
     const s = this.sys;
@@ -194,8 +271,9 @@ export default class StatusAccounts extends View {
       .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())
+      .children(this.usageChips(t))
       .children(this.machineStats(t))
-      .child(this.bell(t))
+      .when(this.hasBell, (el) => el.child(this.bell(t)))
       .child(div().id("palette").text_color(t.dim).on_click(() => run("mod.open", { name: "command-palette" })).child(this.hint(t)));
   }
 }

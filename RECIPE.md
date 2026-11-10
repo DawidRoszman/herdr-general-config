@@ -17,9 +17,10 @@ Left to right:
   Files, Changes, Pull requests toggles and a notification bell with an unread count), the shown
   tab's panes framed with `t3-pane` headers, and on the right a hidden 368px **panel** column whose
   `panel-body` stack holds `files` (`t3-files`), `changes` (`changes-multi`) and `prs` (the PR monitor).
-- Two zero-width blocks that draw nothing: `walkthrough-watch`, and `accounts-watch`
-  (`status-accounts` with `{ publish: true }`), which finds each Claude agent's account for the
-  chips in pane headers, Agents and Inbox.
+- A 28px status bar under the work column (`status-accounts` with `{ bell: false }`): the shown
+  folder's Claude and gh accounts, Claude and Codex 5-hour and weekly usage, cpu and ram. It also
+  finds each Claude agent's account for the chips in pane headers, Agents and Inbox.
+- A zero-width block that draws nothing: `walkthrough-watch`.
 
 ## How it behaves
 
@@ -56,7 +57,7 @@ Left to right:
   `blueprint`, `changes-multi`, `walkthrough`, `notifications`, `jira`, `browser`,
   `command-palette`, `keybinds`, `wt-dialog`, `wt-new`, `wt-open`, `wt-remove`, `port-forward`,
   `status-accounts` (its `accounts.py` runs with `python3` on each agent's machine), `t3-files`.
-- Herdr's shipped mods it uses: `workspace-status`, `confirm`, `prompt`, `menu`.
+- Herdr's shipped mods it uses: `confirm`, `prompt`, `menu`.
 - `keys.json`: a `layout:herdr-t3` section and the global keys that open the mods above.
 
 ## Watch out
@@ -71,8 +72,8 @@ Left to right:
 - **Names matter.** Mods refer to each other by folder name (`mods/multirepo/mr.py`,
   `mod.open:prs`, `mods/notifications/icons/…`, the `t3-*` names in the layout). If a name is
   taken, don't install under a new name: ask the person, since a renamed mod breaks the others.
-- **Never copy** `mods/jira/config.json` from anywhere: the person writes their own from
-  `config.example.json`. On update, keep theirs.
+- **Never copy** `mods/jira/config.json` or `mods/status-accounts/config.json` from anywhere: the
+  person writes their own from `config.example.json`. On update, keep theirs.
 - **Keys:** merge `keys.json`; ask before replacing a key the person already binds. The
   `layout:herdr-t3` section only applies while this layout shows.
 - `herdr-app check` every mod; `check-*.cjs` files are the mods' own tests, not loaded by Herdr.

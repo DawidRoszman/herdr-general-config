@@ -66,6 +66,10 @@ and the browser run there over ssh; nothing needs installing on them but the pro
   (`machine`: a Herdr machine name, or null for this computer; `root`: the project's folder; a
   list of them when it's checked out on several computers, the first starting tasks).
   `statusStages` names your statuses `todo`, `progress`, `review` or `testing`, for the warnings.
+- **Claude usage (optional):** with one Claude Code account (`~/.claude`) the status bar needs
+  nothing. With several, copy `mods/status-accounts/config.example.json` to `config.json` beside
+  it and map each account to its Claude config dir, or null for `~/.claude`. Accounts are
+  `work` or `personal` (a sign-in with a public mail provider's address is personal).
 - **Multirepo projects:** `cmd-shift-m`, then add a project (a folder whose children are git
   repos). `mr` keeps its list per machine.
 

@@ -68,6 +68,13 @@ assert.equal(projectSpace(taskSpaces, { machine: "devbox", root: "/home/u/git/Sh
 // A branch with no space of its own: the project's space (by name when it has no folder), never another task's.
 assert.equal(projectSpace(taskSpaces, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-999" }), null);
 assert.equal(projectSpace([...taskSpaces, { id: "project", machine: "devbox", name: "Shop", folder: "" }], { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-999" }).id, "project");
+// A task whose branch was renamed after it was made: its folder keeps the old name, so only its
+// .mr-task.json (the checkout openReview and mr prs' task give) finds its space, not the project's.
+const renamed = [...taskSpaces, { id: "project", machine: "devbox", name: "Shop", folder: "/home/u/git/Shop" }];
+assert.equal(projectSpace(renamed, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-135-renamed" }).id, "project");
+assert.equal(projectSpace(renamed, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-135-renamed", checkout: "/home/u/.herdr/projects/Shop/feat-SHOP-135-contact" }).id, "shop-135");
+assert.equal(preferredCopy([{ machine: null, root: "/Users/me/Shop", project: "Shop", branch: "feat/SHOP-135-renamed" },
+  { machine: "devbox", root: "/home/u/git/Shop", project: "Shop", branch: "feat/SHOP-135-renamed", task: "/home/u/.herdr/projects/Shop/feat-SHOP-135-contact" }], taskSpaces, null).machine, "devbox");
 assert.notEqual(reviewKey("devbox", "/p", "feat/x"), reviewKey(null, "/p", "feat/x"));
 
 // Grouping: the branch with a review request from me first, merged work last.
