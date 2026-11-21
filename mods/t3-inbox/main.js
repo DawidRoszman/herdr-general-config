@@ -1,6 +1,6 @@
 import { View } from "gpui-kit";
 import { v_flex, InputState } from "gpui-base";
-import { agents, terminals, panes, spaces, focused, hc, notify, theme, shared, setShared, setAgentOrder, props, nextCommand, settings, layout } from "herdr";
+import { agents, terminals, panes, spaces, focused, hc, notify, theme, shared, setShared, setAgentOrder, props, nextCommand, settings, layout, exec, appHome, window, checking } from "herdr";
 import { modStatus, programOf } from "./name.js";
 import { descendants, ownStatus, stillSettled } from "./tree.js";
 import { stopsInit, stopsEnd, focusRoot, enter } from "./focus.js";
@@ -13,11 +13,21 @@ import { inboxRowView } from "./row-view.js";
 import { inboxList } from "./list-view.js";
 
 const RETRY = 60000;
+const findNode = (n, id) => (n?.id === id ? n : (n?.children ?? []).map((c) => findNode(c, id)).find(Boolean));
+const isInboxInView = (root = layout()) => {
+  const mode = findNode(root, "sidebar-lists");
+  return (!mode || mode.active === "inbox") && !findNode(root, "sidebar")?.hidden;
+};
 
 export default class Inbox extends View {
-  async close() { stopsEnd(this); }
+  async close() {
+    this.isClosed = true;
+    stopsEnd(this);
+  }
 
   init(_props, cx) {
+    this.isClosed = false;
+    this.isCtrlHeld = false;
     if (props()?.customSnooze) return initCustom(this, cx);
     stopsInit(this, cx);
 
@@ -78,6 +88,44 @@ export default class Inbox extends View {
 
         else if (command === "focus") enter(this, cx, "inbox-search");
         cx.notify();
+      }
+    });
+    if (!checking()) this.watchCtrl(cx);
+  }
+
+  watchCtrl(cx) {
+    const src = `${appHome()}/mods/t3-spaces/ctrl-watch.c`;
+    const bin = `${appHome()}/cache/t3-spaces-ctrl-watch`;
+    cx.spawn(async (cx) => {
+      while (!this.isClosed && !window()) await cx.sleep(100);
+      if (this.isClosed || window()?.platform !== "macos") return;
+      const build = await exec("sh", [
+        "-c",
+        '[ -x "$2" ] && [ "$2" -nt "$1" ] || { mkdir -p "$(dirname "$2")" && clang -O2 -framework CoreGraphics "$1" -o "$2"; }',
+        "sh", src, bin,
+      ]).catch(() => ({ code: 1 }));
+      if (build.code !== 0) return;
+
+      while (!this.isClosed) {
+        if (!window()?.active || !isInboxInView()) {
+          if (this.isCtrlHeld) {
+            this.isCtrlHeld = false;
+            cx.notify();
+          }
+          await cx.sleep(200);
+          continue;
+        }
+        const r = await exec(bin, [this.isCtrlHeld ? "1" : "0", "15"]).catch(() => ({ code: 1, stdout: "" }));
+        if (this.isClosed) break;
+        if (r.code === 0) {
+          const isHeld = r.stdout.trim() === "1";
+          if (isHeld !== this.isCtrlHeld) {
+            this.isCtrlHeld = isHeld;
+            cx.notify();
+          }
+        } else if (r.code !== 2) {
+          await cx.sleep(1000);
+        }
       }
     });
   }
@@ -259,9 +307,17 @@ export default class Inbox extends View {
     const drag = inboxDrag(this, t, model, actions);
     this.publishRows([...model.pinned, ...model.out, ...model.busyRows, ...model.napRows, ...drag.rows], model.inView,
       [...model.pinned, ...model.out, ...model.work, ...model.nap, ...model.put]);
-    const draw = inboxRowView(this, t, model, actions, drag);
+    const showNumbers = this.isCtrlHeld && Boolean(window()?.active);
+    const draw = inboxRowView(this, t, model, actions, drag, showNumbers);
     const { top, list } = inboxList(this, t, model, actions, drag, draw, cx);
     const tree = drag.root(v_flex().id("t3-inbox-root").relative().size_full().min_h(0).bg(t.chrome).text_size(14)
+      .on_modifiers_changed((e, cx) => {
+        const isHeld = Boolean(e.modifiers?.control);
+        if (isHeld !== this.isCtrlHeld) {
+          this.isCtrlHeld = isHeld;
+          cx.notify();
+        }
+      })
       .on_size_change((size) => { this.height = size.height / zoom; this.width = size.width / zoom; }))
       .child(top).child(list);
     const ghost = drag.ghost(draw);

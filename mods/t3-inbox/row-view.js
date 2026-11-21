@@ -31,7 +31,22 @@ function left(ms, now) {
   return m < 60 ? `${m}m` : m < 1440 ? `${Math.ceil(m / 60)}h` : `${Math.ceil(m / 1440)}d`;
 }
 
-export function inboxRowView(view, t, model, actions, drag) {
+function numberBadge(slot, t, isActive) {
+  return h_flex()
+    .size(16)
+    .flex_none()
+    .rounded(4)
+    .bg(isActive ? t.accent : t.accent + "28")
+    .items_center()
+    .justify_center()
+    .font_family(settings().font_family ?? "JetBrains Mono")
+    .font_bold()
+    .text_size(10)
+    .text_color(isActive ? t.accent_foreground : t.accent)
+    .child(String(slot));
+}
+
+export function inboxRowView(view, t, model, actions, drag, showNumbers = false) {
   const { now, ps, sp, state, viewing, kids, running, woke, busy, pins, started, since, wake, hidden, napUntil, settledAt } = model;
   const { settle, unsettle, away, pick } = actions;
   const { dragging, plan, verb, badge, swept, row, open, sweepFrom, justDropped } = drag;
@@ -51,10 +66,10 @@ export function inboxRowView(view, t, model, actions, drag) {
   const machineOf = (a) => a.address.includes("/") ? a.address.split("/")[0] : null;
 
   const order = shared("t3-inbox.rows")?.order ?? [];
-  const number = (a, ghost) => {
-    const n = ghost ? 0 : order.indexOf(a.address) + 1;
-    return div().w(8).flex_none().text_size(10.5).text_color(t.dim).opacity(0.7)
-      .font_family(settings().font_family ?? "JetBrains Mono").child(n >= 1 && n <= 9 ? String(n) : "");
+  const slotOf = (a, ghost) => (ghost ? 0 : order.indexOf(a.address) + 1);
+  const markOf = (a, on, ghost) => {
+    const slot = slotOf(a, ghost);
+    return showNumbers && slot >= 1 && slot <= 9 ? numberBadge(slot, t, on) : avatar(a.space, a.space_name, 16);
   };
   const branchOf = (a) => ps.find((p) => p.pane === a.pane)?.branch;
 
@@ -157,8 +172,7 @@ export function inboxRowView(view, t, model, actions, drag) {
       .when(on, (el) => el.bg(t.selected))
       .when(!on && !ghost && !dragging && !view.sweep?.moved, (el) => el.when(menu, (m) => m.bg(t.hover)).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(h_flex().h(20).gap(6).items_center().text_size(12).text_color(t.dim)
-        .child(number(a, ghost))
-        .child(avatar(a.space, a.space_name, 16))
+        .child(markOf(a, on, ghost))
 
         .when(pins.includes(a.address) && (!ghost || plan?.section === "pinned" || !plan), (el) => el.child(svg("mods/t3-inbox/icons/pin.svg").size(12).flex_none().text_color(t.dim)))
         .child(div().flex_1().min_w(0).truncate().child(a.space_name ?? ""))
@@ -178,7 +192,9 @@ export function inboxRowView(view, t, model, actions, drag) {
     const on = viewing(a), over = !dragging && !view.sweep?.moved && (view.hovered === a.address || within(view, [`slim-${a.address}`, `wake-${a.address}`, `unsettle-${a.address}`])), bright = on || over || ghost || swept(a);
     const napping = hidden(a), undoId = `${napping ? "wake" : "unsettle"}-${a.address}`, undoLabel = napping ? "Wake agent" : "Unsettle";
 
-    const mark = avatar(a.space, a.space_name, 16);
+    const slot = slotOf(a, ghost);
+    const hasBadge = showNumbers && slot >= 1 && slot <= 9;
+    const mark = hasBadge ? numberBadge(slot, t, on) : avatar(a.space, a.space_name, 16);
     const undo = h_flex().id(undoId).h(24).px(6).flex_none().items_center().justify_center().rounded(6)
       .opacity(over ? 1 : 0).transition("opacity", MOTION)
 
@@ -200,8 +216,7 @@ export function inboxRowView(view, t, model, actions, drag) {
     return (ghost ? base : row(base, a, details).role("button").accessibility_label(title(a)).on_hover(hover(a)).on_click(open(a)))
       .when(on, (el) => el.bg(t.selected))
       .when(!on && !ghost && !dragging && !view.sweep?.moved, (el) => el.hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
-      .child(number(a, ghost))
-      .child(h_flex().id(`slim-mark-${a.address}`).size(16).flex_none().items_center().justify_center().opacity(bright ? 1 : 0.4).transition("opacity", MOTION).child(ghost ? mark : tipMark(view, t, `slim-space-${a.address}`, a.space_name, mark, { delay })))
+      .child(h_flex().id(`slim-mark-${a.address}`).size(16).flex_none().items_center().justify_center().opacity(bright || hasBadge ? 1 : 0.4).transition("opacity", MOTION).child(ghost ? mark : tipMark(view, t, `slim-space-${a.address}`, a.space_name, mark, { delay })))
       .child(div().flex_1().min_w(0).truncate().when(on, (el) => el.font_medium()).text_color(bright ? t.foreground : t.muted).child(title(a)))
       .child(ghost ? (verb ? badge(verb) : div()) : swept(a) ? badge(view.sweep.action === "unsnooze" ? "wake" : "unsettle")
 
