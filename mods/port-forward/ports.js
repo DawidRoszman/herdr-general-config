@@ -1,11 +1,6 @@
-// Pure parsing for the port-forward dialog, kept apart from IO so it can be checked
-// with `node ports.test.mjs` in this folder.
-
-// Ports nobody wants tunnelled: ssh itself and the resolver stubs.
 const IGNORED_PORTS = new Set([22, 53]);
 const WILDCARD_ADDRESSES = new Set(["0.0.0.0", "*", "[::]", "::"]);
 
-// `ss -ltn[p]H` lines: "LISTEN 0 511 127.0.0.1:3773 0.0.0.0:* users:(("node",pid=1,fd=23))".
 export function parseListening(ssOutput) {
   const byPort = new Map();
   for (const line of ssOutput.split("\n")) {
@@ -17,8 +12,7 @@ export function parseListening(ssOutput) {
     if (!Number.isInteger(port) || IGNORED_PORTS.has(port) || byPort.has(port)) continue;
     byPort.set(port, {
       port,
-      // A service bound to every interface answers on loopback; one bound to a
-      // single address (a tailnet IP) only answers there.
+
       address: WILDCARD_ADDRESSES.has(boundAddress) ? "127.0.0.1" : boundAddress,
       process: line.match(/users:\(\("([^"]+)"/)?.[1] ?? "",
     });
@@ -26,13 +20,11 @@ export function parseListening(ssOutput) {
   return [...byPort.values()].sort((a, b) => a.port - b.port);
 }
 
-// `ssh -O check` answers "Master running (pid=1234)".
 export function parseMasterPid(checkOutput) {
   const pid = checkOutput.match(/pid=(\d+)/)?.[1];
   return pid ? Number(pid) : null;
 }
 
-// `lsof -Fn` lines: "n127.0.0.1:3000", "n[::1]:3000", "n*:3000".
 export function parseListeningLocalPorts(lsofOutput) {
   const ports = new Set();
   for (const line of lsofOutput.split("\n")) {
@@ -43,7 +35,37 @@ export function parseListeningLocalPorts(lsofOutput) {
   return ports;
 }
 
-// Same port number on both ends, so a remote http://localhost:3000 is local :3000 too.
-export function forwardSpec({ port, address }) {
-  return `${port}:${address}:${port}`;
+export function parseListeningLocalPortsFromSs(ssOutput, pid) {
+  const ports = new Set();
+  const marker = `pid=${pid},`;
+  for (const line of ssOutput.split("\n")) {
+    if (!line.includes(marker)) continue;
+    const columns = line.trim().split(/\s+/);
+    if (columns[0] !== "LISTEN" || !columns[3]) continue;
+    const port = Number(columns[3].slice(columns[3].lastIndexOf(":") + 1));
+    if (Number.isInteger(port)) ports.add(port);
+  }
+  return ports;
+}
+
+export function forwardSpec({ port, address, remotePort = port }) {
+  return `${port}:${address}:${remotePort}`;
+}
+
+export function sandboxOf(target) {
+  const match = /sandbox-via\.sh'?\s+'?([^'\s]+)'?\s+'?([a-z][a-z0-9-]*)'?$/.exec(target ?? "");
+  return match ? { host: match[1], name: match[2] } : null;
+}
+
+const LOOPBACK_URL = /^(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::(\d{1,5}))?(?:[/?#]|$)/i;
+export function loopbackPort(url) {
+  const match = LOOPBACK_URL.exec(url);
+  if (!match) return null;
+  const port = match[2] ? Number(match[2]) : match[1].toLowerCase() === "https" ? 443 : 80;
+  return port > 0 && port < 65536 ? port : null;
+}
+
+export function sandboxHostPorts(tables, port) {
+  return [...new Set(tables.split("\n").map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([inner, outer]) => inner === port && Number.isInteger(outer)).map(([, outer]) => outer))];
 }

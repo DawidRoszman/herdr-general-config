@@ -1,6 +1,3 @@
-// The rows the Projects tab and the multirepo dialog both draw, so they look alike: a task, one of a
-// task's repos, and a plain item (a machine, a project, a repo to pick). Drawing only: no IO, no state.
-
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
@@ -10,19 +7,15 @@ const ICONS = "mods/prs/icons";
 export const TASK_ROW = 58;
 export const REPO_ROW = 44;
 export const ITEM_ROW = 34;
-const TREE_STEP = 18; // a stack layer's indent under the one it builds on
+const TREE_STEP = 18;
 
 export const icon = (name, size, color) => svg(`${ICONS}/${name}.svg`).size(size).flex_none().text_color(color);
 
-// "feat/SHOP-110-search-filters" -> { ticket: "SHOP-110", rest: "search filters" }
 export function branchParts(branch) {
   const m = branch.match(/^(?:[a-z]+\/)?([A-Z][A-Z0-9]*-\d+)-?(.*)$/);
   return m ? { ticket: m[1], rest: m[2].replace(/-/g, " ") } : { ticket: "", rest: branch.replace(/^[a-z]+\//, "").replace(/-/g, " ") };
 }
 
-// task: one of stackOrder's (its depth draws it under the layer it builds on, as the sidebar nests spaces).
-// short: a repo's short name (mr ls's "shorts"). isOpen: a space already works in the task's folder.
-// chipColor: the repo chips' background, one that stands out from what the row sits on.
 export function taskRow(task, { isSelected, isOpen, short, chipColor = null }, t) {
   const { ticket, rest } = branchParts(task.branch);
   const status = task.status ?? [];
@@ -33,7 +26,7 @@ export function taskRow(task, { isSelected, isOpen, short, chipColor = null }, t
     .when(isSelected, (el) => el.bg(t.selected))
     .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
     .child(h_flex().h(18).gap(6).items_center().min_w(0)
-      // An elbow from the layer below, drawn rather than typed so no font can break it.
+
       .when(depth > 0, (el) => el.child(div().flex_none().w(TREE_STEP - 6).h(9).mb(7).border_l(1).border_b(1).border_color(t.dim)))
       .child(icon(task.stack?.length ? "stack" : "branch", 13, isDirty ? t.working : t.dim))
       .when(Boolean(ticket), (el) => el.child(div().flex_none().text_size(12.5).font_semibold().text_color(t.accent).child(ticket)))
@@ -46,7 +39,6 @@ export function taskRow(task, { isSelected, isOpen, short, chipColor = null }, t
         .bg(isSelected ? t.background : chipColor ?? t.raised).text_size(10.5).text_color(t.muted).child(short(name)))));
 }
 
-// onOpenPr: makes the PR chip a button (rows of a virtual list can't hold handlers, so the dialog leaves it out).
 export function repoRow(repo, taskBranch, { short, onOpenPr = null }, t) {
   const pr = repo.pr;
   const prLook = !pr ? null : pr.state === "MERGED" ? ["merge", t.ansi5] : pr.state === "CLOSED" ? ["pull-request-closed", t.blocked] : pr.isDraft ? ["pull-request-draft", t.dim] : ["pull-request", t.done];
@@ -71,7 +63,6 @@ export function repoRow(repo, taskBranch, { short, onOpenPr = null }, t) {
     .when(!pr, (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child("no PR yet")));
 }
 
-// A machine, a project or a repo to pick. iconName null draws an empty ring (a repo not ticked).
 export function itemRow({ iconName, iconColor, label, detail, isSelected, isDim = false, labelWidth = 150 }, t) {
   return h_flex().flex_none().h(ITEM_ROW).px(10).gap(10).items_center().rounded(8).cursor_pointer()
     .when(isSelected, (el) => el.bg(t.selected))

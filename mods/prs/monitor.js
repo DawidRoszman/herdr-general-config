@@ -1,12 +1,8 @@
-// PR monitor (sidebar block): every PR of every multirepo project on this Mac and every connected
-// machine, and of every plain git repo open in a space, grouped by branch, refreshed every minute;
-// changes become Herdr notifications. Each machine asks GitHub with its own gh login.
-
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input } from "gpui-base";
-import { theme, run, shared, setShared, exec, spaces, panes, focused, layout } from "herdr";
+import { theme, run, shared, setShared, exec, spaces, panes, focused, layout, checking } from "herdr";
 import { notifyAndLog } from "./notifylog.js";
-// Every notification also goes in the bell's history (notifylog.js).
+
 const notify = (n) => notifyAndLog(n, "Pull requests");
 import { THIS_MAC, connectedMachines, mrJson, openReview, reviewCommand, openBranchCheckout } from "./host.js";
 import {
@@ -17,11 +13,11 @@ import { Search } from "./search.js";
 import { isHelpKey, keyHelp, loadKeys } from "./keyhelp.js";
 
 const REFRESH_MS = 60000;
-// Row heights by kind (the virtual list places rows by these).
+
 const HEIGHTS = { section: 30, place: 22, group: 64 };
-// A branch row's third line (review state, comments) is left out when it would be empty.
+
 const GROUP_WITHOUT_STATUS_HEIGHT = 45;
-// A branch's review state on its row's third line (colours are theme names).
+
 const REVIEW_LOOK = {
   "review requested from you": { icon: "eye", color: "accent", text: "Review requested" },
   "changes requested": { icon: "x-circle", color: "blocked", text: "Changes requested" },
@@ -31,21 +27,18 @@ const REVIEW_LOOK = {
 const hasStatusLine = (group) => Boolean(REVIEW_LOOK[reviewSummary(group.prs)]) || commentCount(group.prs) > 0;
 const rowHeight = (row) => (row.kind === "group" && !hasStatusLine(row.group) ? GROUP_WITHOUT_STATUS_HEIGHT : HEIGHTS[row.kind]);
 const ICONS = "mods/prs/icons";
-// The checkout button sits at a branch row's right edge. Rows of a virtual list can't hold handlers,
-// so a press this close to the list's right edge (its padding, the row's, the button) counts as on it.
+
 const CHECKOUT_BUTTON_ZONE = 40;
 const MAX_NOTIFICATIONS = 5;
 
-// Shown in the Herdr T3 layout's side panel (its "panel-body" stack), the list is a card with a
-// header like the panel's Files and Changes; in a sidebar it stays flat on the sidebar's colour.
 function isInSidePanel(node = layout()) {
   if (!node) return false;
   if (node.id === "panel-body") return (node.children ?? []).some((child) => child.content?.mod === "prs");
   return (node.children ?? []).some((child) => isInSidePanel(child));
 }
-// Open review requests, shown as a badge on the sidebar's Pull requests tab (sidebar-tabs mod).
+
 const BADGE_KEY = "prs.reviewRequested";
-// Filter chips: key to cycle (shift: back), label.
+
 const FILTERS = [
   { name: "author", key: "a", label: "Author" },
   { name: "status", key: "s", label: "Status" },
@@ -58,25 +51,28 @@ const FILTERS = [
 export class Monitor {
   constructor(cx) {
     this.handle = cx.focus_handle();
-    // Its key list lives in help-keys.json (also read by the keybinds tab), loaded once.
+
     this.keySections = [];
     cx.spawn(async (cx) => { this.keySections = await loadKeys("monitor"); cx.notify(); });
     this.listScroll = VirtualListScrollHandle.new();
     this.search = new Search({ onChange: () => this.moveTo(0), onSubmit: (cx) => this.open(cx) });
-    this.projects = new Map(); // "machine|root" -> { machine, project, root, isRepo, viewer, prs }
-    this.before = null; // every PR at the last refresh, to tell what changed
-    this.knownScopes = new Set(); // "machine|root" of every scope listed at the last refresh
+    this.projects = new Map();
+    this.before = null;
+    this.knownScopes = new Set();
     this.errors = [];
     this.at = 0;
-    // Sections folded or unfolded against their default (Bots and Recently closed start folded).
+
     this.toggledSections = new Set(JSON.parse(localStorage.getItem("toggledSections") ?? "[]"));
     this.isShowingFilters = false;
     this.filters = { ...DEFAULT_FILTERS, ...JSON.parse(localStorage.getItem("filters") ?? "{}") };
     this.isRefreshing = false;
     this.refreshedAt = null;
-    this.isPressOnCheckout = false; // the last press in the list was on a row's checkout button
-    cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
-    this.refresh(cx);
+    this.isPressOnCheckout = false;
+    this.lastProfile = shared("context")?.current ?? null;
+    if (!checking()) {
+      cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
+      this.refresh(cx);
+    }
   }
 
   command(name, cx) {
@@ -89,10 +85,11 @@ export class Monitor {
     this.isRefreshing = true;
     cx.spawn(async (cx) => {
       const errors = [];
-      // Rebuilt each time, so a closed space's repo drops out; one whose refresh failed keeps its last data.
+
       const next = new Map();
       try {
-        const machines = [THIS_MAC, ...(await connectedMachines()).sort((a, b) => a.name.localeCompare(b.name))];
+        const offMachines = new Set(shared("context")?.offMachines ?? []);
+        const machines = [THIS_MAC, ...(await connectedMachines()).filter((m) => !offMachines.has(m.name)).sort((a, b) => a.name.localeCompare(b.name))];
         await Promise.all(machines.map((m) => this.refreshMachine(m, errors, next)));
       } catch (error) {
         errors.push(String(error.message ?? error));
@@ -124,10 +121,10 @@ export class Monitor {
       const key = `${machine.name}|${scope.root}`;
       try {
         const data = await mrJson(machine.target, ["prs", ...scope.args]);
-        // A repo GitHub refused this time keeps its last PRs: gone and back would read as new.
+
         const failed = new Set(data.failed ?? []);
         const kept = failed.size ? (this.projects.get(key)?.prs ?? []).filter((pr) => failed.has(pr.slug)) : [];
-        // The reason first: the line is cut to the sidebar's width (its tooltip has it all).
+
         const why = [...new Set(Object.values(data.failedWhy ?? {}))].join(" · ") || "no reason given";
         if (failed.size) errors.push(`${where}: GitHub didn't answer (${why}); last PRs kept for ${[...failed].join(", ")}`);
         next.set(key, { machine: machine.name, project: data.project, root: scope.root, isRepo: Boolean(data.isRepo), viewer: data.viewer, prs: [...data.prs, ...kept] });
@@ -138,26 +135,24 @@ export class Monitor {
     }));
   }
 
-  // The git checkouts open in this machine's spaces (by their panes' live folders), one per repo
-  // (worktrees share it), leaving out what a multirepo project or task already covers.
   async spaceRepos(machine, projectRoots) {
-    const tabs = new Set(spaces().filter((s) => (s.machine ?? null) === machine.name).flatMap((s) => s.tabs.map((t) => t.id)));
+    const offSpaces = new Set(shared("context")?.offSpaces ?? []);
+    const tabs = new Set(spaces().filter((s) => !offSpaces.has(s.id) && (s.machine ?? null) === machine.name).flatMap((s) => s.tabs.map((t) => t.id)));
     const folders = [...new Set(panes().filter((p) => tabs.has(p.tab) && p.cwd).map((p) => p.cwd))];
-    const byRepo = new Map(); // git common dir -> one checkout of it
+    const byRepo = new Map();
     for (const folder of folders) {
       const r = await exec("git", ["-C", folder, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { on: machine.name });
-      if (r.code !== 0) continue; // not a git folder: nothing to watch
+      if (r.code !== 0) continue;
       const [top, common] = r.stdout.trim().split("\n");
       if (!isCoveredByProject(top, projectRoots) && !byRepo.has(common)) byRepo.set(common, top);
     }
     return [...byRepo.values()];
   }
 
-  // One entry per PR: a project cloned on several machines lists its PRs once, from the machine you
-  // work on it on (preferredCopy), so a click and g go there.
   allPrs() {
-    const copies = new Map(); // prKey -> the PR on each machine that has its project, by machine name
-    for (const p of [...this.projects.values()].sort((a, b) => machineLabel(a.machine).localeCompare(machineLabel(b.machine)))) {
+    const offMachines = new Set(shared("context")?.offMachines ?? []);
+    const copies = new Map();
+    for (const p of [...this.projects.values()].filter((p) => !p.machine || !offMachines.has(p.machine)).sort((a, b) => machineLabel(a.machine).localeCompare(machineLabel(b.machine)))) {
       for (const pr of p.prs) {
         if (!copies.has(prKey(pr))) copies.set(prKey(pr), []);
         copies.get(prKey(pr)).push({ ...pr, machine: p.machine, project: p.project, root: p.root, isRepo: p.isRepo, viewer: p.viewer });
@@ -168,8 +163,6 @@ export class Monitor {
     return [...copies.values()].map((list) => (list.length === 1 ? list[0] : preferredCopy(list, all, focusedMachine)));
   }
 
-  // A scope not listed last time (a machine that was disconnected, a space just opened) is learnt
-  // silently: its PRs are not news.
   announce() {
     const now = this.allPrs();
     const changes = prChanges(this.before, now.filter((pr) => this.knownScopes.has(`${pr.machine}|${pr.root}`)));
@@ -179,7 +172,7 @@ export class Monitor {
     if (shared(BADGE_KEY) !== requested) setShared(BADGE_KEY, requested);
     for (const change of changes.slice(0, MAX_NOTIFICATIONS)) {
       const { pr } = change;
-      // A repo on a branch of its own in a task (topic): the review of the task, which covers that PR too.
+
       notify({ title: change.title, body: change.body, level: change.level, action: reviewCommand(pr.machine, pr.root, pr.topic ?? pr.branch, pr.isRepo, pr.project, pr.task) });
     }
     if (changes.length > MAX_NOTIFICATIONS) notify({ title: `${changes.length - MAX_NOTIFICATIONS} more PR changes`, body: "See the PR list.", level: "info" });
@@ -214,12 +207,10 @@ export class Monitor {
     this.listScroll.scroll_to_item(index);
   }
 
-  // The sidebar's rows: section headers, project lines, branches (see sectionRows).
   rows() {
     return sectionRows(this.groups(), this.toggledSections, (g) => `${g.project} · ${machineLabel(g.machine)}`);
   }
 
-  // A branch opens its review; a section header folds or unfolds.
   open(cx, index = this.at) {
     const row = this.rows()[index];
     if (!row) return;
@@ -239,25 +230,22 @@ export class Monitor {
     this.open(cx, index);
   }
 
-  // The selected branch's checkout in a space (openBranchCheckout); slow steps and failures are notifications.
   openCheckout(index = this.at) {
     const group = this.rows()[index]?.group;
     if (!group) return;
     const { machine, root, branch, isRepo, prs } = group;
-    // The task's repos as mr new takes them: a repo on a branch of its own in the task as repo=branch.
+
     const repos = prs.filter((pr) => (pr.topic ?? pr.branch) === branch).map((pr) => (pr.branch === branch ? pr.short : `${pr.short}=${pr.branch}`));
     openBranchCheckout({ machine, project: root, branch, isRepo, repos }, (line) => notify({ title: "Pull requests", body: line, level: "info" }))
       .catch((error) => notify({ title: `Could not open ${branch}`, body: String(error.message ?? error), level: "warning" }));
   }
 
-  // The selected branch's lead PR (its first open one) in the browser.
   openOnGitHub(cx, index = this.at) {
     const group = this.rows()[index]?.group;
     const lead = group && (group.prs.find((pr) => pr.state === "OPEN") ?? group.prs[0]);
     if (lead?.url) cx.open_url(lead.url);
   }
 
-  // The keyboard goes back to the work area: right of a sidebar, left of the T3 side panel.
   leave() {
     run("pane.go", { direction: isInSidePanel() ? "left" : "right" });
   }
@@ -271,7 +259,7 @@ export class Monitor {
   key(e, cx) {
     const stroke = e.keystroke;
     const count = this.rows().length;
-    // "?" shows this view's keys; while they show, only ? and esc do anything.
+
     if (this.isShowingKeys || (isHelpKey(stroke) && !(this.search.isTyping))) {
       if (!this.isShowingKeys || isHelpKey(stroke) || stroke === "escape") this.isShowingKeys = !this.isShowingKeys;
       cx.stop_propagation();
@@ -303,7 +291,6 @@ export class Monitor {
     cx.notify();
   }
 
-  // Click: next value; right click: previous. Changed filters are drawn in the accent color.
   filterChips(t, surface) {
     const options = filterOptions(this.allPrs());
     return h_flex().flex_none().flex_wrap().px(12).pb(8).gap(4)
@@ -331,7 +318,7 @@ export class Monitor {
 
   sectionRow(row, isSelected, t) {
     const isReview = row.section.id === "review";
-    // An id: this UI kit applies hover styles only to elements that have one.
+
     return h_flex().id(row.id).flex_none().h(HEIGHTS.section).px(6).gap(6).items_center().rounded(6).cursor_pointer()
       .when(isSelected, (el) => el.bg(t.selected))
       .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
@@ -355,15 +342,15 @@ export class Monitor {
     const reviewLook = look && { ...look, color: t[look.color] };
     const comments = commentCount(group.prs);
     const details = v_flex().flex_1().min_w(0).gap(3)
-      // Title, with the lead PR's state.
+
       .child(h_flex().h(18).flex_none().gap(6).items_center().min_w(0)
         .child(this.icon(state.icon, 13, t[state.color]))
-        // The title and the PRs line are cut to the panel's width: the tooltip has them whole, with the branch.
+
         .child(div().id(`title-${group.key}`).flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(group.isOpen ? t.foreground : t.muted)
           .tooltip([groupTitle(group), group.branch, group.prs.map((pr) => `${pr.short} #${pr.number}`).join(" · "), "b: open on GitHub"].join("\n"))
           .child(groupTitle(group)))
         .child(div().flex_none().text_size(10.5).text_color(t.dim).child(age(group.updatedAt))))
-      // Each repo's PR with its checks.
+
       .child(h_flex().h(16).flex_none().pl(19).gap(9).items_center().overflow_hidden()
         .children(group.prs.map((pr) => {
           const checks = checksIcon(checksSummary([pr]).state);
@@ -373,24 +360,32 @@ export class Monitor {
             .when(Boolean(pr.stack), (el) => el.child(this.icon("stack", 10, t.dim))
               .child(div().text_size(10.5).text_color(t.dim).child(`${pr.stack.position}/${pr.stack.size}`)));
         })))
-      // Review state and conversation.
+
       .when(hasStatusLine(group), (el) => el.child(h_flex().h(16).flex_none().pl(19).gap(6).items_center()
         .when(Boolean(reviewLook), (el) => el.child(this.icon(reviewLook.icon, 11, reviewLook.color))
           .child(div().text_size(11).text_color(reviewLook.color).child(reviewLook.text)))
         .child(div().flex_1())
         .when(comments > 0, (el) => el.child(this.icon("comment", 11, t.dim)).child(div().text_size(11).text_color(t.dim).child(String(comments))))));
-    // Ids: this UI kit applies hover styles only to elements that have one.
+
     return h_flex().id(group.key).flex_none().h(hasStatusLine(group) ? HEIGHTS.group : GROUP_WITHOUT_STATUS_HEIGHT).pl(8).pr(8).py(6).gap(6).items_center().rounded(7).cursor_pointer()
       .when(isSelected, (el) => el.bg(t.selected))
       .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)))
       .child(details)
-      // Clicked through the list's on_item_click (see CHECKOUT_BUTTON_ZONE).
+
       .child(div().id(`checkout-${group.key}`).flex_none().size(24).flex().items_center().justify_center().rounded(5)
         .hover((s) => s.bg(t.raised)).tooltip("Open the checkout in a space · g")
         .child(this.icon("terminal", 13, t.dim)));
   }
 
-  render() {
+  render(cx) {
+    const currentProfile = shared("context")?.current ?? null;
+    if (!checking() && currentProfile !== this.lastProfile) {
+      this.lastProfile = currentProfile;
+      this.projects = new Map();
+      this.knownScopes = new Set();
+      this.before = null;
+      this.refresh(cx);
+    }
     const t = theme();
     const rows = this.rows();
     const isLoading = this.before === null;
@@ -436,7 +431,7 @@ export class Monitor {
         Input.new(this.search.input).h(28).px(8).items_center().rounded(6).border(1)
           .border_color(this.search.isTyping ? t.accent : t.input).bg(t.background).text_color(t.foreground).text_size(12))))
       .child(v_flex().relative().flex_1().min_h(0).px(6)
-        // Fires before the row's click: where the press was decides between the row and its checkout button.
+
         .on_mouse_down("left", (e) => {
           this.isPressOnCheckout = Boolean(e.local_position && e.bounds) && e.local_position.x >= e.bounds.width - CHECKOUT_BUTTON_ZONE;
         })
@@ -448,7 +443,7 @@ export class Monitor {
             if (row.kind === "place") return this.placeRow(row, t);
             return this.groupRow(row.group, index === this.at, t);
           }))
-            // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+
             .on_item_click((key, cx) => this.clickRow(cx, this.rows().findIndex((r) => r.id === key)))
             .track_scroll(this.listScroll)
             .size_full())

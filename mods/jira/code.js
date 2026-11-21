@@ -1,7 +1,3 @@
-// The code side of the board: each configured project's PRs and multirepo task branches, read with
-// the multirepo mod's mr.py on the project's machine (over ssh, as the PR panel reads them; a copy
-// of its few lines: mods can't import across folders).
-
 import { exec, hc, appHome } from "herdr";
 
 const MR = `${appHome()}/mods/multirepo/mr.py`;
@@ -31,9 +27,6 @@ async function placeCode({ machine, root }) {
   return { prs: JSON.parse(prs).prs, branches: tasks.split("\n").filter(Boolean).map((line) => line.split("\t")[0]) };
 }
 
-// { prs, branches } of a config.json project: one place ({ machine, root }) or a list of them, its
-// checkouts on several computers. The places that answer are enough: a machine that's off only hides
-// its tasks; the PRs come from GitHub either way. Throws when none answers.
 export async function projectCode(places) {
   const results = await Promise.allSettled([places].flat().map(placeCode));
   const answers = results.filter((r) => r.status === "fulfilled").map((r) => r.value);

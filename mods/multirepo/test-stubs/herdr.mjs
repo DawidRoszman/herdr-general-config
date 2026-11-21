@@ -1,5 +1,3 @@
-// The herdr module for tests: exec runs real programs (mr.py included) with the test's HOME; hc is a
-// tiny herdr-core that runs a job's command at once and reports it finished; the rest records calls.
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
@@ -7,11 +5,11 @@ export const state = {
   home: process.env.HOME,
   props: {},
   shared: {},
-  runs: [], // run(command, args)
-  overlays: [], // openOverlay(spec)
-  herdrDo: [], // herdr-app do <command> <args>
+  runs: [],
+  overlays: [],
+  herdrDo: [],
   closedOverlays: [],
-  terminals: [], // hc's, { name, address, state, exit_code, output }
+  terminals: [],
 };
 
 export const props = () => state.props;
@@ -24,16 +22,17 @@ export const panes = () => [];
 export const machines = () => [];
 export const settings = () => ({});
 export const window = () => ({ platform: "macos" });
-export const appHome = () => new URL("../../..", import.meta.url).pathname.replace(/\/$/, ""); // this Herdr home
+export const appHome = () => new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
 export const home = () => state.home;
 export const run = (command, args) => state.runs.push([command, args]);
 export const readTextFile = (path) => readFile(path, "utf8");
 export const nextCommand = () => new Promise(() => {});
 export const shared = (key) => state.shared[key];
 export const setShared = (key, value) => { state.shared[key] = value; };
+export const checking = () => false;
 
 export async function exec(command, argv) {
-  if (command === "herdr-app") { // the real app is never driven from a test
+  if (command === "herdr-app") {
     state.herdrDo.push([argv[1], JSON.parse(argv[2])]);
     return { code: 0, stdout: JSON.stringify({ space: "s1", tab: `t${state.herdrDo.length}` }), stderr: "" };
   }
@@ -57,6 +56,5 @@ export async function hc(args) {
   throw new Error(`hc stub: ${args.join(" ")}`);
 }
 
-// A mod copy's localStorage.
 const stored = new Map();
 globalThis.localStorage ??= { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)) };

@@ -1,17 +1,7 @@
-// A unified diff split into files and hunks, each hunk with a stable id.
-//
-// This is the only place that decides what a hunk is and what it is called.
-// A step of a walkthrough points at hunk ids; reading it later, a step whose
-// ids are no longer in the diff is a step whose code changed. The id is a hash
-// of the hunk's lines and the function name git puts after its @@, not of the
-// line numbers: a line added above a hunk moves it without changing it, and
-// only the hunk that was edited gets a new id.
-
 import { shortHash } from "./hash.js";
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
-/** Git's C-style quoted path ("a/caf\303\251 x") back to text. */
 export function unquote(path) {
   if (!path.startsWith("\"") || !path.endsWith("\"") || path.length < 2) return path;
   const bytes = [];
@@ -53,10 +43,6 @@ const strip = (side, path) => {
   return p.startsWith(`${side}/`) ? p.slice(2) : p;
 };
 
-/**
- * The path from `diff --git a/x b/x`. Unquoted paths may hold spaces, so when
- * both sides name the same file the line is split in its middle.
- */
 export function headerPath(line) {
   const rest = line.slice("diff --git ".length);
   if (rest.startsWith("\"")) {
@@ -70,20 +56,11 @@ export function headerPath(line) {
   return at === -1 ? rest : rest.slice(at + 3);
 }
 
-/**
- * @param {string} patch `git diff` output covering any number of files
- * @param {string} scope keeps ids of two diffs of the same lines apart (staged, working)
- * @param {string} prefix put before every path: the repository of one pull request among several
- * @returns {{ path: string, oldPath: string|null, status: string, binary: boolean, scope: string,
- *   hunks: { id: string, header: string, oldStart: number, oldLines: number, newStart: number,
- *   newLines: number, added: number, deleted: number, lines: string[] }[] }[]}
- */
 export function parseDiff(patch, scope = "diff", prefix = "") {
   const under = (path) => (prefix && path ? `${prefix}/${path}` : path);
   const files = [];
   let file = null, hunk = null, seen = null, oldLeft = 0, newLeft = 0;
-  // A merge conflict comes as a combined diff ("diff --cc", "@@@" hunks) in another
-  // format: the file is listed, unread, and nothing in its block is parsed.
+
   let conflict = false;
 
   const closeHunk = () => {
@@ -91,7 +68,7 @@ export function parseDiff(patch, scope = "diff", prefix = "") {
     const digest = shortHash(`${hunk.context}\n${hunk.lines.join("\n")}`);
     const n = (seen.get(digest) ?? 0) + 1;
     seen.set(digest, n);
-    // Byte-identical hunks in one file (the same boilerplate edit twice) are told apart by occurrence.
+
     hunk.id = `${scope}:${under(file.path)}:${digest}${n > 1 ? `-${n}` : ""}`;
     file.hunks.push(hunk);
     hunk = null;
@@ -103,7 +80,7 @@ export function parseDiff(patch, scope = "diff", prefix = "") {
   };
 
   for (const line of String(patch ?? "").split("\n")) {
-    // Inside a hunk every line is content, whatever it starts with: a removed "-- x" is not a header.
+
     if (hunk && (oldLeft > 0 || newLeft > 0)) {
       const kind = line[0];
       if (kind === "+" ) { hunk.lines.push(line); hunk.added++; newLeft--; continue; }
@@ -153,14 +130,12 @@ export function parseDiff(patch, scope = "diff", prefix = "") {
   return files;
 }
 
-/** Every hunk by id, with its file's path and status. */
 export function indexHunks(files) {
   const index = new Map();
   for (const file of files) for (const h of file.hunks) index.set(h.id, { ...h, path: file.path, status: file.status });
   return index;
 }
 
-/** Each diff line numbered for drawing: old number for removed lines, new for the rest. */
 export function numberLines(hunk) {
   let old = hunk.oldStart, next = hunk.newStart;
   return hunk.lines.map((line) => {
@@ -173,12 +148,6 @@ export function numberLines(hunk) {
   });
 }
 
-/**
- * What a hunk's header says, in words: where it starts in the new file, the
- * lines skipped since the previous hunk of the same file (null for the
- * first), and git's context line (the function or class it sits in).
- * @returns {{ at: string, skipped: number | null, context: string }}
- */
 export function hunkLabel(hunk, previous = null) {
   const start = hunk.newLines === 0 ? hunk.oldStart : hunk.newStart;
   const end = previous ? previous.newStart + previous.newLines : null;
@@ -186,7 +155,6 @@ export function hunkLabel(hunk, previous = null) {
   return { at: `Line ${start}`, skipped: skipped || null, context: hunk.context ?? "" };
 }
 
-/** The digits of the largest line number among these hunks: the line-number column is that wide. */
 export function numberDigits(hunks) {
   let max = 1;
   for (const h of hunks) max = Math.max(max, h.oldStart + h.oldLines, h.newStart + h.newLines);

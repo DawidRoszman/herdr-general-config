@@ -1,50 +1,4 @@
 #!/usr/bin/env python3
-"""mr: work on a multirepo project as if it were a monorepo.
-
-A project is a folder whose children are git repos (e.g. Shop/). A task is
-one branch across some of those repos, checked out together in one folder:
-
-    ~/.herdr/projects/<project>/<branch-slug>/
-        <repo>/        git worktree on the task branch (repos picked for the task)
-        <repo> -> ...  symlink to the project's checkout (every other repo)
-        .mr-task.json  which project, branch and repos this is
-
-So tools that expect sibling repos (helper scripts, relative paths) work from
-the task root, and `mr pr` opens one cross-linked PR per changed repo.
-
-Commands (run `mr <command> -h` for options):
-    init [root]                 record the repos under root in root/.mr.json
-    clone <manifest> <root>     clone a project from a manifest (- for stdin)
-    projects                    list known projects
-    new <branch> <repo>... [--on PARENT]
-                                create a task workspace; --on stacks it on another
-                                task's branch (its PRs target PARENT, in a GitHub stack)
-    add <repo>... [--branch B]  turn linked repos of this task into worktrees; a repo without the
-                                task's branch takes its one branch for the same ticket (test/X-1
-                                for feat/X-1), or B
-    ls                          list a project's tasks
-    status                      per-repo state of this task, with PRs
-    push                        push repos that have commits
-    pull                        fast-forward every repo of this task from its upstream
-    pr [--draft] [--title T]    push, open missing PRs, cross-link them all, and
-                                stack them on the parent branch's PRs (new --on)
-    rm [--force]                remove this task (refuses to lose work)
-    manifest                    print this project's manifest
-    prs [--repo PATH]           open and recently closed PRs of every repo (JSON);
-                                --repo: of one plain repo instead of a project
-    pr-view <branch>... [--repo P] those branches' PRs in every repo, in full (JSON)
-    pr-diff <slug> <number>     one PR's diff
-    commit-diff <slug> <oid>    one commit's diff
-    restack [branch] [--repo P] rebase every open PR of the branch's GitHub stacks onto
-                                the one below (the bottom onto the stack's base) and
-                                force-push what moved; no branch: this task's
-    pr-act <slug> <number> <action> [--body B]
-                                approve, request-changes, comment, merge, ready, draft,
-                                merge-stack (a stacked PR and every open PR below it)
-    pr-candidates <slug>        who can be asked to review in a repo (JSON)
-    pr-reviewers <slug> <number> [--add a,b] [--remove c]
-                                request or withdraw review requests on one PR
-"""
 
 from __future__ import annotations
 
@@ -71,15 +25,11 @@ REGISTRY = Path.home() / ".config" / "mr" / "projects.json"
 WORKSPACES = Path.home() / ".herdr" / "projects"
 RELATED_START = "<!-- mr:related -->"
 RELATED_END = "<!-- /mr:related -->"
-# Closed and merged PRs stay in `mr prs` this long, so a watcher sees them change state.
 RECENTLY_CLOSED = timedelta(days=3)
 CHECK_OUTCOMES = {
     "passed": {"SUCCESS", "NEUTRAL", "SKIPPED", "COMPLETED"},
     "failed": {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"},
 }
-# A branch's latest PR with everything the review tab shows, inline comments included, in one round
-# trip. ponytail: lists stop at their first page (100 comments, reviews, threads, commits, checks);
-# only files are paged, since the Files tab must list every one. Page the others if PRs outgrow them.
 PR_SCALARS = ("number title body state isDraft url headRefName headRefOid baseRefName additions deletions changedFiles "
               "mergeable mergeStateStatus reviewDecision createdAt updatedAt").split()
 PR_DETAIL_QUERY = """query($owner: String!, $name: String!, $branch: String!) {
@@ -119,38 +69,25 @@ PR_ACTIONS = {
     "draft": ["ready", "--undo"],
 }
 
-
 class MrError(Exception):
-    """A failure the user can act on; printed without a traceback."""
-
-
-# ---------------------------------------------------------------- pure helpers
-
+    pass
 
 def branch_slug(branch: str) -> str:
-    """feat/SHOP-130-x -> feat-SHOP-130-x, safe as a folder name."""
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-.")
     if not slug:
         raise MrError(f"Branch name {branch!r} has no usable characters.")
     return slug
 
-
 def ticket_key(branch: str) -> str | None:
-    """feat/SHOP-130-x -> SHOP-130: the ticket a branch is for, or None."""
     match = re.search(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]*-\d+(?![A-Za-z0-9])", branch)
     return match[0] if match else None
 
-
 def same_ticket_branches(branch: str, refs: list[str]) -> list[str]:
-    """Other branches for branch's ticket among refs (`refs/heads/...` and `refs/remotes/origin/...`),
-    as branch names: test/SHOP-130-x beside feat/SHOP-130-x. None without a ticket key."""
     key = ticket_key(branch)
     names = {re.sub(r"^refs/(heads|remotes/origin)/", "", ref) for ref in refs if ref != "refs/remotes/origin/HEAD"}
     return sorted(name for name in names if key and name != branch and ticket_key(name) == key)
 
-
 def title_from_branch(branch: str) -> str:
-    """feat/SHOP-130-checkout-flow -> feat(SHOP-130): checkout flow (conventional commit style)."""
     match = re.match(r"^(?P<type>[a-z]+)/(?P<ticket>[A-Z][A-Z0-9]*-\d+)-?(?P<rest>.*)$", branch)
     if match:
         rest = match["rest"].replace("-", " ").strip() or match["ticket"]
@@ -158,9 +95,7 @@ def title_from_branch(branch: str) -> str:
     kind, _, rest = branch.partition("/")
     return f"{kind}: {rest.replace('-', ' ')}" if rest else branch.replace("-", " ")
 
-
 def match_repos(wanted: list[str], available: list[str]) -> list[str]:
-    """Resolve names like 'backend' to 'acme-shop-backend': exact, else a unique suffix or substring."""
     resolved = []
     for name in wanted:
         if name in available:
@@ -173,10 +108,7 @@ def match_repos(wanted: list[str], available: list[str]) -> list[str]:
         resolved.append(candidates[0])
     return list(dict.fromkeys(resolved))
 
-
 def split_repo_branches(words: list[str]) -> tuple[list[str], dict[str, str]]:
-    """'backend portal=fix/other-name' -> (['backend', 'portal'], {'portal': 'fix/other-name'}): a repo whose
-    branch for the task is named differently (someone else's naming) is given with its branch."""
     names, branches = [], {}
     for word in words:
         name, _, branch = word.partition("=")
@@ -185,16 +117,12 @@ def split_repo_branches(words: list[str]) -> tuple[list[str], dict[str, str]]:
             branches[name] = branch
     return names, branches
 
-
 def resolve_repos(words: list[str], available: list[str]) -> tuple[list[str], dict[str, str]]:
-    """split_repo_branches with the repo names resolved (match_repos), the branches keyed by full name."""
     names, branches = split_repo_branches(words)
     full_names = [match_repos([name], available)[0] for name in names]
     return list(dict.fromkeys(full_names)), {full: branches[name] for full, name in zip(full_names, names) if name in branches}
 
-
 def with_related_section(body: str, links: list[str]) -> str:
-    """Replace (or append) the block listing the task's other PRs, leaving the rest of the body alone."""
     block = RELATED_START + "\n**Related PRs**\n" + "\n".join(f"- {link}" for link in links) + "\n" + RELATED_END
     if RELATED_START in body and RELATED_END in body:
         before, rest = body.split(RELATED_START, 1)
@@ -202,9 +130,7 @@ def with_related_section(body: str, links: list[str]) -> str:
         return before + block + after
     return (body.rstrip() + "\n\n" if body.strip() else "") + block
 
-
 def short_names(names: list[str]) -> dict[str, str]:
-    """Drops the longest dash-ended prefix a name shares with another repo: acme-shop-backend -> backend."""
     shorts = {}
     for name in names:
         cuts = [i + 1 for i, char in enumerate(name[:-1]) if char == "-"]
@@ -212,43 +138,32 @@ def short_names(names: list[str]) -> dict[str, str]:
         shorts[name] = name[max(shared):] if shared else name
     return shorts
 
-
 GIT_URL = re.compile(r"^(?:https://(?P<web>[^/]+)/|ssh://(?:[^@/]+@)?(?P<ssh>[^/:]+)(?::\d+)?/|(?:[^@/]+@)?(?P<scp>[^/:]+):)"
                      r"(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$")
 
-
 @lru_cache(maxsize=None)
 def ssh_hostname(host: str) -> str:
-    """The host an ssh alias stands for (Host github / HostName github.com in ~/.ssh/config), read
-    with `ssh -G`, which connects nowhere; the name itself when ssh can't say."""
     try:
         r = subprocess.run(["ssh", "-G", host], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return host
     return next((line.split(None, 1)[1] for line in r.stdout.splitlines() if line.startswith("hostname ")), host)
 
-
 def github_slug(url: str) -> str | None:
-    """git@github.com:Owner/repo.git, an ssh alias for github.com (git@github:Owner/repo) or
-    https://github.com/Owner/repo -> Owner/repo; None off GitHub."""
     match = GIT_URL.match(url)
     if not match:
         return None
     host = match["web"] or ssh_hostname(match["ssh"] or match["scp"])
     return match["slug"] if host == "github.com" else None
 
-
 def check_counts(states: list[dict]) -> dict:
-    """GitHub's per-state check counts folded into passed / failed / pending."""
     counts = {"passed": 0, "failed": 0, "pending": 0}
     for entry in states:
         outcome = next((name for name, members in CHECK_OUTCOMES.items() if entry["state"] in members), "pending")
         counts[outcome] += entry["count"]
     return counts
 
-
 def summarize_pr(node: dict, repo: str, slug: str, viewer: str) -> dict:
-    """One PR from the `mr prs` GraphQL query, flattened for the monitor."""
     rollup = (node["commits"]["nodes"] or [{}])[0].get("commit", {}).get("statusCheckRollup")
     contexts = (rollup or {}).get("contexts") or {}
     requested = [r["requestedReviewer"] for r in node["reviewRequests"]["nodes"] if r["requestedReviewer"]]
@@ -276,19 +191,14 @@ def summarize_pr(node: dict, repo: str, slug: str, viewer: str) -> dict:
         "stack": _stack(node),
     }
 
-
 def is_worth_watching(pr: dict, now: datetime) -> bool:
     if pr["state"] == "OPEN":
         return True
     updated = datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00"))
     return now - updated <= RECENTLY_CLOSED
 
-
-# Open PRs are asked for on their own: mixed with closed ones by update time, a busy repo's
-# recently merged PRs pushed its older open ones out of the page.
-OPEN_PR_LIMIT = 50  # ponytail: one page; paginate if a repo ever has more open PRs
+OPEN_PR_LIMIT = 50
 CLOSED_PR_LIMIT = 10
-
 
 def prs_query(slug: str) -> str:
     owner, name = slug.split("/", 1)
@@ -308,10 +218,7 @@ def prs_query(slug: str) -> str:
             f"    closed: pullRequests(first: {CLOSED_PR_LIMIT}, states: [MERGED, CLOSED], {order}) {{ nodes {{ {fields} }} }}\n"
             "  }\n}")
 
-
 def _stack(node: dict) -> dict | None:
-    """Where a PR sits in its GitHub stack (position 1 is next to the base), with the stack's PRs when
-    the query asked for them; None when it is in no stack."""
     stack = node.get("stack")
     if not stack:
         return None
@@ -321,41 +228,32 @@ def _stack(node: dict) -> dict | None:
         found["entries"] = [_stack_entry(e) for e in stack["entries"]["nodes"]]
     return found
 
-
 def _stack_entry(entry: dict) -> dict:
     pr = dict(entry["pullRequest"])
-    # GitHub offers to update a branch only when its base has moved past it: the layer needs a restack.
     pr["isBehind"] = pr.pop("viewerCanUpdateBranch")
     return {"position": entry["position"], **pr}
 
-
 def _login(actor: dict | None) -> str:
     return (actor or {}).get("login", "ghost")
-
 
 def _review(raw: dict) -> dict:
     return {"id": raw["id"], "author": {"login": _login(raw["author"])}, "state": raw["state"], "body": raw["body"],
             "submittedAt": raw["submittedAt"]}
 
-
 def _commit(raw: dict) -> dict:
     authors = [{"name": a["name"], "email": a["email"], "login": (a["user"] or {}).get("login", "")} for a in raw["authors"]["nodes"]]
     return {key: raw[key] for key in ("oid", "messageHeadline", "messageBody", "committedDate", "authoredDate")} | {"authors": authors}
-
 
 def _check(raw: dict) -> dict:
     if raw["__typename"] == "CheckRun":
         run = (raw.get("checkSuite") or {}).get("workflowRun") or {}
         workflow = run.get("workflow") or {}
-        # workflowEvent tells apart one check run twice, e.g. for "push" and for "pull_request".
         return {key: raw[key] for key in ("__typename", "name", "status", "conclusion", "startedAt", "completedAt", "detailsUrl")} | {
             "workflowName": workflow.get("name", ""), "workflowEvent": run.get("event") or ""}
     return {"__typename": raw["__typename"], "context": raw.get("context"), "state": raw.get("state"),
             "targetUrl": raw.get("targetUrl"), "startedAt": raw.get("createdAt")}
 
-
 def detail_pr(node: dict, name: str, slug: str) -> dict:
-    """A PR_DETAIL_QUERY node in the shape `gh pr view --json` gives (the parts the prs mod reads)."""
     last = node["lastCommit"]["nodes"]
     rollup = last[0]["commit"]["statusCheckRollup"] if last else None
     return {key: node[key] for key in PR_SCALARS} | {
@@ -368,8 +266,6 @@ def detail_pr(node: dict, name: str, slug: str) -> dict:
         "commits": [_commit(n["commit"]) for n in node["commits"]["nodes"]],
         "statusCheckRollup": [_check(c) for c in (rollup["contexts"]["nodes"] if rollup else [])],
         "files": node["files"]["nodes"],
-        # A thread's first comment starts it; the rest answer it.
-        # side and isOutdated place a thread on the Files tab's diff: an outdated one has no line there now.
         "inlineComments": [{"author": _login(c["author"]), "body": c["body"], "createdAt": c["createdAt"], "url": c["url"],
                             "path": c["path"], "line": c["line"] or c["originalLine"], "side": thread.get("diffSide") or "RIGHT",
                             "startLine": c.get("startLine") or c.get("originalStartLine"), "startSide": thread.get("startDiffSide"),
@@ -380,28 +276,19 @@ def detail_pr(node: dict, name: str, slug: str) -> dict:
         "slug": slug,
     }
 
-
 def worktree_on_branch(porcelain: str, branch: str) -> str | None:
-    """Where `git worktree list --porcelain` says branch is checked out, if anywhere. Not a worktree
-    whose folder is gone (prunable): T3 Code's, say, deleted without git being told."""
     for block in porcelain.strip().split("\n\n"):
         lines = block.splitlines()
         if f"branch refs/heads/{branch}" in lines and not any(line.startswith("prunable") for line in lines):
             return next(line.removeprefix("worktree ") for line in lines if line.startswith("worktree "))
     return None
 
-
 def is_unsafe_to_remove(repo: dict) -> str:
-    """Why removing this worktree would lose work, or '' when it would not."""
     if repo["dirty"]:
         return f"{repo['dirty']} uncommitted change(s)"
     if repo["unpushed"]:
         return f"{repo['unpushed']} commit(s) not pushed"
     return ""
-
-
-# ---------------------------------------------------------------------- io
-
 
 def run(args: list[str], cwd: Path | None = None, check: bool = True, stdin: str | None = None) -> str:
     result = subprocess.run(args, cwd=cwd, input=stdin, capture_output=True, text=True)
@@ -410,10 +297,8 @@ def run(args: list[str], cwd: Path | None = None, check: bool = True, stdin: str
         raise MrError(f"{' '.join(args[:3])} failed in {cwd or os.getcwd()}: {detail}")
     return result.stdout.strip()
 
-
 def git(repo: Path, *args: str, check: bool = True) -> str:
     return run(["git", "-C", str(repo), *args], check=check)
-
 
 def read_json(path: Path) -> dict:
     try:
@@ -423,39 +308,30 @@ def read_json(path: Path) -> dict:
     except json.JSONDecodeError as error:
         raise MrError(f"{path} is not valid JSON: {error}") from None
 
-
 def write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
-
 def registered_projects() -> list[str]:
     return read_json(REGISTRY)["projects"] if REGISTRY.exists() else []
-
 
 def register(root: Path) -> None:
     projects = [p for p in registered_projects() if Path(p).exists() and Path(p) != root]
     REGISTRY.parent.mkdir(parents=True, exist_ok=True)
     write_json(REGISTRY, {"projects": sorted([*projects, str(root)])})
 
-
 def has_ref(repo: Path, ref: str) -> bool:
     return subprocess.run(["git", "-C", str(repo), "show-ref", "--verify", "--quiet", ref]).returncode == 0
 
-
 def tip_of(repo: Path, branch: str) -> str:
-    """origin's copy of a branch, or the local one while it is not pushed yet (a parent task's new branch)."""
     return f"origin/{branch}" if has_ref(repo, f"refs/remotes/origin/{branch}") else branch
 
-
 def default_branch(repo: Path) -> str:
-    # Ask the remote: a clone's origin/HEAD is set once and goes stale when the default changes.
     symref = git(repo, "ls-remote", "--symref", "origin", "HEAD", check=False)
     match = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", symref, re.M)
     if match:
         return match[1]
     ref = git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD", check=False)
     return ref.removeprefix("origin/") if ref else git(repo, "branch", "--show-current")
-
 
 @dataclass
 class Project:
@@ -475,18 +351,14 @@ class Project:
     def workspaces(self) -> Path:
         return WORKSPACES / self.name
 
-
 @dataclass
 class Task:
     root: Path
     project: Project
     branch: str
-    repos: list[str]  # the ones on the task branch
-    # Of those, the ones whose branch was already checked out elsewhere (another tool's worktree):
-    # linked to that checkout, never removed by mr rm.
+    repos: list[str]
     borrowed: list[str] = field(default_factory=list)
-    on: str | None = None  # the parent task's branch this one is stacked on (mr new --on)
-    # Repos on a branch of their own for the same ticket (an e2e repo's test/X-1 beside feat/X-1).
+    on: str | None = None
     branches: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -501,17 +373,13 @@ class Task:
                                            **({"branches": self.branches} if self.branches else {})})
 
     def branch_of(self, name: str) -> str:
-        """The branch a repo of this task is on: its own, else the task's."""
         return self.branches.get(name, self.branch)
 
     def base(self, name: str) -> str:
-        """The branch a repo of this task builds on: the parent's branch when stacked and the repo has
-        it (repos the parent never touched build on their default), else the repo's default."""
         repo = self.project.root / name
         if self.on and (has_ref(repo, f"refs/remotes/origin/{self.on}") or has_ref(repo, f"refs/heads/{self.on}")):
             return self.on
         return self.project.repo(name)["base"]
-
 
 def find_upwards(start: Path, marker: str) -> Path | None:
     for folder in [start, *start.parents]:
@@ -519,13 +387,11 @@ def find_upwards(start: Path, marker: str) -> Path | None:
             return folder
     return None
 
-
 def current_task(path: str | None) -> Task:
     root = find_upwards(Path(path or os.getcwd()).resolve(), TASK_FILE)
     if not root:
         raise MrError("Not inside a task workspace. Run this from one, or pass --task <path>.")
     return Task.load(root)
-
 
 def current_project(path: str | None) -> Project:
     start = Path(path or os.getcwd()).resolve()
@@ -540,10 +406,7 @@ def current_project(path: str | None) -> Project:
         return Project.load(Path(projects[0]))
     raise MrError("Which project? Run from inside one or pass --project <root>. Known: " + (", ".join(projects) or "none, run mr init"))
 
-
 def repo_branch(repo: Path, task_branch: str, chosen: str | None) -> str:
-    """The branch a repo takes in a task: the chosen one, else the task's when the repo has it, else the
-    repo's one branch for the same ticket (test/X-1 for feat/X-1), else the task's, made new."""
     if chosen:
         return chosen
     if has_ref(repo, f"refs/heads/{task_branch}") or has_ref(repo, f"refs/remotes/origin/{task_branch}"):
@@ -555,18 +418,22 @@ def repo_branch(repo: Path, task_branch: str, chosen: str | None) -> str:
                       f"Pick one with mr add {repo.name} --branch <branch> (leave it out of mr new).")
     return found[0] if found else task_branch
 
+def install_git_hooks(worktree: Path) -> None:
+    if not (worktree / ".pre-commit-config.yaml").exists():
+        return
+    if not shutil.which("pre-commit"):
+        print(f"{worktree.name}: pre-commit not on PATH; git hooks not installed", file=sys.stderr)
+        return
+    result = subprocess.run(["pre-commit", "install"], cwd=worktree, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"{worktree.name}: pre-commit install failed: {(result.stderr or result.stdout).strip()}", file=sys.stderr)
 
 def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None:
-    """Make <task>/<name> a worktree on its branch (repo_branch), from origin's base when the branch is new.
-
-    Git keeps a branch in one worktree only: when another one (the project checkout, T3 Code's)
-    already has it, <task>/<name> links to that checkout instead and the repo is marked borrowed."""
     repo = task.project.root / name
     target = task.root / name
     if target.is_symlink():
         target.unlink()
     git(repo, "fetch", "--quiet", "origin")
-    # A worktree whose folder is gone still holds its branch: git won't check it out again until told.
     git(repo, "worktree", "prune")
     branch = repo_branch(repo, task.branch, chosen)
     if branch != task.branch:
@@ -579,15 +446,14 @@ def checkout_task_repo(task: Task, name: str, chosen: str | None = None) -> None
         print(f"{name}: {branch} is already checked out at {existing}; linked to it", flush=True)
     elif has_ref(repo, f"refs/heads/{branch}"):
         git(repo, "worktree", "add", str(target), branch)
-        # A local branch left from an earlier checkout can be behind origin's: caught up when it has
-        # nothing of its own (a branch that went its own way stays as it is).
         if has_ref(repo, f"refs/remotes/origin/{branch}"):
             git(target, "merge", "--ff-only", "--quiet", f"origin/{branch}", check=False)
     elif has_ref(repo, f"refs/remotes/origin/{branch}"):
         git(repo, "worktree", "add", "--track", "-b", branch, str(target), f"origin/{branch}")
     else:
         git(repo, "worktree", "add", "--no-track", "-b", branch, str(target), tip_of(repo, task.base(name)))
-
+    if name not in task.borrowed:
+        install_git_hooks(target)
 
 def repo_state(task: Task, name: str, with_pr: bool) -> dict:
     path = task.root / name
@@ -604,13 +470,8 @@ def repo_state(task: Task, name: str, with_pr: bool) -> dict:
         state["pr"] = json.loads(raw) if raw.startswith("{") else None
     return state
 
-
 def push(task: Task, name: str) -> None:
     git(task.root / name, "push", "--quiet", "-u", "origin", task.branch_of(name))
-
-
-# ------------------------------------------------------------------ commands
-
 
 def cmd_init(args) -> None:
     root = Path(args.root or os.getcwd()).resolve()
@@ -628,12 +489,11 @@ def cmd_init(args) -> None:
     register(root)
     print(f"{root}: {len(repos)} repos ({', '.join(r['name'] for r in repos)})")
 
-
 def cmd_clone(args) -> None:
     if args.manifest == "-":
         manifest = json.loads(sys.stdin.read())
     elif args.manifest.lstrip().startswith("{"):
-        manifest = json.loads(args.manifest)  # passed inline, e.g. by the Herdr dialog
+        manifest = json.loads(args.manifest)
     else:
         manifest = read_json(Path(args.manifest))
     root = Path(args.root).expanduser().resolve()
@@ -649,7 +509,6 @@ def cmd_clone(args) -> None:
     register(root)
     print(f"{root}: ready")
 
-
 def cmd_projects(args) -> None:
     projects = []
     for root in registered_projects():
@@ -662,15 +521,10 @@ def cmd_projects(args) -> None:
         for p in projects:
             print(f"{p['name']}\t{p['root']}\t{len(p['repos'])} repos")
 
-
 def cmd_manifest(args) -> None:
     print((current_project(args.project).root / PROJECT_FILE).read_text(), end="")
 
-
 def link_project_env(task_root: Path, project_root: Path) -> None:
-    """A task folder sits under ~/.herdr, outside its project's, so the direnv .envrc that applies to the
-    project (a GH_TOKEN, a CLAUDE_CONFIG_DIR for a work account) doesn't reach the task's shells and agents.
-    An .envrc of its own loads that one. Nothing without direnv or a project .envrc, or when it has one."""
     envrc = next((folder / ".envrc" for folder in [project_root, *project_root.parents] if (folder / ".envrc").is_file()), None)
     target = task_root / ".envrc"
     if envrc is None or target.exists() or not shutil.which("direnv"):
@@ -680,7 +534,6 @@ def link_project_env(task_root: Path, project_root: Path) -> None:
     allowed = subprocess.run(["direnv", "allow", str(target)], capture_output=True, text=True)
     if allowed.returncode != 0:
         print(f"mr: direnv allow {target}: {allowed.stderr.strip()}", file=sys.stderr)
-
 
 def cmd_new(args) -> None:
     project = current_project(args.project)
@@ -702,7 +555,6 @@ def cmd_new(args) -> None:
         task.save()
         link_project_env(root, project.root)
     except MrError:
-        # Leave nothing half made: worktrees already added stay registered in their repos.
         for name in names:
             if (root / name).is_dir() and not (root / name).is_symlink():
                 git(project.root / name, "worktree", "remove", "--force", str(root / name), check=False)
@@ -710,20 +562,18 @@ def cmd_new(args) -> None:
         raise
     print(root)
 
-
 def cmd_add(args) -> None:
     task = current_task(args.task)
     resolved, chosen = resolve_repos(args.repos, [r["name"] for r in task.project.repos])
     names = [n for n in resolved if n not in task.repos]
     if args.branch and len(names) != 1:
         raise MrError("--branch is for one repo at a time; give several as repo=branch.")
-    link_project_env(task.root, task.project.root)  # tasks made before mr wrote one get it here
+    link_project_env(task.root, task.project.root)
     for name in names:
         checkout_task_repo(task, name, chosen.get(name, args.branch))
         task.repos.append(name)
         task.save()
         print(f"{name}: {task.branch_of(name)}")
-
 
 def task_summaries(project: Project, with_status: bool) -> list[dict]:
     if not project.workspaces.exists():
@@ -739,12 +589,7 @@ def task_summaries(project: Project, with_status: bool) -> list[dict]:
         tasks.append(summary)
     return tasks
 
-
 def found_parents(project: Project, tasks: list[Task]) -> dict[str, str]:
-    """Task branch -> the task branch it builds on, for tasks that don't record one (made without --on, their
-    PRs retargeted later): in a repo both have, the other task's branch is in this one's history and not in the
-    base's. With several, the nearest (the one the others are below). Local git only, so a layer below with
-    commits this one lacks (not restacked yet) isn't found."""
     merged: dict[tuple[str, str], set[str]] = {}
 
     def heads_in(name: str, rev: str) -> set[str]:
@@ -770,7 +615,6 @@ def found_parents(project: Project, tasks: list[Task]) -> dict[str, str]:
             parents[task.branch] = nearest.branch
     return parents
 
-
 def cmd_ls(args) -> None:
     project = current_project(args.project)
     tasks = task_summaries(project, with_status=args.json)
@@ -780,7 +624,6 @@ def cmd_ls(args) -> None:
         return
     for t in tasks:
         print(f"{t['branch']}\t{', '.join(t['repos'])}\t{t['root']}")
-
 
 def cmd_status(args) -> None:
     task = current_task(args.task)
@@ -795,7 +638,6 @@ def cmd_status(args) -> None:
         own = f" on {r['branch']}" if r["branch"] != task.branch else ""
         print(f"  {r['name']}{own}: +{r['ahead']} -{r['behind']} vs {r['base']}, {r['dirty']} dirty, {r['unpushed']} unpushed, {pr_text}")
 
-
 def cmd_push(args) -> None:
     task = current_task(args.task)
     for name in task.repos:
@@ -804,8 +646,6 @@ def cmd_push(args) -> None:
             print(f"{name}: pushing {state['unpushed']} commit(s)", flush=True)
             push(task, name)
 
-
-# Fast-forward only: a diverged repo is reported, not merged, and the other repos still pull.
 def cmd_pull(args) -> None:
     task = current_task(args.task)
     failures = []
@@ -818,7 +658,6 @@ def cmd_pull(args) -> None:
             print(failures[-1], flush=True)
     if failures:
         raise MrError(f"{len(failures)} repo(s) did not pull.")
-
 
 def cmd_pr(args) -> None:
     task = current_task(args.task)
@@ -860,16 +699,11 @@ def cmd_pr(args) -> None:
             run(["gh", "pr", "edit", str(r["pr"]["number"]), "--body-file", "-"], cwd=cwd, stdin=with_related_section(body, others))
         print(f"cross-linked {len(prs)} PRs")
 
-
 def stack_of(slug: str, number: int) -> dict | None:
-    """The GitHub stack a PR is in (pull_requests listed bottom to top), or None."""
     stacks = json.loads(run(["gh", "api", f"repos/{slug}/stacks?pull_request={number}"]))
     return stacks[0] if stacks else None
 
-
 def link_stack(cwd: Path, parent_branch: str, child: int) -> str:
-    """Stacks a PR on the parent branch's PR on GitHub: on top of the parent's stack, or in a new stack
-    of the two. Says what it did."""
     slug = github_slug(git(cwd, "remote", "get-url", "origin"))
     if not slug:
         raise MrError("not a GitHub repo")
@@ -889,17 +723,11 @@ def link_stack(cwd: Path, parent_branch: str, child: int) -> str:
         stdin=json.dumps({"pull_requests": [child]}))
     return f"stacked on #{parent} (stack #{stack['number']})"
 
-
-# Files a task folder may hold besides its repos and markers without anyone having put work there.
 TASK_JUNK = {".DS_Store", ".direnv", ".envrc"}
 
-
 def stray_entries(task: Task) -> list[str]:
-    """Files in a task folder that are neither its repos, mr's markers nor known junk: something the person
-    (or a tool) put there, which rm would lose."""
     known = {TASK_FILE, *TASK_JUNK, *(r["name"] for r in task.project.repos)}
     return sorted(entry.name for entry in task.root.iterdir() if entry.name not in known)
-
 
 def cmd_rm(args) -> None:
     task = current_task(args.task)
@@ -914,7 +742,6 @@ def cmd_rm(args) -> None:
             print(f"{s['name']}: unlinked, its checkout stays at {(task.root / s['name']).resolve()}")
             continue
         git(repo, "worktree", "remove", *(["--force"] if args.force else []), str(task.root / s["name"]))
-        # Squash merges leave the branch "unmerged" to git, so trust the PR's state instead.
         if s["pr"] and s["pr"]["state"] == "MERGED":
             git(repo, "branch", "-D", s["branch"], check=False)
             print(f"{s['name']}: removed worktree and merged branch")
@@ -927,24 +754,20 @@ def cmd_rm(args) -> None:
     if args.force:
         shutil.rmtree(task.root)
     else:
-        for name in TASK_JUNK:  # Finder's .DS_Store, direnv's cache and the .envrc link_project_env wrote
+        for name in TASK_JUNK:
             junk = task.root / name
             shutil.rmtree(junk) if junk.is_dir() else junk.unlink(missing_ok=True)
-        task.root.rmdir()  # fails loudly if something unexpected is still there
+        task.root.rmdir()
     print(f"removed {task.root}")
 
-
 def github_repos(project: Project) -> list[tuple[str, str]]:
-    """(repo name, owner/name) for the project's repos that live on GitHub."""
     return [(r["name"], slug) for r in project.repos if (slug := github_slug(r["url"]))]
 
-
 def repo_prs(name: str, slug: str, now: datetime) -> tuple[str, list[dict] | None, str]:
-    """(viewer login, watched PRs, why not) of one repo: PRs None and the reason for a repo GitHub refused."""
     result = subprocess.run(["gh", "api", "graphql", "-f", "query=" + prs_query(slug)], capture_output=True, text=True)
     try:
         data = json.loads(result.stdout or "{}").get("data") or {}
-    except json.JSONDecodeError:  # an HTML error page from a proxy or GitHub itself
+    except json.JSONDecodeError:
         data = {}
     if result.returncode != 0 or not data.get("repository"):
         lines = (result.stderr or result.stdout).strip().splitlines()
@@ -955,13 +778,11 @@ def repo_prs(name: str, slug: str, now: datetime) -> tuple[str, list[dict] | Non
     nodes = data["repository"]["open"]["nodes"] + data["repository"]["closed"]["nodes"]
     return viewer, [pr for node in nodes if is_worth_watching(pr := summarize_pr(node, name, slug, viewer), now)], ""
 
-
 @dataclass
 class PrScope:
-    """What `mr prs` and `mr pr-view` look at: a project's GitHub repos, or one plain repo (--repo)."""
     name: str
     root: Path
-    repos: list[tuple[str, str]]  # (repo name, owner/name)
+    repos: list[tuple[str, str]]
     shorts: dict[str, str]
     project: Project | None
 
@@ -969,21 +790,16 @@ class PrScope:
         return task_summaries(self.project, with_status=False) if self.project else []
 
     def task_for(self, branch: str) -> str | None:
-        """Where branch is checked out: the project's task, or for a plain repo any of its worktrees."""
         if self.project:
             return next((t["root"] for t in self.tasks() if branch in (t["branch"], *t["branches"].values())), None)
         return worktree_on_branch(git(self.root, "worktree", "list", "--porcelain"), branch)
 
     def topics(self) -> dict[tuple[str, str], str]:
-        """(repo, branch) -> the task branch it belongs to, for repos on a branch of their own in a task
-        (test/X-1 beside feat/X-1, or one named differently): their PRs group with the task's."""
         return {(name, branch): t["branch"] for t in self.tasks() for name, branch in t["branches"].items()}
 
     def branches_of(self, repo: str, branches: list[str]) -> list[str]:
-        """The branches to look for in a repo: the given ones plus the repo's own branch in a task of theirs."""
         own = [branch for (name, branch), topic in self.topics().items() if name == repo and topic in branches]
         return list(dict.fromkeys([*branches, *own]))
-
 
 def pr_scope(args) -> PrScope:
     if args.repo:
@@ -995,32 +811,27 @@ def pr_scope(args) -> PrScope:
     return PrScope(name=project.name, root=project.root, repos=github_repos(project),
                    shorts=short_names([r["name"] for r in project.repos]), project=project)
 
-
 def cmd_prs(args) -> None:
     scope = pr_scope(args)
     header = {"project": scope.name, "root": str(scope.root), "isRepo": scope.project is None}
     if not scope.repos:
         if scope.project:
             raise MrError(f"{scope.name} has no GitHub repos.")
-        print(json.dumps({**header, "viewer": "", "prs": [], "skipped": "not a GitHub repo"}))  # GitLab etc.: nothing to watch
+        print(json.dumps({**header, "viewer": "", "prs": [], "skipped": "not a GitHub repo"}))
         return
     now = datetime.now(timezone.utc)
     with ThreadPoolExecutor(max_workers=len(scope.repos)) as pool:
         results = list(pool.map(lambda repo: repo_prs(*repo, now), scope.repos))
     viewers = [viewer for viewer, _, _ in results if viewer]
-    # Repos GitHub refused this time, with why: the watcher keeps what it last knew of them instead of
-    # seeing their PRs vanish, and says why.
     failed = {slug: reason for (_, slug), (_, repo_list, reason) in zip(scope.repos, results) if repo_list is None}
     if not viewers:
         raise MrError(f"GitHub answered for none of the repos ({next(iter(failed.values()), 'no reason given')}); is gh logged in here?")
     topics = scope.topics()
-    # The task folder of each task branch: its folder name can be an older branch's (a renamed task).
     task_roots = {branch: t["root"] for t in scope.tasks() for branch in (t["branch"], *t["branches"].values())}
     prs = [{**pr, "short": scope.shorts[pr["repo"]], "topic": topic, "task": task_roots.get(topic)}
            for _, repo_list, _ in results if repo_list for pr in repo_list
            for topic in [topics.get((pr["repo"], pr["branch"]), pr["branch"])]]
     print(json.dumps({**header, "viewer": viewers[0], "prs": prs, "failed": list(failed), "failedWhy": failed}))
-
 
 def graphql(query: str, **variables: str | int) -> dict:
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
@@ -1028,9 +839,7 @@ def graphql(query: str, **variables: str | int) -> dict:
         args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
     return json.loads(run(args))["data"]
 
-
 def full_pr(name: str, slug: str, branch: str) -> tuple[str, dict | None]:
-    """(viewer login, the branch's latest PR in the repo or None)."""
     owner, repo = slug.split("/", 1)
     data = graphql(PR_DETAIL_QUERY, owner=owner, name=repo, branch=branch)
     nodes = data["repository"]["pullRequests"]["nodes"]
@@ -1043,37 +852,28 @@ def full_pr(name: str, slug: str, branch: str) -> tuple[str, dict | None]:
         files = {"pageInfo": page["pageInfo"], "nodes": files["nodes"] + page["nodes"]}
     return data["viewer"]["login"], detail_pr(nodes[0] | {"files": files}, name, slug)
 
-
 def cmd_pr_view(args) -> None:
     scope = pr_scope(args)
     with ThreadPoolExecutor(max_workers=len(scope.repos) or 1) as pool:
         found = list(pool.map(lambda job: full_pr(*job[0], job[1]),
                               [(repo, branch) for repo in scope.repos for branch in scope.branches_of(repo[0], args.branch)]))
-    viewer = found[0][0] if found else ""  # whose review is requested, for the view
+    viewer = found[0][0] if found else ""
     prs = [pr for _, pr in found if pr]
     for pr in prs:
         pr["short"] = scope.shorts[pr["repo"]]
     print(json.dumps({"project": scope.name, "branch": args.branch[0], "isRepo": scope.project is None,
                       "task": scope.task_for(args.branch[0]), "viewer": viewer, "prs": prs}))
 
-
 def cmd_pr_diff(args) -> None:
     print(run(["gh", "pr", "diff", str(args.number), "-R", args.slug]))
-
 
 def cmd_commit_diff(args) -> None:
     print(run(["gh", "api", f"repos/{args.slug}/commits/{args.oid}", "-H", "Accept: application/vnd.github.diff"]))
 
-
-# GitHub merges a stack in the background; polled for at most about 20 s, inside the prs mod's 30 s
-# limit on one mr call. A merge still running then finishes on its own.
 STACK_MERGE_POLLS = 10
 STACK_MERGE_POLL_SECONDS = 2
 
-
 def merge_stack(slug: str, number: int) -> str:
-    """Merges a stacked PR and every open PR below it, with merge commits, through the async merge
-    endpoint GitHub documents for stacks."""
     endpoint = f"repos/{slug}/pulls/{number}/merge-async"
     result = json.loads(run(["gh", "api", "-X", "PUT", endpoint, "-f", "merge_method=merge", "-f", "merge_action=default"]))
     uuid = result["details"].get("uuid")
@@ -1087,7 +887,6 @@ def merge_stack(slug: str, number: int) -> str:
     return {"merged": "merge-stack: done", "enqueued": "merge-stack: in the merge queue"}.get(
         result["status"], "merge-stack: still merging on GitHub")
 
-
 RESTACK_QUERY = """query($owner: String!, $name: String!, $branch: String!) {
   repository(owner: $owner, name: $name) {
     pullRequests(headRefName: $branch, first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
@@ -1095,11 +894,7 @@ RESTACK_QUERY = """query($owner: String!, $name: String!, $branch: String!) {
   }
 }"""
 
-
 def restack_plan(base: str, entries: list[dict]) -> list[dict]:
-    """The open layers of a stack, bottom up: [{branch, onto, after}]. A layer's own commits are the ones
-    after `after` (the tip of the layer below as GitHub last saw it; None for the bottom one), and go
-    onto `onto`: the open layer below, or the stack's base once everything below has merged."""
     layers = []
     below = None
     for entry in sorted(entries, key=lambda e: e["position"]):
@@ -1110,13 +905,10 @@ def restack_plan(base: str, entries: list[dict]) -> list[dict]:
         below = pr
     return layers
 
-
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
     return subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer]).returncode == 0
 
-
 def restack_repo(repo: Path, slug: str, branch: str) -> str:
-    """Restacks the branch's GitHub stack in this repo; "no stack" when its PR is in none."""
     owner, name = slug.split("/", 1)
     nodes = graphql(RESTACK_QUERY, owner=owner, name=name, branch=branch)["repository"]["pullRequests"]["nodes"]
     stack = nodes[0]["stack"] if nodes else None
@@ -1124,20 +916,12 @@ def restack_repo(repo: Path, slug: str, branch: str) -> str:
         return "no stack"
     return restack_layers(repo, restack_plan(stack["baseRefName"], stack["entries"]["nodes"]))
 
-
 def own_commits_start(repo: Path, layer: dict, onto: str, tip: str) -> str:
-    """The commit a layer's own commits come after. GitHub's last tip of the layer below, unless that
-    layer was rewritten since this one was made on it; then where git's reflog saw this layer fork
-    from it, and failing that the newest commit they share."""
     if layer["after"] and is_ancestor(repo, layer["after"], tip):
         return layer["after"]
     return git(repo, "merge-base", "--fork-point", onto, tip, check=False) or git(repo, "merge-base", onto, tip)
 
-
 def restack_layers(repo: Path, layers: list[dict]) -> str:
-    """Rebases each layer (restack_plan) onto the one below in a scratch worktree, then force-pushes the
-    moved branches in one atomic push, with leases so a push someone made meanwhile is never lost, and
-    moves local copies that had nothing of their own. Changes nothing when any layer conflicts."""
     git(repo, "fetch", "--quiet", "--prune", "origin")
     worktrees = git(repo, "worktree", "list", "--porcelain")
     old = {}
@@ -1184,11 +968,10 @@ def restack_layers(repo: Path, layers: list[dict]) -> str:
             git(repo, "branch", "--quiet", "--force", b, new[b])
     return f"restacked {', '.join(moved)}"
 
-
 def cmd_restack(args) -> None:
     branch = args.branch or current_task(None).branch
     scope = pr_scope(args)
-    repo_of = lambda name: scope.root if scope.project is None else scope.root / name  # noqa: E731
+    repo_of = lambda name: scope.root if scope.project is None else scope.root / name
 
     def one(repo: tuple[str, str]) -> tuple[str, str, bool]:
         name, slug = repo
@@ -1206,7 +989,6 @@ def cmd_restack(args) -> None:
         raise MrError("\n".join(lines))
     print("\n".join(lines))
 
-
 def cmd_pr_act(args) -> None:
     if args.action == "merge-stack":
         print(merge_stack(args.slug, args.number))
@@ -1216,18 +998,13 @@ def cmd_pr_act(args) -> None:
     body = ["--body", args.body] if args.body and args.action in ("approve", "request-changes", "comment") else []
     print(run(["gh", "pr", *PR_ACTIONS[args.action], str(args.number), "-R", args.slug, *body]) or f"{args.action}: done")
 
-
 def posted_comment(response: dict) -> dict:
-    """GitHub's answer to a new review comment, as one of detail_pr's inlineComments."""
     return {"author": _login(response.get("user")), "body": response["body"], "createdAt": response["created_at"],
             "url": response["html_url"], "path": response["path"], "line": response["line"] or response.get("original_line"),
             "side": response.get("side") or "RIGHT", "startLine": response.get("start_line"), "startSide": response.get("start_side"),
             "isOutdated": False, "isReply": False}
 
-
 def cmd_pr_comment(args) -> None:
-    """One review comment on a PR's lines, posted at once: --request is the REST body (the prs mod builds it).
-    Prints the comment as pr-view lists inline comments."""
     try:
         request = json.loads(args.request)
     except json.JSONDecodeError as error:
@@ -1237,23 +1014,18 @@ def cmd_pr_comment(args) -> None:
     answer = run(["gh", "api", "-X", "POST", f"repos/{args.slug}/pulls/{args.number}/comments", "--input", "-"], stdin=json.dumps(request))
     print(json.dumps(posted_comment(json.loads(answer))))
 
-
 def cmd_pr_candidates(args) -> None:
     logins = run(["gh", "api", "--paginate", f"repos/{args.slug}/assignees", "--jq", ".[].login"]).split()
     print(json.dumps(sorted(logins, key=str.lower)))
 
-
 def cmd_pr_reviewers(args) -> None:
     if not (args.add or args.remove):
         raise MrError("pr-reviewers needs --add or --remove.")
-    # The REST endpoint rather than `gh pr edit --add-reviewer`, which also reads the PR's projects and
-    # fails on repos whose classic projects are gone.
     endpoint = f"repos/{args.slug}/pulls/{args.number}/requested_reviewers"
     for method, logins in (("POST", args.add), ("DELETE", args.remove)):
         if logins:
             run(["gh", "api", "-X", method, endpoint, *[arg for login in logins for arg in ("-f", f"reviewers[]={login}")]])
     print("reviewers: done")
-
 
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="mr", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1340,15 +1112,12 @@ def parser() -> argparse.ArgumentParser:
     p = command("pr-reviewers", cmd_pr_reviewers, "request or withdraw review requests on one PR")
     p.add_argument("slug", help="owner/repo")
     p.add_argument("number", type=int)
-    logins = lambda text: [login for login in text.split(",") if login]  # noqa: E731
+    logins = lambda text: [login for login in text.split(",") if login]
     p.add_argument("--add", type=logins, default=[], help="logins, comma-separated")
     p.add_argument("--remove", type=logins, default=[], help="logins, comma-separated")
     return top
 
-
 def gh_folder(args) -> Path | None:
-    """The folder whose direnv environment gh runs in: --in, the plain repo, else the project (a task's
-    folder sits under ~/.herdr, outside the project's .envrc). None for commands that name none."""
     if args.within:
         return Path(args.within).expanduser()
     if getattr(args, "repo", None):
@@ -1358,22 +1127,16 @@ def gh_folder(args) -> Path | None:
     try:
         return current_project(getattr(args, "task", None) or getattr(args, "project", None)).root
     except MrError:
-        return None  # the command itself says what is missing
-
+        return None
 
 def direnv_changes(folder: Path) -> dict[str, str | None]:
-    """What direnv sets for a shell in folder (a GH_TOKEN for the account its repos belong to, say).
-
-    mr runs from Herdr, not from a shell in the folder, so without this gh acts as the machine's
-    active account and can't see another account's private repos. {} without direnv or an .envrc."""
     if not folder.is_dir() or not shutil.which("direnv"):
         return {}
     result = subprocess.run(["direnv", "export", "json"], cwd=folder, capture_output=True, text=True)
-    if result.returncode != 0:  # a blocked .envrc: say so, and go on as the active account
+    if result.returncode != 0:
         print(f"mr: direnv in {folder}: {result.stderr.strip()}", file=sys.stderr)
         return {}
     return json.loads(result.stdout) if result.stdout.strip() else {}
-
 
 def apply_env(changes: dict[str, str | None]) -> None:
     for name, value in changes.items():
@@ -1381,7 +1144,6 @@ def apply_env(changes: dict[str, str | None]) -> None:
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
-
 
 def main(argv: list[str]) -> int:
     args = parser().parse_args(argv)
@@ -1394,7 +1156,6 @@ def main(argv: list[str]) -> int:
         print(f"mr: {error}", file=sys.stderr)
         return 1
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

@@ -1,24 +1,13 @@
-// Profiles: create, edit, reorder, duplicate and delete the profiles of profiles.json (the app
-// home's; see profiles.example.json there). Opened as a dialog: `mod.open profile-edit`, or with
-// props { profile } on that profile (t3-context's gear).
-//
-// It never writes the file itself: every change is one command of profiles.py (t3-context's), which
-// validates the whole file before replacing it, so an invalid change leaves it as it was and its
-// errors show here. A secret is typed as a reference (a variable's name, or a command as a JSON
-// list), never as its value. What Herdr doesn't do for the person (the .envrc of a folder, the
-// agent guard's hook) is shown after a save, to copy.
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { exec, hc, home, appHome, theme, props, closeOverlay, knownAgents, window } from "herdr";
-import { toDraft, newDraft, duplicateOf, toProfile, moved, takenMachines, errorLines, coordinatorFolderOf } from "./draft.js";
+import { exec, hc, home, appHome, theme, props, closeOverlay, knownAgents, window, checking } from "herdr";
+import { toDraft, newDraft, duplicateOf, toProfile, projectLines, moved, takenMachines, errorLines, LOCAL_MACHINE } from "./draft.js";
 
 const PROFILES_PY = `${appHome()}/mods/t3-context/profiles.py`;
-// The theme's colour slots, named as terminals name them.
+
 const COLORS = { ansi1: "Red", ansi2: "Green", ansi3: "Yellow", ansi4: "Blue", ansi5: "Magenta", ansi6: "Cyan" };
 const SECRET_HINT = "the variable that holds it, e.g. JIRA_TOKEN";
 
-// Python 3 here: on Windows the py launcher (its python3 can be the Store's stub).
 const python = () => (window()?.platform === "windows" ? ["py", "-3"] : ["python3"]);
 
 async function profilesPy(args) {
@@ -30,21 +19,21 @@ const escapeHtml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 
 export default class ProfileEdit extends View {
   init(_props, cx) {
-    this.profiles = null; // name -> profile, as profiles.py lists them; null until read
+    this.profiles = null;
     this.providers = {};
-    this.fileErrors = []; // why profiles.json can't be read: it is fixed by hand
-    this.draft = null; // the profile in the form
-    this.inputs = new Map(); // field key -> InputState, for the draft's texts
-    this.errors = []; // why the last change was refused
-    this.saved = null; // after a save: { envrc, warnings } still to do by hand
+    this.fileErrors = [];
+    this.draft = null;
+    this.inputs = new Map();
+    this.errors = [];
+    this.saved = null;
     this.isBusy = false;
     this.isAskingDelete = false;
-    this.machines = []; // names, from hc machine ls
-    this.templates = []; // { name, program }, from hc templates
-    this.programs = []; // agent programs people can start, from programs.json
-    this.installed = new Set(); // those of them found on this machine
+    this.machines = [];
+    this.templates = [];
+    this.programs = [];
+    this.installed = new Set();
     this.handle = cx.focus_handle();
-    cx.spawn(async (cx) => {
+    if (!checking()) cx.spawn(async (cx) => {
       await Promise.all([this.reload(), this.loadChoices()]);
       const wanted = props()?.profile;
       this.open(this.profiles?.[wanted] ? wanted : Object.keys(this.profiles ?? {})[0] ?? null);
@@ -55,28 +44,24 @@ export default class ProfileEdit extends View {
   async reload() {
     const r = await profilesPy(["list"]);
     let listed = {};
-    try { listed = JSON.parse(r.stdout || "{}"); } catch { /* reported below */ }
+    try { listed = JSON.parse(r.stdout || "{}"); } catch {  }
     this.fileErrors = r.code === 0 ? [] : listed.errors ?? [r.stderr.trim() || `profiles.py exit ${r.code}`];
     this.profiles = listed.profiles ?? {};
     this.providers = listed.providers ?? {};
   }
 
-  // What the form offers to pick from. Each is optional: a failure leaves that list empty, and the
-  // field can still be typed.
   async loadChoices() {
     const [machines, templates, agents] = await Promise.all([
       hc(["machine", "ls", "--json"]).catch(() => null),
       hc(["templates", "--json"]).catch(() => null),
       knownAgents().catch(() => []),
     ]);
-    try { this.machines = JSON.parse(machines.stdout).machines.filter((m) => !m.temporary).map((m) => m.name); } catch { this.machines = []; }
+    try { this.machines = JSON.parse(machines.stdout).machines.filter((m) => !m.temporary && !(m.via === true && String(m.target).includes("sandbox-via.sh"))).map((m) => m.name); } catch { this.machines = []; }
     try { this.templates = JSON.parse(templates.stdout).templates.map((t) => ({ name: t.name, program: t.command.split(/\s+/)[0].split("/").pop() })); } catch { this.templates = []; }
     this.programs = [...new Set([...agents.map((agent) => agent.run?.[0]).filter(Boolean), ...this.templates.map((t) => t.program)])];
     this.installed = new Set(agents.filter((agent) => agent.installed).map((agent) => agent.run?.[0]));
   }
 
-  // Shows a profile in the form (null: a new one). Called from handlers and tasks, never from render:
-  // it makes the inputs.
   open(name, draft = null) {
     this.draft = draft ?? (name ? toDraft(name, this.profiles[name], this.providers, { appHome: appHome(), home: home() }) : newDraft());
     this.errors = [];
@@ -86,7 +71,7 @@ export default class ProfileEdit extends View {
     this.inputs.clear();
     const text = (key, placeholder, get, set) => this.makeInput(key, placeholder, get(), set);
     const d = this.draft;
-    text("name", "lowercase, e.g. client-a", () => d.name, (v) => { d.name = v.trim(); if (d.coordinatorFolder) d.coordinatorFolder = coordinatorFolderOf(d.name); });
+    text("name", "lowercase, e.g. client-a", () => d.name, (v) => { d.name = v.trim(); });
     text("label", "shown in the switch, e.g. Work", () => d.label, (v) => { d.label = v; });
     text("badge", "e.g. the company's name", () => d.badge, (v) => { d.badge = v; });
     this.makeFolderInputs();
@@ -100,7 +85,6 @@ export default class ProfileEdit extends View {
     this.inputs.set(key, state);
   }
 
-  // One input per folder, by its place in the list: made again when a folder is added or removed.
   makeFolderInputs() {
     for (const [key, state] of [...this.inputs]) {
       if (!key.startsWith("folder.")) continue;
@@ -148,7 +132,6 @@ export default class ProfileEdit extends View {
     cx.notify();
   }
 
-  // One profiles.py command that changes the file; then what the file holds now. Returns whether it was accepted.
   async change(args) {
     const r = await profilesPy(args);
     this.errors = r.code === 0 ? [] : errorLines(r.stderr || r.stdout || `profiles.py exit ${r.code}`, this.draft?.name ?? "");
@@ -182,7 +165,6 @@ export default class ProfileEdit extends View {
     });
   }
 
-  // What the person still does by hand for a saved profile: the .envrc of its folders, and what check warns of.
   async leftToDo(name) {
     const [envrc, check] = await Promise.all([profilesPy(["envrc", name]), profilesPy(["check"])]);
     const warnings = check.stdout.split("\n").filter((line) => line.startsWith(`warning: profiles.${name}.`)).map((line) => line.slice("warning: ".length));
@@ -264,15 +246,13 @@ export default class ProfileEdit extends View {
 
   agentRows(t) {
     const d = this.draft;
-    const programs = [...new Set([...this.programs, ...d.forbidden])];
-    // hc starts a reviewer through a template: an agent no template runs can't be one yet. Shown: the
-    // agents a template runs, the installed ones, and the one chosen.
+    const programs = [...new Set([...this.programs, ...Object.values(d.agentMachines).flat()])];
+
     const hasTemplate = (program) => this.templates.some((template) => template.program === program);
     const candidates = programs.filter((program) => hasTemplate(program) || this.installed.has(program) || program === d.reviewer);
     const pick = (program) => (cx) => { d.reviewer = program; this.saved = null; cx.notify(); };
     const reviewerChip = (program) => {
       const isOn = d.reviewer === program;
-      if (d.forbidden.includes(program)) return this.chip(t, `pe-reviewer-${program}`, program, isOn, () => {}, { isOff: true, tip: `${program} is forbidden in this profile` });
       if (!hasTemplate(program)) return this.chip(t, `pe-reviewer-${program}`, program, isOn, () => {}, { isOff: true, tip: `No hc template runs ${program}: add one in ~/.config/herdr-core/templates to review with it` });
       return this.chip(t, `pe-reviewer-${program}`, program, isOn, pick(program), { tip: `Started through the hc template that runs ${program}` });
     };
@@ -281,12 +261,29 @@ export default class ProfileEdit extends View {
         .child(this.chip(t, "pe-reviewer-off", "Off", !d.reviewer, pick("")))
         .children(candidates.map(reviewerChip)),
       "The agent that reviews this profile's work, or none. An agent is started through the hc template whose command runs it."),
-      this.row(t, "Forbidden", programs.length
-        ? h_flex().flex_wrap().gap(6).children(programs.map((program) => this.chip(t, `pe-forbid-${program}`, program, d.forbidden.includes(program),
-          (cx) => this.toggle(d.forbidden, program, cx), { color: d.forbidden.includes(program) ? t.blocked : null })))
-        : div().pt(6).text_size(12).text_color(t.dim).child("No agent programs known (programs.json, hc templates)."),
-      "Programs an agent of this profile must not start (the agent guard refuses them)."),
+      this.agentMachineRow(t, programs),
     ];
+  }
+
+  agentMachineRow(t, programs) {
+    const d = this.draft, rules = d.agentMachines;
+    const setHeld = (machine, isHeld) => (cx) => {
+      if (isHeld) rules[machine] = []; else delete rules[machine];
+      this.saved = null;
+      cx.notify();
+    };
+    const line = (machine) => {
+      const isHeld = machine in rules;
+      return h_flex().gap(8).items_center().flex_wrap()
+        .child(div().w(120).flex_none().text_size(12).text_color(t.foreground).child(machine === LOCAL_MACHINE ? "This computer" : machine))
+        .child(this.chip(t, `pe-at-${machine}-any`, "Any agent", !isHeld, setHeld(machine, !isHeld),
+          { tip: isHeld ? "Let every agent start here again" : "Keep this machine to the agents ticked next" }))
+        .when(isHeld, (el) => el.children(programs.map((program) =>
+          this.chip(t, `pe-at-${machine}-${program}`, program, rules[machine].includes(program), (cx) => this.toggle(rules[machine], program, cx)))));
+    };
+    return this.row(t, "Agents", v_flex().gap(6).children([LOCAL_MACHINE, ...d.machines].map(line)),
+      "Per machine, the only agents that may start there: the agent guard refuses the others. Claude Code's own subagents run on "
+      + "this computer and count as claude. A machine on Any, a sandbox too, starts any agent; a machine taken out of the profile above takes its rule with it.");
   }
 
   accountRows(t) {
@@ -325,11 +322,10 @@ export default class ProfileEdit extends View {
             .hover((s) => s.text_color(t.blocked)).on_click((_e, cx) => this.changeFolders(cx, (folders) => folders.splice(index, 1))).child("Remove"))))
         .child(h_flex().child(this.chip(t, "pe-folder-add", "+ Add folder", false, (cx) => this.changeFolders(cx, (folders) => folders.push(""))))),
       "On a shared machine: folders whose spaces are this profile's."))
-      .child(this.row(t, "Coordinator", h_flex().gap(8).items_center()
-        .child(this.chip(t, "pe-coordinator", d.coordinatorFolder ? "On" : "Off", Boolean(d.coordinatorFolder),
-          (cx) => { d.coordinatorFolder = d.coordinatorFolder ? "" : coordinatorFolderOf(d.name || "<name>"); this.saved = null; cx.notify(); }))
-        .when(Boolean(d.coordinatorFolder), (el) => el.child(div().min_w(0).truncate().text_size(12).text_color(t.dim).child(`${d.coordinatorFolder}/CLAUDE.md`))),
-      "An agent that starts and tracks this profile's tasks. A new folder gets its instructions from coordinators/example."))
+      .child(this.row(t, "Projects", v_flex().gap(4).pt(6).text_size(12.5)
+        .children(projectLines(d.projects).map((line, index) => div().id(`pe-project-${index}`).min_w(0).truncate().tooltip(line).child(line)))
+        .when(!Object.keys(d.projects).length, (el) => el.child(div().text_color(t.dim).child("None"))),
+      "What this profile works on. Each project has its own coordinator, an agent that starts and tracks its tasks, and its spaces on every machine show under it in the sidebar. Add or change one under \"projects\" in profiles.json (profiles.example.json shows how)."))
       .children(this.agentRows(t))
       .children(this.accountRows(t));
   }
@@ -353,7 +349,7 @@ export default class ProfileEdit extends View {
     if (this.isAskingDelete) {
       return h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.muted)
-          .child(`Delete ${d.label}? Its spaces and agents show in every profile; its coordinator's folder and its accounts' sign-ins stay.`))
+          .child(`Delete ${d.label}? Its spaces and agents show in every profile; its projects' coordinator folders and its accounts' sign-ins stay.`))
         .child(this.button(t, "pe-delete-no", "Keep", (cx) => { this.isAskingDelete = false; cx.notify(); }))
         .child(this.button(t, "pe-delete-yes", "Delete", (cx) => this.remove(cx), { isDanger: true }));
     }

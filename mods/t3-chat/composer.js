@@ -1,7 +1,3 @@
-// The foot of the chat as T3 Code draws it (ChatComposer.tsx, ComposerSurface.tsx): what Claude
-// asks, the @ and / menu, the composer card, and the context strip under it, in the chat's lane.
-// view: the ChatView (its state and actions).
-
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { panes, home, spaces } from "herdr";
@@ -13,12 +9,8 @@ import { tip, tipMark, glow } from "./tip.js";
 
 const icon = (name, size, color) => svg(`mods/t3-chat/icons/${name}.svg`).size(size).flex_none().text_color(color);
 
-// T3's composer placeholder, less the `$ skills` it has no counterpart for.
 export const PLACEHOLDER = "Ask anything. @ files, / commands";
 
-// ComposerCommandMenu: the @ files and / commands above the card; rows rounded-lg with a 16px
-// icon, the name at 12px medium and what it is at 12px, muted. T3's is 288px tall at most and
-// scrolls; this one shows the best eight.
 function commandMenu(view, items, t, mono) {
   return v_flex().w_full().p(6).rounded(16).border(1).border_color(alpha(t.foreground, 0.1)).bg(t.popover).shadow_lg()
     .children(items.map((item, i) => h_flex().id(`suggest-${i}`).w_full().h(32).px(10).gap(8).items_center().rounded(8).cursor_pointer()
@@ -30,9 +22,6 @@ function commandMenu(view, items, t, mono) {
       .child(sans(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(item.detail)))));
 }
 
-// Files waiting to be sent (ComposerAttachmentStrip): an image as a thumbnail filling its tile (its name on hover,
-// a click opens it large), anything else as a chip with its name; each with a remove button.
-// Several wrap onto more rows. What is sent stays the files' paths (ChatView.submit).
 export const ATTACHMENT_BOX = { width: 56, height: 56 };
 function attachmentStrip(view, t) {
   const remove = (i, isOverImage) => tip(view, t, `detach-${i}`, "Remove", div().id(`detach-${i}`).size(18).flex().items_center().justify_center().rounded(9).cursor_pointer()
@@ -60,7 +49,6 @@ function attachmentStrip(view, t) {
   }));
 }
 
-// ComposerPrimaryActions: a round 32px button; an arrow to send, a square to stop the turn.
 function primaryAction(view, t, isActive) {
   const canSend = Boolean(view.composer.value().trim()) || view.attachments.length > 0;
   const isOn = isActive || canSend;
@@ -73,16 +61,12 @@ function primaryAction(view, t, isActive) {
   return tip(view, t, "chat-primary", isActive ? "Stop (Escape)" : "Send (Enter)", button);
 }
 
-// A footer control (ComposerControl): 28px, rounded, its words at 14px; brighter under the pointer;
-// label: what it does, on hover.
 function control(view, id, t, label, children, onClick) {
   const el = sans(h_flex().id(id).h(28).px(8).gap(6).flex_none().items_center().rounded(8).text_size(14).font_weight(500).text_color(alpha(t.foreground, 0.8)))
     .cursor_pointer().hover((s) => s.bg(alpha(t.foreground, 0.08))).on_hover(glow(view, id)).on_click((_e, cx) => { onClick(cx); cx.notify(); }).children(children);
   return tip(view, t, id, label, el);
 }
 
-// ComposerSurface: a rounded-2xl card with a hairline outline; the text, then a row of controls
-// with the send button at its right. T3's glass blur is a solid fill here.
 function card(view, t, isActive, controls) {
   return v_flex().w_full().rounded(16).bg(t.popover).border(1).border_color(alpha(t.foreground, view.isComposerFocused ? 0.16 : 0.1)).shadow_md()
     .when(view.attachments.length > 0, (el) => el.child(attachmentStrip(view, t)))
@@ -99,29 +83,24 @@ function card(view, t, isActive, controls) {
       .child(primaryAction(view, t, isActive)));
 }
 
-// ComposerSurface.ContextStrip: under the card, bare; the chat's folder, its branch and its context
-// size. 12px, muted. The status bar already names the machine and the Claude account (that of the
-// chat's Claude Code while the chat is shown): the machine is named here only when the chat runs
-// on another machine than its space's.
 function contextStrip(view, t) {
-  // Before the first message the chat has no folder of its own yet: its space's.
+
   const folder = view.folder ?? currentPlace(view.ownTab)?.folder ?? "";
   const name = folder === home() ? "~" : folder.slice(folder.lastIndexOf("/") + 1);
   const branch = panes().find((p) => p.tab === view.ownTab && p.branch)?.branch;
   const spaceMachine = spaces().find((s) => s.tabs.some((tab) => tab.id === view.ownTab))?.machine ?? null;
-  const isElsewhere = Boolean(view.folder) && (view.machine ?? null) !== spaceMachine; // the chat's machine is known once it has a folder
+  const isElsewhere = Boolean(view.folder) && (view.machine ?? null) !== spaceMachine;
   return sans(h_flex().w_full().px(10).pt(8).gap(12).items_center().text_size(12).text_color(t.muted)
     .when(isElsewhere, (el) => el.child(h_flex().flex_none().gap(5).items_center().child(icon(view.machine ? "server" : "monitor", 12, t.muted)).child(div().child(view.machine ?? "This computer"))))
-    // The folder by its name, as T3 names a project; it gives way first when the strip is narrow.
+
     .child(h_flex().flex_1().min_w(0).gap(5).items_center()
       .when(Boolean(name), (el) => el.child(icon("folder", 12, t.muted)).child(div().min_w(0).truncate().child(name))))
-    // A branch's start tells it apart (its ticket); cut, the whole name is on hover.
+
     .when(Boolean(branch), (el) => el.child(tipMark(view, t, "chat-branch", branch, h_flex().max_w(220).gap(5).items_center()
       .child(icon("git-branch", 12, t.muted)).child(div().min_w(0).truncate().child(branch)))))
     .when(view.chat.tokens > 0, (el) => el.child(tipMark(view, t, "chat-tokens", "Context of the last reply", div().child(`${compactTokens(view.chat.tokens)} tokens`)))));
 }
 
-// What stands over the card: an error (T3's ThreadErrorBanner), until dismissed.
 function banner(view, t) {
   return sans(h_flex().w_full().pl(12).pr(6).py(6).gap(8).items_start().rounded(12).border(1).border_color(alpha(t.blocked, 0.3)).bg(alpha(t.blocked, 0.08))
     .text_size(12).line_height("18px").text_color(t.blocked)
@@ -133,12 +112,10 @@ function banner(view, t) {
       .child(icon("x", 12, t.blocked)))));
 }
 
-// A button of a panel (T3's Button): the answer that goes ahead is solid, the others outlined.
-// A label past LABEL_MAX, or wider than the panel, is cut; the whole label is on hover.
 const LABEL_MAX = 60;
 function panelButton(view, id, label, t, isPrimary, onClick) {
   const isLong = label.length > LABEL_MAX;
-  // In px: a percentage max width isn't honoured in the wrapping row. 26: the panel's padding and border.
+
   const button = sans(div().id(id).min_w(0).max_w(view.laneWidth() - 26).h(28).px(10).flex().items_center().rounded(8).text_size(13).font_weight(500).cursor_pointer()
     .bg(isPrimary ? t.foreground : "#00000000").text_color(isPrimary ? t.background : t.foreground)
     .border(1).border_color(isPrimary ? t.foreground : alpha(t.foreground, 0.16))
@@ -149,16 +126,12 @@ function panelButton(view, id, label, t, isPrimary, onClick) {
   return isLong ? tip(view, t, id, label, button) : button;
 }
 
-// What Claude asks, standing on the composer (ComposerPendingApprovalActions, ComposerPendingUserInputPanel):
-// what it wants to do (the command or the diff of the waiting tool call when known, else its
-// screen's words), then one button per answer; the digit answers too.
 function pendingPanel(view, menu, tool, t, mono) {
   const diff = tool ? editDiff(tool) : null;
   const command = tool?.name === "Bash" ? tool.input.command : null;
-  // Claude Code's own preview (a diff, a command) as its screen has it, when the transcript doesn't
-  // have the waiting tool call yet (it is written once answered).
+
   const preview = command ? `$ ${command}` : menu.detail || (menu.question.includes("\n") ? menu.question : "");
-  // A plan to approve is shown as its Markdown (T3's ProposedPlanCard), from Claude Code's plan file.
+
   const what = view.plan ? div().w_full().px(4).child(nested(view.plan.text, "pending-plan", t))
     : diff ? diffBlock(diff, { t, mono })
     : v_flex().w_full().px(12).py(10).rounded(8).bg(alpha(t.foreground, 0.035)).font_family(mono).text_size(12).line_height("18px").text_color(alpha(t.foreground, 0.85))
@@ -173,7 +146,6 @@ function pendingPanel(view, menu, tool, t, mono) {
 
 const pendingCard = (t) => v_flex().w_full().p(12).gap(10).rounded(16).border(1).border_color(alpha(t.foreground, 0.1)).bg(t.popover).shadow_md();
 
-// What Claude asks, as one line, with the way to its own terminal (t) for what the chat can't show.
 const TERMINAL_TIP = "Show Claude Code's terminal";
 function pendingTitle(view, title, t) {
   return sans(h_flex().gap(8).items_start().text_size(13).line_height("20px").font_weight(500).text_color(t.foreground)
@@ -183,8 +155,6 @@ function pendingTitle(view, title, t) {
       .on_click((_e, cx) => { view.toggleTerminal(); cx.notify(); }).child("Terminal"))));
 }
 
-// A question's steps (T3's pending user input progress): a chip per question by its header, the
-// one shown outlined, the answered ones ticked with what was picked here, and Submit.
 function questionSteps(view, menu, t) {
   return sans(h_flex().w_full().gap(6).flex_wrap().children(menu.steps.map((step, i) => {
     const isCurrent = i === menu.current;
@@ -198,7 +168,6 @@ function questionSteps(view, menu, t) {
   })));
 }
 
-// The mark at a question row's left: its digit (the key that picks it), or a multi-select's box.
 function rowMark(option, t) {
   if (option.isChecked === null) {
     return div().size(20).flex_none().flex().items_center().justify_center().rounded(6).border(1).border_color(alpha(t.foreground, 0.16))
@@ -209,8 +178,6 @@ function rowMark(option, t) {
     .when(option.isChecked, (el) => el.child(icon("check", 11, t.background)));
 }
 
-// One answer as a row: its mark, the label in bold (a Recommended badge after it), and its
-// description under it, wrapped. The row Claude Code's cursor is on is lit.
 function questionRow(view, option, t, { label = option.label, description = option.description } = {}) {
   return sans(h_flex().id(`menu-${option.key}`).w_full().px(10).py(8).gap(10).items_start().rounded(10).cursor_pointer()
     .when(option.isCursor, (el) => el.bg(alpha(t.foreground, 0.06)))
@@ -225,10 +192,6 @@ function questionRow(view, option, t, { label = option.label, description = opti
       .when(Boolean(description), (el) => el.child(div().w_full().text_size(12).line_height("18px").text_color(t.muted).child(description)))));
 }
 
-// What Claude asks with AskUserQuestion (T3's ComposerPendingUserInputPanel): its steps, the
-// question, a row per answer, one for an answer of one's own (written in the box), and under them
-// "Chat about this" (quiet: it answers nothing) and the step on. Its last step lists the answers
-// and submits them.
 function questionPanel(view, menu, t) {
   const of = (kind) => menu.options.filter((o) => o.kind === kind);
   const [typed] = of("typed"), [step] = of("step"), [chat] = of("chat");
@@ -251,14 +214,12 @@ function questionPanel(view, menu, t) {
     .when(Boolean(chat || step), (el) => el.child(footer));
 }
 
-// Claude waits and the chat can't read why: its terminal answers.
 function needsTerminal(view, t) {
   return sans(h_flex().w_full().px(12).py(8).gap(8).items_center().rounded(12).border(1).border_color(alpha(t.blocked, 0.3)).bg(alpha(t.blocked, 0.08)).text_size(12).text_color(t.blocked)
     .child(icon("alert", 12, t.blocked)).child(div().flex_1().child("Claude needs you in its terminal."))
     .child(tip(view, t, "waiting-terminal", TERMINAL_TIP, panelButton(view, "waiting-terminal", "Terminal", t, false, () => view.toggleTerminal()))));
 }
 
-// Claude's todo list (TodoWrite) over the composer: one line, "2/5 · the step in hand"; open, every step.
 function todoRow(view, entries, t) {
   const { done, total, current } = todoSummary(entries);
   const mark = (status) => (status === "completed" ? icon("circle-check", 13, t.done) : status === "in_progress" ? icon("spinner", 13, t.working).spin(900) : icon("square", 13, t.dim));
@@ -272,8 +233,6 @@ function todoRow(view, entries, t) {
       .text_color(entry.status === "completed" ? t.dim : t.foreground).child(mark(entry.status)).child(div().flex_1().min_w(0).child(entry.text))))));
 }
 
-// The model control's menu (T3's ProviderModelPicker, for one provider): Claude Code's model
-// aliases and efforts; a choice types `/model <alias>` or `/effort <level>` into Claude Code.
 function modelMenu(view, t) {
   const choice = (id, label, isOn, command) => sans(h_flex().id(id).h(28).px(10).gap(8).items_center().rounded(8).text_size(13).cursor_pointer()
     .text_color(t.foreground).when(isOn, (el) => el.bg(alpha(t.foreground, 0.08))).hover((s) => s.bg(alpha(t.foreground, 0.06)))
@@ -288,15 +247,13 @@ function modelMenu(view, t) {
     .children(EFFORT_CHOICES.map((e) => choice(`effort-${e}`, `${e[0].toUpperCase()}${e.slice(1)}`, view.status.effort === e, `/effort ${e}`))));
 }
 
-// The whole foot, centred at the lane's width: what Claude asks, its todo list, the @ and / menu,
-// the card with its controls (mode at the left; model and effort at the right), the context strip.
 export function composer(view, t, mono, { isActive, state, lane }) {
   const suggestions = view.suggestions().items;
   const model = modelLabel(view.chat.model);
   const effort = view.status.effort ? ` ${view.status.effort[0].toUpperCase()}${view.status.effort.slice(1)}` : "";
   const todos = [...view.chat.items.values()].find((item) => item.kind === "plan")?.entries ?? [];
   const isLive = state !== "stopped" && state !== "starting";
-  const left = isLive ? [control(view, "chat-mode", t, "Next mode (⇧Tab)", [div().child(MODES[view.status.mode])], (cx) => view.keys(cx, "shift+tab"))] : []; // as shift-tab: Claude Code's next mode
+  const left = isLive ? [control(view, "chat-mode", t, "Next mode (⇧Tab)", [div().child(MODES[view.status.mode])], (cx) => view.keys(cx, "shift+tab"))] : [];
   const right = model ? [control(view, "chat-model", t, "Model and effort", [svg("icons/claude.svg").size(14).flex_none(), div().child(model), div().text_color(t.muted).child(effort.trim())],
     () => { view.isPickingModel = !view.isPickingModel; })] : [];
   return h_flex().w_full().flex_none().justify_center().px(16).pb(12)
@@ -310,8 +267,6 @@ export function composer(view, t, mono, { isActive, state, lane }) {
       .child(v_flex().w_full().child(card(view, t, isActive, { left, right })).child(contextStrip(view, t))));
 }
 
-// A new chat (TriageDraftHero, DraftHeroHeadline): the question at 24px, normal weight, tight,
-// over the composer in the middle of the pane.
 export function hero(view, t, project) {
   return sans(v_flex().w_full().items_center().pb(20)
     .child(div().text_size(24).line_height("32px").text_color(t.foreground).child(project ? `What should we build in ${project}?` : "What should we build?"))

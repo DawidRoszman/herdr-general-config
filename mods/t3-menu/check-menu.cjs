@@ -1,4 +1,3 @@
-// Loads the menu in a fake `herdr`: a tab's and a pane's Close go through the tab bar; the rest is Herdr's own.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

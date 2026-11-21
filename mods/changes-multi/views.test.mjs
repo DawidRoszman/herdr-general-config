@@ -1,9 +1,7 @@
-// node --test mods/changes-multi/views.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { statusFiles, nameStatusFiles, diffSides } from "./views.js";
 
-// staged a.js, edited b.js, both c.js, new d.js, conflict e.js
 const STATUS = ["M  a.js", " M b.js", "MM c.js", "?? d.js", "UU e.js", "D  f.js"].join("\0") + "\0";
 const paths = (view) => statusFiles(view, STATUS).map((f) => `${f.status} ${f.path}`);
 

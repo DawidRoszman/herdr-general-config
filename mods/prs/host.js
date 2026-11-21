@@ -1,19 +1,33 @@
-// IO for the PR views. GitHub data comes from `mr` on the remote machine, whose gh has
-// access to the repos: every call streams the multirepo mod's mr.py to python3 over ssh,
-// as the multirepo dialog does.
-
 import { exec, hc, appHome, run, spaces, focused, shared, openOverlay, window, agents } from "herdr";
 import { remoteCommand, reviewTab, reviewKey, projectSpace, spaceAt, worktreeOf, machineLabel, OPEN_REVIEWS } from "./model.js";
 
 const MR = `${appHome()}/mods/multirepo/mr.py`;
 
-// This Mac: its spaces have machine null, and mr runs here without ssh.
 export const THIS_MAC = { name: null, target: null };
 
-export async function connectedMachines() {
+async function hcMachines() {
   const r = await hc(["machine", "ls", "--json"]);
   if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || "hc machine ls failed");
-  return JSON.parse(r.stdout).machines.filter((m) => !m.temporary && m.state === "connected");
+  return JSON.parse(r.stdout).machines;
+}
+
+const isSandbox = (machine) => machine.via === true && String(machine.target).includes("sandbox-via.sh");
+
+export async function connectedMachines() {
+  return (await hcMachines()).filter((m) => !m.temporary && !isSandbox(m) && m.state === "connected");
+}
+
+async function sandboxSpace(machine, project, branch) {
+  const sandboxes = new Set((await hcMachines()).filter(isSandbox).map((m) => m.name));
+  for (const space of spaces().filter((s) => sandboxes.has(s.machine) && s.folder)) {
+    const r = await exec("cat", [`${space.folder}/.mr-task.json`], { on: space.machine });
+    if (r.code !== 0) continue;
+    let task;
+    try { task = JSON.parse(r.stdout); } catch { continue; }
+    const isOnBranch = task.branch === branch || Object.values(task.branches ?? {}).includes(branch);
+    if (task.host?.machine === machine && task.host?.project === project && isOnBranch) return space;
+  }
+  return null;
 }
 
 export async function sshTarget(machineName) {
@@ -23,15 +37,12 @@ export async function sshTarget(machineName) {
   return machine.target;
 }
 
-// The command line that runs `mr <args>` on target (here when null): for mr() and for other mods
-// that run it themselves, like the walkthrough reading a PR's diff.
 export function mrArgv(target, args) {
   return target === null
     ? [...python(), MR, ...args]
     : ["sh", "-c", 'ssh -o BatchMode=yes "$1" "$2" < "$3"', "sh", target, remoteCommand(args), MR];
 }
 
-// Python 3 here: Windows has the py launcher (its python3 can be the Store's stub), elsewhere python3.
 function python() {
   return window()?.platform === "windows" ? ["py", "-3"] : ["python3"];
 }
@@ -47,8 +58,6 @@ export async function mrJson(target, args) {
   return JSON.parse(await mr(target, args));
 }
 
-// Where a plain repo has the branch checked out (a worktree can be anywhere), on its machine; null when
-// it isn't, or git can't say. A multirepo task's is taskCheckoutOf.
 async function checkoutOf(machine, repo, branch) {
   try {
     const r = await exec("git", ["-C", repo, "worktree", "list", "--porcelain"], { on: machine ?? undefined });
@@ -58,8 +67,6 @@ async function checkoutOf(machine, repo, branch) {
   }
 }
 
-// A local branch tracking origin's, so a worktree can check it out: a PR's branch is often only on
-// origin here. Nothing to do when the branch is local already.
 async function trackOriginBranch(machine, repo, branch) {
   const git = async (args) => {
     const r = await exec("git", ["-C", repo, ...args], { on: machine ?? undefined });
@@ -72,17 +79,14 @@ async function trackOriginBranch(machine, repo, branch) {
   if (!made.isOk) throw new Error(`Could not make a local ${branch}: ${made.message}`);
 }
 
-// `herdr-app do` answers with the ids it made; run() does not.
 async function herdrDo(command, args) {
   const r = await exec("herdr-app", ["do", command, JSON.stringify(args)]);
   let out = {};
-  try { out = JSON.parse(r.stdout); } catch { /* reported below with stderr */ }
+  try { out = JSON.parse(r.stdout); } catch {  }
   if (r.code !== 0 || out.error) throw new Error(out.error || r.stderr.trim() || `${command} failed`);
   return out;
 }
 
-// The space already on folder, else a new one there with the wts tabs (claude, terminal, nvim; claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.) as
-// multirepo/remote.js and wt-dialog open a workspace (mods can't import across folders). Its id.
 export async function openSpaceAt(machine, folder) {
   const space = spaceAt(spaces(), machine, folder);
   if (space) {
@@ -90,7 +94,7 @@ export async function openSpaceAt(machine, folder) {
     return space.id;
   }
   const { space: id, tab: terminal } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "terminal" });
-  const { tab: claude } = await herdrDo("tab.new", { space: id, name: "claude", mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } });
+  const { tab: claude } = await herdrDo("tab.new", { space: id, name: "claude", ...(shared("t3-chat.enabled") === false ? { folder, argv: ["claude"] } : { mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } }) });
   const { tab: nvim } = await herdrDo("tab.new", { space: id, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, tab] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id: tab, index: index + 1 });
   await herdrDo("space.select", { id });
@@ -98,14 +102,11 @@ export async function openSpaceAt(machine, folder) {
   return id;
 }
 
-// The folder of the multirepo task on branch (a repo's own branch in the task counts), from its
-// .mr-task.json, never from the folder's name: a task's branch can be renamed after it was made.
 async function taskFolder(target, project, branch) {
   const isOn = (t) => t.branch === branch || Object.values(t.branches ?? {}).includes(branch);
   return (await mrJson(target, ["ls", "--json", "--project", project])).tasks.find(isOn)?.root ?? null;
 }
 
-// Where a multirepo task has the branch, on its machine; null when no task has it, or mr can't say.
 async function taskCheckoutOf(machine, project, branch) {
   try {
     return await taskFolder(await sshTarget(machine), project, branch);
@@ -114,8 +115,6 @@ async function taskCheckoutOf(machine, project, branch) {
   }
 }
 
-// A multirepo task's folder for branch, made with mr new on repos (their short names) when missing;
-// a branch another tool already has checked out is linked, not checked out again. report: progress.
 export async function ensureTaskFolder(machine, project, branch, repos, report = () => {}) {
   const target = await sshTarget(machine);
   const taskOf = () => taskFolder(target, project, branch);
@@ -128,13 +127,15 @@ export async function ensureTaskFolder(machine, project, branch, repos, report =
   return made;
 }
 
-// A PR branch's checkout in a space (the one already on it, else a new one), for the review tab and
-// the sidebar: the multirepo task (ensureTaskFolder), or the plain repo's worktree. A plain repo
-// without one gets it from the worktree dialog, made where the project's wt config says, from
-// origin's branch. report: progress lines for the slow steps. The space's id; undefined while the
-// worktree dialog is up.
 export async function openBranchCheckout({ machine, project, branch, isRepo, repos }, report = () => {}) {
-  if (!isRepo) return openSpaceAt(machine, await ensureTaskFolder(machine, project, branch, repos, report));
+  if (!isRepo) {
+    const sandbox = await sandboxSpace(machine, project, branch);
+    if (sandbox) {
+      run("space.select", { id: sandbox.id });
+      return sandbox.id;
+    }
+    return openSpaceAt(machine, await ensureTaskFolder(machine, project, branch, repos, report));
+  }
   const folder = await checkoutOf(machine, project, branch);
   if (folder) return openSpaceAt(machine, folder);
   report(`Fetching ${branch} on ${machineLabel(machine)}…`);
@@ -144,8 +145,6 @@ export async function openBranchCheckout({ machine, project, branch, isRepo, rep
 
 const CLAUDE_START_MS = 30000;
 
-// Sends prompt to Claude Code in the branch's checkout (openBranchCheckout: made and opened when
-// missing), waiting for a new space's Claude to start. wait(ms): a pause (mods have no setTimeout).
 export async function askClaude(checkout, prompt, wait, report = () => {}) {
   const space = await openBranchCheckout(checkout, report);
   if (!space) throw new Error("Make the branch's worktree in the dialog, then try again.");
@@ -160,32 +159,32 @@ export async function askClaude(checkout, prompt, wait, report = () => {}) {
   throw new Error("No Claude Code in the branch's space: start one there, then try again.");
 }
 
-// The branch's review tab open in any space (review tabs publish theirs), or undefined.
 function openReviewTab(machine, project, branch) {
   const key = reviewKey(machine, project, branch);
   const published = shared(OPEN_REVIEWS) ?? {};
   return spaces().flatMap((s) => s.tabs).find((t) => published[t.id] === key);
 }
 
-// The branch's review tab: the one already open in any space (tab.select goes to its space too), else a
-// new one in the project's space (projectSpace: name is the project's or repo's name), else in the shown space.
-export async function openReview(machine, project, branch, isRepo = false, name = "", branches = [branch]) {
+export async function openReview(machine, project, branch, isRepo = false, name = "", branches = [branch], homeId = null) {
   const open = openReviewTab(machine, project, branch);
   if (open) return run("tab.select", { id: open.id });
   const published = shared(OPEN_REVIEWS) ?? {};
   const tab = reviewTab(machine, project, branch, isRepo, branches);
-  const checkout = await (isRepo ? checkoutOf : taskCheckoutOf)(machine, project, branch);
-  const home = projectSpace(spaces(), { machine, root: project, name, branch, checkout }) ?? spaces().find((s) => s.id === focused()?.space);
+  const home = spaces().find((s) => s.id === homeId) ?? await branchSpace(machine, project, branch, isRepo, name);
   if (home && home.id !== focused()?.space) run("space.select", { id: home.id });
-  // A review tab opened before tabs published themselves: found by its name, in that space. Not one
-  // published for another branch: several branches share a name (PR SHOP-110).
+
   const named = home?.tabs.find((t) => t.name === tab.name && !published[t.id]);
   if (named) run("tab.select", { id: named.id });
   else run("tab.new", { ...tab, ...(home ? { space: home.id } : {}) });
 }
 
-// The command that opens a PR's review (a notification's action): its open tab, as it is when the
-// notification goes out, else a new one in its project's space. checkout: the branch's task folder (mr prs' task).
+async function branchSpace(machine, project, branch, isRepo, name) {
+  const sandbox = isRepo ? null : await sandboxSpace(machine, project, branch);
+  if (sandbox) return sandbox;
+  const checkout = await (isRepo ? checkoutOf : taskCheckoutOf)(machine, project, branch);
+  return projectSpace(spaces(), { machine, root: project, name, branch, checkout }) ?? spaces().find((s) => s.id === focused()?.space);
+}
+
 export function reviewCommand(machine, project, branch, isRepo = false, name = "", checkout = null) {
   const open = openReviewTab(machine, project, branch);
   if (open) return { name: "tab.select", args: { id: open.id } };

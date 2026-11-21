@@ -6,12 +6,10 @@ import { menuJump } from "./list.js";
 import { glow, tip } from "./tip.js";
 import { MOTION } from "./motion.js";
 
-// A custom snooze can be far off; its timer needn't be.
 export const DAY = 86400000;
-// Base UI's collision padding, and the Snooze menu's width. shortcut: the width is the presets' widest as drawn, not measured; measure it if presets become editable.
+
 const NAP_MENU_MARGIN = 5, NAP_MENU_W = 180;
 
-// T3's default snooze menu, in local time: soonest first, one row per wake minute, tonight's gone once it's past.
 function presets(now) {
   const d = new Date(now), at = (days, h) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, h).getTime();
   const time = (ms) => { const w = new Date(ms); return `${w.getHours() % 12 || 12}:${String(w.getMinutes()).padStart(2, "0")} ${w.getHours() < 12 ? "am" : "pm"}`; };
@@ -23,7 +21,6 @@ function presets(now) {
     .filter((p, i, xs) => xs.findIndex((q) => Math.floor(q.at / 60000) === Math.floor(p.at / 60000)) === i);
 }
 
-// T3's Custom snooze: when a date and time or a duration wakes, or null for a time that doesn't exist or has passed.
 function customWake({ mode, date, time, amount, unit }, now) {
   let at;
   if (mode === "duration") {
@@ -34,7 +31,7 @@ function customWake({ mode, date, time, amount, unit }, now) {
     const m = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
     if (!m) return null;
     const w = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Number(m[1]), Number(m[2]));
-    // 25:00 rolls over, and a local time a clock change skips moves.
+
     if (w.getHours() !== Number(m[1]) || w.getMinutes() !== Number(m[2])) return null;
     at = w.getTime();
   }
@@ -44,7 +41,6 @@ function customWake({ mode, date, time, amount, unit }, now) {
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const UNITS = [["minutes", "Minutes"], ["hours", "Hours"], ["days", "Days"]];
 
-// The Custom dialog: this copy's own inputs, made once in init. It opens on an hour from now, as T3's.
 export function initCustom(view, cx) {
   stopsInit(view, cx, "modal");
   const soon = new Date(Date.now() + 3600000), pad = (n) => String(n).padStart(2, "0");
@@ -68,7 +64,7 @@ export function initCustom(view, cx) {
   };
   view.time = field("HH:MM", `${pad(soon.getHours())}:${pad(soon.getMinutes())}`);
   view.amount = field("2", "2");
-  // A number field, as T3's: its steppers count by 1 and stop at 0.
+
   view.amount.set_min(0);
   view.time.focus();
 }
@@ -83,7 +79,6 @@ function submitCustom(view) {
   run(`t3-inbox.custom-snooze:${props().customSnooze}:${at}`);
 }
 
-// A month to pick a day from; days gone by can't be picked. The kit has no calendar of its own.
 function calendar(view, t) {
   const y = view.month.getFullYear(), m = view.month.getMonth(), lead = new Date(y, m, 1).getDay();
   const now = new Date(Date.now()), today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -105,7 +100,7 @@ function calendar(view, t) {
       .when(Boolean(view.dayAt) && same(d, view.dayAt), (el) => el.relative().child(div().absolute().inset_0().rounded(8).border(2).border_color(t.accent)));
   };
   const weeks = Array.from({ length: 6 }, (_, w) => h_flex().children(Array.from({ length: 7 }, (_, i) => day(new Date(y, m, 1 - lead + w * 7 + i)))));
-  // One stop for the month's days, as T3's: the panel holds the keyboard and the arrows walk them, the month following.
+
   return v_flex().id("custom-calendar").mt(4).p(8).rounded(12).bg(t.popover).border_1().border_color(t.border).shadow_lg().text_size(14)
     .track_focus(view.dayKeys).key_context("InboxCalendar")
     .on_action("t3_inbox_day_pick", (_e, cx) => {
@@ -136,7 +131,7 @@ function calendar(view, t) {
 export function customView(view) {
   const t = theme(), done = () => closeOverlay(props().overlay);
   const label = (text) => div().text_size(14).line_height("16px").font_medium().text_color(t.foreground).child(text);
-  // 11 and T3's 1px border, as its controls count their padding.
+
   const input = (state) => h_flex().h(32).px(11).rounded(8).border(1).border_color(t.border).bg(t.input).items_center()
     .child(Input.new(state).flex_1().h_full().text_size(14).text_color(t.foreground));
   const choice = (id, on, name, pick) => stop(view, t, id, h_flex().id(id).h(24).flex_1().px(10).rounded(6).items_center().justify_center().text_size(12).font_medium()
@@ -146,12 +141,11 @@ export function customView(view) {
   const button = (id, text, primary, act) => stop(view, t, id, h_flex().id(id).h(32).px(11).items_center().rounded(8).border_1().border_color(primary ? t.solid : t.input).text_size(14).font_medium()
     .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground)
     .cursor_pointer().hover((s) => s.opacity(0.88)).role("button").accessibility_label(text).on_click(act).child(text), 8);
-  // NumberInput replays these onto its own step buttons (their ids are its own); inside the frame's 1px, so 7 round.
+
   const stepper = (glyph, name, side) => h_flex().h_full().px(11).flex_none().items_center().justify_center().cursor_pointer()
     .when(side === "l", (el) => el.rounded_l(7)).when(side === "r", (el) => el.rounded_r(7)).hover((s) => s.bg(t.hover))
     .accessibility_label(name).child(svg(`mods/t3-inbox/icons/${glyph}.svg`).size(16).flex_none().text_color(t.muted));
-  // T3's unit Select, on the kit's: it owns Esc and ↑/↓/Enter opening; the highlight, the pick and a press elsewhere are ours.
-  // The trigger is drawn as the date's, the list under it, the chosen one shaded.
+
   const zoom = Number(settings()?.zoom) || 1;
   const showUnits = (open) => {
     view.unitOpen = open;
@@ -175,7 +169,7 @@ export function customView(view) {
     .child(svg("mods/t3-inbox/icons/chevron-down.svg").size(14).mr(-4).flex_none().text_color(t.muted).opacity(0.7)), 8, { handle: view.unitFocus });
   const unitList = v_flex().id("custom-unit-list").w(view.unitW ?? 161).mt(4).p(4).rounded(8).bg(t.popover).border_1().border_color(t.border).shadow_lg()
     .track_focus(view.unitKeys)
-    // The trigger's own click toggles, so a press on it isn't "elsewhere".
+
     .on_mouse_down_out((_e, cx) => { if (!view.overUnit) { showUnits(false); cx.notify(); } })
     .on_key_down((e, cx) => {
       if (e.key === "enter" || e.key === "space") pickUnit(UNITS[view.unitAt][0]);
@@ -206,7 +200,7 @@ export function customView(view) {
             if (open) {
               view.dayAt = null;
               view.month = new Date(view.date.getFullYear(), view.date.getMonth(), 1);
-              // Enter and Space are the Popover's, which would only close it: a binding of ours, deeper in, comes first (as the snooze menu's).
+
               cx.bind_keys(["enter", "space"].map((keystroke) => ({ keystroke, action: "t3_inbox_day_pick", context: "InboxCalendar" })));
             }
             cx.notify();
@@ -218,13 +212,13 @@ export function customView(view) {
           .when(view.calendarOpen, (el) => el.content(calendar(view, t)))))
       .child(v_flex().flex_1().min_w(0).gap(8).child(label("Time")).child(input(view.time)))
     : h_flex().gap(12)
-      // As T3's NumberField: − and + either side of the amount, in the frame the other fields have.
+
       .child(v_flex().flex_1().min_w(0).gap(8).child(label("Snooze for"))
         .child(NumberInput.new(view.amount).h(32).rounded(8).border(1).border_color(t.border).bg(t.input).text_size(14).text_color(t.foreground)
           .decrement_button(stepper("minus", "Decrease duration", "l"))
           .increment_button(stepper("plus", "Increase duration", "r"))))
       .child(v_flex().flex_1().min_w(0).gap(8).child(label("Unit")).child(unit));
-  // T3's dialog: its header, panel and footer, each with its own padding, in a frame drawn here for T3's 16px corners (Herdr's own is its size).
+
   return focusRoot(view, v_flex().id("custom-snooze").w_full().rounded(16).border(1).border_color(t.border).bg(t.popover).shadow_xl().text_size(14)
     .child(v_flex().flex_none().p(24).pb(12).gap(8)
       .child(h_flex().items_center()
@@ -232,7 +226,7 @@ export function customView(view) {
         .child(div().text_size(12).text_color(t.dim).child("Esc")))
       .child(div().line_height("20px").text_color(t.muted).child("Choose when snoozed agents return to your inbox.")))
     .child(v_flex().flex_none().px(24).pt(4).pb(24).gap(16)
-      // T3's segmented group: the track and 2 around its toggles.
+
       .child(h_flex().gap(2).p(2).rounded(8).bg(t.input)
         .child(choice("mode-date", view.mode === "date", "Date and time", () => { view.mode = "date"; view.time.focus(); }))
         .child(choice("mode-duration", view.mode === "duration", "Duration", () => { view.mode = "duration"; view.amount.focus(); })))
@@ -252,10 +246,9 @@ export function snoozeButton(view, t, a, { now, offer: napOffer, delay }, pick) 
       view.napMenu = open ? a.address : null;
       if (!open) view.napRight = null;
       view.napAt = -1;
-      // T3's menu fades in: drawn clear once, then let go (Herdr eases only later changes). It closes at once.
+
       if (open) { view.napShown = false; cx.timer.after(16, (cx) => { view.napShown = true; cx.notify(); }); }
-      // Enter and Space are the Popover's, which would only close it: a binding of ours, deeper in, comes first.
-      // On each open, as win98's menu binds: a reload of keys.json clears the keymap.
+
       if (open) cx.bind_keys(["enter", "space"].map((keystroke) => ({ keystroke, action: "t3_inbox_snooze_pick", context: "InboxSnoozeMenu" })));
       cx.notify();
     })
@@ -267,7 +260,7 @@ export function snoozeButton(view, t, a, { now, offer: napOffer, delay }, pick) 
       .when(napOffer, (el) => stop(view, t, napId, el, 6)))
     .when(menu, (el) => {
       const choices = [...presets(now), { label: "Custom…", custom: true }];
-      // Sized as T3's menu: as wide as its rows, 160px at least. Nothing lit until the pointer or a key gets there.
+
       return el.content(v_flex().id(`snooze-panel-${a.address}`).min_w(160).mt(4).p(4).rounded(8).bg(t.popover).border_1().border_color(t.border).shadow_lg().text_size(14)
         .opacity(view.napShown === false ? 0 : 1).transition("opacity", MOTION)
         .track_focus(view.napKeys).key_context("InboxSnoozeMenu")

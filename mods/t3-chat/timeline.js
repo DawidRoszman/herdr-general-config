@@ -1,10 +1,3 @@
-// The conversation's rows other than the reply's Markdown, drawn as T3 Code's timeline draws them
-// (MessagesTimeline.tsx, TimelineUserMessageRow.tsx, TimelineWorkEntryRow.tsx). Each function
-// returns one row's content at the lane's width, with the space under it that T3's row has.
-// ctx: { view (the chat, for tip()), t, mono, p (an id prefix), now (seconds), images (key -> { path, thumb?, width, height }), openImage (key ->
-// opens it large), copied (row id),
-// hovered (the row id under the pointer), folder }.
-
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { typedMarkdown, formatElapsed, entryLabel, toolDetail, editDiff, shortPath, fitSize } from "./model.js";
@@ -12,12 +5,10 @@ import { sans, alpha, nested } from "./render-md.js";
 import { tip, tipMark, glow } from "./tip.js";
 
 const icon = (name, size, color) => svg(`mods/t3-chat/icons/${name}.svg`).size(size).flex_none().text_color(color);
-const LEADING = "22.75px"; // text-sm leading-relaxed
-// The time as 14:05 (the runtime's toLocaleTimeString takes no options).
+const LEADING = "22.75px";
+
 const clock = (at) => { const d = new Date(at * 1000); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
-// Pictures the transcript holds (pasted ones, a tool's screenshots), each fitted in THUMB_BOX, from
-// its sharp copy when made; a click opens it large.
 export const THUMB_BOX = { width: 320, height: 240 };
 function thumbs(pictures, ctx) {
   const { images, t } = ctx;
@@ -34,12 +25,9 @@ function thumbs(pictures, ctx) {
   }));
 }
 
-// The copy control of a row: a check for a moment after (T3's MessageCopyButton). The row is the button.
 const copyMark = (ctx, id) => tipMark(ctx.view, ctx.t, `copy-${id}`, ctx.copied === id ? "Copied" : "Copy",
   icon(ctx.copied === id ? "check" : "copy", 12, ctx.copied === id ? ctx.t.done : ctx.t.muted));
 
-// The person's message: a bubble at the right, at most 80% of the lane, rounded-2xl on T3's
-// message surface; under it the time and copy, shown while the pointer is on the row; pb-4.
 export function userRow(row, ctx, lane) {
   const { t } = ctx;
   return v_flex().w_full().items_end().gap(4).pb(16)
@@ -52,9 +40,6 @@ export function userRow(row, ctx, lane) {
       .child(copyMark(ctx, row.id)));
 }
 
-// "Worked for 51s ›": a run of tool calls and thinking, folded (T3's turn fold). Ruled under at
-// 60% of the border; 14px muted, tabular; open, its entries follow. Live, it counts from
-// the turn's start (T3's working timer) and shimmers.
 export function foldRow(row, ctx, isOpen) {
   const { t } = ctx;
   const label = row.isLive ? `Working for ${formatElapsed(ctx.now - row.turnStartedAt)}` : `Worked for ${formatElapsed(row.endedAt - row.startedAt)}`;
@@ -65,19 +50,15 @@ export function foldRow(row, ctx, isOpen) {
       .child(icon(isOpen ? "chevron-down" : "chevron-right", 14, t.muted)));
 }
 
-// T3's diff colours (--diff-addition / --diff-deletion): the theme's green and red.
 const added = (t) => t.ansi2;
 const removed = (t) => t.ansi1;
 
-// +12 -3, mono, as T3's DiffStatLabel.
 function diffStat(file, t, mono) {
   return h_flex().flex_none().gap(6).font_family(mono).text_size(12)
     .when(file.additions > 0, (el) => el.child(div().text_color(added(t)).child(`+${file.additions}`)))
     .when(file.deletions > 0, (el) => el.child(div().text_color(removed(t)).child(`-${file.deletions}`)));
 }
 
-// An edit as a unified diff: mono 12px lines on the code surface, added and removed lines tinted
-// with a marker column. No word-level or syntax colours (the Changes panel has those).
 const DIFF_SHOWN = 80;
 export function diffBlock(diff, ctx) {
   const { t, mono } = ctx;
@@ -92,9 +73,6 @@ export function diffBlock(diff, ctx) {
     .when(diff.lines.length > shown.length, (el) => el.child(div().px(12).pt(4).text_color(t.dim).child(`… ${diff.lines.length - shown.length} more lines`)));
 }
 
-// The files a turn changed (ChangedFilesTree.tsx): a card on T3's secondary surface, rounded-lg,
-// 16px above; its header "2 changed files +12 -3" at 12px medium and "Open diff"; then a 28px
-// row per file. Shown as a flat list of paths, not T3's tree. The card opens the Changes panel.
 export function changedRow(row, ctx) {
   const { t, mono } = ctx;
   const total = row.files.reduce((sum, f) => ({ additions: sum.additions + f.additions, deletions: sum.deletions + f.deletions }), { additions: 0, deletions: 0 });
@@ -108,7 +86,7 @@ export function changedRow(row, ctx) {
       .child(v_flex().w_full().px(12).pb(8).children(row.files.map((file) => {
         const path = shortPath(file.path, ctx.folder);
         const cut = path.lastIndexOf("/") + 1;
-        // The folders give way to the name; the whole path is on hover.
+
         const id = `${ctx.p}changed-${row.id}-${file.path}`;
         return tip(ctx.view, t, id, file.path, sans(h_flex().id(id).w_full().h(28).pr(8).gap(8).items_center().rounded(6).text_size(13).hover((s) => s.bg(alpha(t.foreground, 0.05)))
           .on_hover(glow(ctx.view, id))
@@ -120,8 +98,6 @@ export function changedRow(row, ctx) {
       }))));
 }
 
-// One tool call or thought of an open group: a 16px icon in a 24px column, what was done at 14px,
-// and to what, muted, on one line; open, its detail 28px in (T3's `ms-7`).
 export function entryRow(entry, ctx, isOpen) {
   const { t, mono } = ctx;
   const { icon: name, heading, detail } = entryLabel(entry);
@@ -132,7 +108,7 @@ export function entryRow(entry, ctx, isOpen) {
     const diff = editDiff(entry);
     if (diff) return diffBlock(diff, ctx);
     if (entry.name !== "Bash") return div().child(TextView.markdown(`${ctx.p}tool-${entry.id}`, toolDetail(entry)).text_size(12));
-    // A command and what it printed, as T3's CommandOutputPanel: mono 12px on the code surface.
+
     const lines = [`$ ${entry.input.command ?? entry.title}`, ...(entry.output ? entry.output.split("\n") : [])];
     const shown = lines.slice(0, 60);
     return v_flex().w_full().px(12).py(10).rounded(8).bg(alpha(t.foreground, 0.035)).overflow_hidden()
@@ -151,8 +127,6 @@ export function entryRow(entry, ctx, isOpen) {
     .when((entry.images ?? []).length > 0 && isOpen, (el) => el.child(div().pl(32).pb(8).child(thumbs(entry.images, ctx))));
 }
 
-// After a finished turn: how long it took, and copy the reply (T3's assistant meta, shown while the
-// pointer is on the row). pb-4.
 export function metaRow(row, ctx) {
   const { t } = ctx;
   return div().w_full().pt(6).pb(16).cursor_pointer()
@@ -161,7 +135,6 @@ export function metaRow(row, ctx) {
       .child(sans(div().text_size(12).text_color(t.muted).child(formatElapsed(row.endedAt - row.startedAt)))));
 }
 
-// While Claude works and no group is live: T3's working row.
 export function workingRow(row, ctx) {
   const { t } = ctx;
   return div().w_full().pb(6)
@@ -170,7 +143,6 @@ export function workingRow(row, ctx) {
         .loop("opacity", { from: 0.5, to: 1, period: 1400 })));
 }
 
-// T3's system divider: a label between two rules, 12px.
 export function dividerRow(label, ctx) {
   const { t } = ctx;
   return h_flex().w_full().gap(12).py(4).pb(16).items_center()
@@ -179,14 +151,11 @@ export function dividerRow(label, ctx) {
     .child(div().h(1).flex_1().bg(alpha(t.border, 0.6)));
 }
 
-// What a slash command printed.
 export function noticeRow(row, ctx) {
   const { t, mono } = ctx;
   return div().w_full().pb(16).child(div().px(10).py(6).rounded(8).bg(alpha(t.foreground, 0.035)).font_family(mono).text_size(12).line_height("18px").text_color(t.muted).child(row.text));
 }
 
-// A plan Claude proposes (ProposedPlanCard.tsx): a rounded-2xl card, bordered, 16px inside; its
-// title row, then the plan's Markdown, folded to 416px with a fade until opened. The row toggles it.
 const PLAN_FOLD = 416;
 export function planRow(row, ctx, isOpen) {
   const { t } = ctx;

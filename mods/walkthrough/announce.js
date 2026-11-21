@@ -1,7 +1,3 @@
-// The toasts a finished generation posts. Whoever claims a finished job (the open walkthrough, a
-// background turn, or the watcher) announces it, so each job is announced once. They go into the
-// bell's history too (notifylog.js, the same copy the other mods carry).
-
 import { notifyAndLog } from "./notifylog.js";
 import { shortLabel } from "./lib/sources.js";
 

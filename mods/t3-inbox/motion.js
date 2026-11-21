@@ -1,9 +1,7 @@
-// A list's motion and a fold's arrow, as T3's Sidebar.motion.ts. scripts/sync.sh copies this to the mods that use it.
 import { div, svg } from "gpui-kit";
 
-export const MOTION = /** @type {const} */ ({ duration: 150, easing: "ease-out" });
+export const MOTION =  ({ duration: 150, easing: "ease-out" });
 
-// T3 turns its arrow. Herdr can't animate a turn, so the two directions cross-fade in one slot. No `id` (a ghost): it just shows.
 export function foldArrow(mod, id, open, size, color) {
   const glyph = (name) => svg(`mods/${mod}/icons/chevron-${name}.svg`).size(size).flex_none().text_color(color);
   if (!id) return glyph(open ? "down" : "right");
@@ -11,13 +9,7 @@ export function foldArrow(mod, id, open, size, color) {
   return div().relative().size(size).flex_none().child(way("down", open)).child(way("right", !open));
 }
 
-// `entries`: the list's rows in order, each { key, h, y?, ghost? }: `y` where they don't just stack, ghost() to draw a row's leaving
-// without handlers or ids the list uses (none: it just goes).
-// When the rows change, one that moved slides from where it was, a new one fades in riding the kept row above it, and one
-// that left fades out riding the same way. Over 40 coming and going, they just show. `freeze` records the rows without playing
-// anything (a drag draws its own); `from` lands a dropped row from where it was let go: { key, y }.
-// Herdr eases only later changes to an element: a row that moves gets a new id, first drawn where it was, then let go.
-export function planMotion(view, entries, cx, { freeze, from } = /** @type {{ freeze?: any, from?: any }} */ ({})) {
+export function planMotion(view, entries, cx, { freeze, from } =  ({})) {
   let y = 0;
   const at = new Map(entries.map((e) => { const top = e.y ?? y; y = top + e.h; return [e.key, { ...e, y: top }]; }));
   const sig = [...at.keys()].join("\n"), m = view.motion;
@@ -52,12 +44,11 @@ export function planMotion(view, entries, cx, { freeze, from } = /** @type {{ fr
     x.travel = above === undefined ? Math.min(x.h, 40) : -(fly[above]?.top ?? 0);
   }
   view.motion = { sig, at, gen, fly, exits, step, leaving: false };
-  // A frame drawn where they were, then let go.
+
   cx.timer.after(16, (cx) => { if (view.motion.step !== step) return; view.motion.fly = {}; view.motion.leaving = true; cx.notify(); });
   cx.timer.after(MOTION.duration + 50, (cx) => { if (view.motion.step !== step) return; view.motion.exits = []; cx.notify(); });
 }
 
-// A row in its wrapper, which flies.
 export function flying(view, key, child) {
   const f = view.motion.fly[key];
   return div().id(`fly-${key}-${view.motion.gen[key] ?? 0}`).flex_none().relative()
@@ -65,7 +56,6 @@ export function flying(view, key, child) {
     .child(child);
 }
 
-// The rows that left, for a relative() parent the rows fill: inert where they were, fading out. A row gone with too much of its state just goes.
 export function leavingRows(view) {
   const away = view.motion.leaving;
   return view.motion.exits.filter((x) => x.ghost).flatMap((x) => {

@@ -1,11 +1,6 @@
-// Projects tab: a multirepo project's tasks on the left, the selected task's repos on the right
-// (branch state and PR per repo) with its actions. Reads through `mr`; steps that need typing,
-// a confirmation or progress open the multirepo dialog at that step (props addTo, prTask, ...).
-// props: { view: "projects" }. One per space: a second one hands over to the first.
-
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
-import { theme, run, spaces, panes, openOverlay, shared, setShared } from "herdr";
+import { theme, run, spaces, panes, openOverlay, shared, setShared, checking } from "herdr";
 import { mrJsonOn, machinesWithThisMac, machineLabel, reviewTab, openWorkspace, workspaceOf } from "./remote.js";
 import { stackOrder, CHANGED } from "./view.js";
 import { icon, taskRow, repoRow, branchParts, TASK_ROW } from "./rows.js";
@@ -13,9 +8,9 @@ import { icon, taskRow, repoRow, branchParts, TASK_ROW } from "./rows.js";
 const REFRESH_MS = 30000;
 const DIALOG = { mod: "multirepo", kind: "dialog", width: 760, height: 480 };
 const PULL = { mod: "mr-pull", kind: "dialog", width: 460, height: 240 };
-// Shared: the tabs holding a Projects view (panes() can't tell one multirepo pane from another).
+
 const PROJECTS_TABS = "multirepo.projectsTabs";
-// Shared: tab -> the title its pane header shows (t3-pane reads "<mod>.titles"), so it says Projects, not the mod's name.
+
 const TITLES = "multirepo.titles";
 
 export class ProjectsView {
@@ -24,31 +19,40 @@ export class ProjectsView {
     this.handle.focus();
     this.ownTab = null;
     this.listScroll = VirtualListScrollHandle.new();
-    this.places = undefined; // [{ key, machine: { name, target }, project: { name, root, repos } }]
+    this.places = undefined;
     this.placeKey = localStorage.getItem("place");
-    this.listing = undefined; // mr ls --json of the shown project
-    this.details = new Map(); // task root -> { repos } | { error } | { isLoading }
-    this.shownDetails = new Map(); // the last loaded ones: shown while a refresh loads, so nothing flickers
+    this.listing = undefined;
+    this.details = new Map();
+    this.shownDetails = new Map();
     this.at = 0;
     this.error = "";
-    this.notice = ""; // what the last action did (a copy), until the next one
+    this.notice = "";
     this.query = "";
     this.isTyping = false;
     this.input = InputState.new({ value: "", placeholder: "Search tasks" });
     this.input.on("change", (_e, cx) => { if (!this.isTyping) return; this.query = this.input.value().trim().toLowerCase(); this.moveTo(0); cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.isTyping = false; cx.notify(); });
     this.seenChange = shared(CHANGED);
-    cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.followDialog(cx); this.followWorkspaces(cx); });
-    cx.timer.every(REFRESH_MS, (cx) => { if (this.isShown()) this.loadTasks(cx); });
+    this.lastProfile = shared("context")?.current ?? null;
     this.loadedAt = 0;
+    if (checking()) return;
+    cx.timer.every(400, (cx) => {
+      this.claimKeyboard(cx);
+      this.followDialog(cx);
+      this.followWorkspaces(cx);
+      const currentProfile = shared("context")?.current ?? null;
+      if (currentProfile !== this.lastProfile) {
+        this.lastProfile = currentProfile;
+        this.loadPlaces(cx);
+      }
+    });
+    cx.timer.every(REFRESH_MS, (cx) => { if (this.isShown()) this.loadTasks(cx); });
     this.loadPlaces(cx);
   }
 
   command(name) {
     if (name === "focus") this.handle.focus();
   }
-
-  // ------------------------------------------------------------------- data
 
   act(cx, work) {
     cx.spawn(async (cx) => {
@@ -98,7 +102,7 @@ export class ProjectsView {
       this.refreshDetails();
       const roots = new Set(this.listing.tasks.map((x) => x.root));
       for (const root of this.shownDetails.keys()) if (!roots.has(root)) this.shownDetails.delete(root);
-      // The same task stays selected when one was made or removed above it.
+
       const found = this.tasks().findIndex((x) => x.root === selectedRoot);
       const at = found === -1 ? Math.min(this.at, Math.max(0, this.tasks().length - 1)) : found;
       if (at !== this.at) this.moveTo(at);
@@ -120,7 +124,6 @@ export class ProjectsView {
     return this.tasks()[this.at] ?? null;
   }
 
-  // The selected task's repos with their PRs (mr status asks GitHub, so it's loaded on demand).
   loadDetail(cx) {
     const task = this.selected();
     const place = this.place();
@@ -139,7 +142,6 @@ export class ProjectsView {
     });
   }
 
-  // Details load again (mr status asks GitHub); the old ones stay on screen until then.
   refreshDetails() {
     this.details.clear();
   }
@@ -153,9 +155,6 @@ export class ProjectsView {
     return this.listing?.shorts?.[name] ?? name;
   }
 
-  // ---------------------------------------------------------------- actions
-
-  // The task's workspace: the space already on its folder, else a new one (openWorkspace).
   openTask(cx, task) {
     const place = this.place();
     this.act(cx, async () => { await openWorkspace(task.root, place.machine.name); return ""; });
@@ -176,7 +175,6 @@ export class ProjectsView {
     this.notice = `Copied the branch name: ${task.branch}`;
   }
 
-  // The mr-pull mod's popup, on this task instead of the focused terminal's.
   pull(task) {
     openOverlay({ ...PULL, props: { machine: this.place().machine.name, folder: task.root } });
   }
@@ -206,15 +204,10 @@ export class ProjectsView {
     this.loadTasks(cx);
   }
 
-  // ------------------------------------------------------------------- keys
-
   isShown() {
     return spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id === this.ownTab;
   }
 
-  // Its tab, learnt at the first layout (focused() can lag right after tab.new); a second
-  // Projects tab in the same space hands over to the earlier one and closes (the earlier one stays,
-  // so two copies learning at once, after a reload, never close each other).
   learnTab(cx) {
     if (this.ownTab) return;
     this.ownTab = spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id ?? null;
@@ -232,8 +225,6 @@ export class ProjectsView {
     }
   }
 
-  // The dialog stamps CHANGED when a task was made, changed or removed: the list and details reload.
-  // So do they when the tab is shown again after missing a refresh while hidden (tasks made in a shell).
   followDialog(cx) {
     const stamp = shared(CHANGED);
     const isShown = this.isShown();
@@ -245,7 +236,6 @@ export class ProjectsView {
     this.loadTasks(cx);
   }
 
-  // A workspace opened or closed elsewhere: the dots and the open button follow.
   followWorkspaces(cx) {
     const open = (this.listing?.tasks ?? []).filter((x) => this.isOpen(x)).map((x) => x.root).join("\n");
     if (open === this.openRoots) return;
@@ -299,8 +289,6 @@ export class ProjectsView {
     cx.notify();
   }
 
-  // ----------------------------------------------------------------- render
-
   button(id, iconName, label, onClick, t, { isPrimary = false, isDanger = false, tooltip = "" } = {}) {
     const text = isPrimary ? t.solid_foreground : isDanger ? t.blocked : t.foreground;
     return h_flex().id(id).flex_none().h(28).px(10).gap(6).items_center().rounded(7).cursor_pointer()
@@ -315,7 +303,6 @@ export class ProjectsView {
     return Boolean(workspaceOf(task.root, this.place()?.machine.name ?? null));
   }
 
-  // The task's stack, bottom first: a chip per layer that selects it, and what it builds on and is under.
   stackPanel(task, t) {
     const layers = task.stack;
     const isListed = (branch) => this.ordered.some((x) => x.branch === branch);
@@ -407,7 +394,7 @@ export class ProjectsView {
         .child(this.button("act-project", "folder", place ? "" : "Add project", () => openOverlay(DIALOG), t, { tooltip: "Projects on a machine: set one up from a folder of repos, or clone one from another machine" }))
         .child(this.button("act-refresh", "refresh", "", (cx) => this.refresh(cx), t, { tooltip: "Refresh · r" })))
       .child(h_flex().flex_1().min_h(0)
-        // Tasks.
+
         .child(v_flex().w(380).max_w_2_5().flex_none().h_full().border_r(1).border_color(t.border)
           .child(h_flex().flex_none().h(36).px(14).items_center().gap(6)
             .child(div().flex_1().text_size(11.5).font_medium().text_color(t.dim).child(this.listing ? `${tasks.length} task${tasks.length === 1 ? "" : "s"}` : "")))
@@ -422,7 +409,7 @@ export class ProjectsView {
                 .track_scroll(this.listScroll)
                 .size_full())
             .child(Scrollbar.vertical("projects-tasks").absolute().inset_0())))
-        // The selected task.
+
         .child(task && place ? this.detail(task, t) : div().flex_1().p(20).text_size(12.5).text_color(t.dim)
           .child(place ? "Pick a task." : this.places?.length === 0 ? "No multirepo projects on any connected machine yet. Add project (top right) sets one up from a folder of git repos, or clones one from another machine." : "")))
       .when(Boolean(this.notice) && !this.error, (el) => el.child(div().flex_none().px(16).py(6).text_size(12).text_color(t.muted).truncate().child(this.notice)))

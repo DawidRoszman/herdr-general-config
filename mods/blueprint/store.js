@@ -1,26 +1,3 @@
-// Diagrams on disk, one folder per project, inside the app's own data folder so
-// nothing lands in the person's repositories:
-//
-//   <app home>/data/blueprint/projects/<name>-<hash>/
-//     <diagram>.mmd   one Mermaid diagram each: the agent writes, Blueprint reads
-//     project.json    { path, agent, asked, pinned: [file], seen: { file: ms }, opened: ms,
-//                       files: { file: { sum, at } } }
-//     topic.txt       the project's main topic, one line, written by the agent
-//
-// A project is a checkout: the git top level of the tab's terminal folder, so
-// every worktree is its own project (its folder stays put while branches come
-// and go), or that folder when it is not in git. Diagrams nobody updated or
-// opened for KEEP_DAYS are deleted unless pinned, and past a day old a project
-// keeps at most KEEP_COUNT unpinned ones.
-//
-// More than one Blueprint can have a project open (the panel and a pane), so
-// project.json changes through updateMeta: a change applied to what is on disk
-// and written only if nobody wrote in between (else read and apply again).
-//
-// It runs on macOS, Linux and Windows, so no shell and no stat: when a file
-// last changed is when Blueprint first saw its current text (files.at).
-// Paths use "/" everywhere, Windows ones too.
-
 import * as fs from "fs/promises";
 import { exec, appHome, readTextFile, writeTextFile } from "herdr";
 
@@ -31,7 +8,7 @@ const DAY = 86400000;
 export const slashes = (p) => p.replace(/\\/g, "/");
 export const projectsDir = () => `${slashes(appHome())}/data/blueprint/projects`;
 
-const checkouts = new Map(); // machine|folder -> checkout
+const checkouts = new Map();
 export async function checkoutOf(cwd, machine = null) {
   const folder = slashes(cwd), key = `${machine ?? ""}|${folder}`;
   if (checkouts.has(key)) return checkouts.get(key);
@@ -40,16 +17,11 @@ export async function checkoutOf(cwd, machine = null) {
     const r = await exec("git", ["-C", folder, "rev-parse", "--show-toplevel"], { on: machine });
     if (r.code === 0 && r.stdout.trim()) root = slashes(r.stdout.trim());
     checkouts.set(key, root);
-  } catch (_) {} // git didn't run: ask again next time
+  } catch (_) {}
   return root;
 }
 
-// FORK (remote machines): an agent in a space on another machine can't write
-// into this app's folder, so it saves its diagrams in
-// ~/.herdr/blueprint/<project folder name>/ on its own machine, and Blueprint
-// mirrors that folder into the local project folder, where everything else
-// (watch, retention, project.json) works as it does for a local agent.
-const homes = new Map(); // machine -> its $HOME
+const homes = new Map();
 export async function remoteDirOf(machine, dir) {
   if (!homes.has(machine)) {
     const r = await exec("sh", ["-c", 'printf %s "$HOME"'], { on: machine });
@@ -69,8 +41,7 @@ export const makeRemoteDir = (machine, remote) => onMachine(machine, 'mkdir -p "
 export const removeRemote = (machine, remote, file) => onMachine(machine, 'rm -f "$1/$2"', [remote, file]);
 
 const FILE_MARK = "\x1e", NAME_END = "\x1f";
-// Makes the local folder's diagrams and topic what the remote folder has.
-// Nothing happens before the local folder exists (not connected yet).
+
 export async function pullRemote(machine, remote, dir) {
   if (!(await hasDir(dir))) return;
   const out = await onMachine(machine, 'cd "$1" 2>/dev/null || exit 0; for f in *.mmd topic.txt; do [ -f "$f" ] && printf "\\036%s\\037" "$f" && cat "$f"; done; exit 0', [remote]);
@@ -86,7 +57,6 @@ export async function pullRemote(machine, remote, dir) {
   }
 }
 
-// FNV-1a: a short id that stays the same for the same path (or text).
 function hash(s) {
   let h = 0x811c9dc5;
   for (const ch of s) h = Math.imul(h ^ ch.codePointAt(0), 0x01000193) >>> 0;
@@ -118,10 +88,7 @@ export async function readMeta(dir, path) {
   return parseMeta(await readTextFile(`${dir}/project.json`).catch(() => null), path);
 }
 
-// Applies change(meta) to project.json as it is on disk now, makes the folder
-// if needed, and returns what was written. Changes from this Blueprint go one
-// at a time; another one writing in between makes this read and apply again.
-const queues = new Map(); // dir -> the last change's promise
+const queues = new Map();
 export function updateMeta(dir, path, change) {
   const next = (queues.get(dir) ?? Promise.resolve()).catch(() => {}).then(() => apply(dir, path, change));
   queues.set(dir, next);
@@ -140,19 +107,13 @@ async function apply(dir, path, change) {
       await writeTextFile(file, JSON.stringify(meta, null, 1), text);
       return meta;
     } catch (err) {
-      if (tries >= 3) throw err; // written by someone else meanwhile: again, on theirs
+      if (tries >= 3) throw err;
     }
   }
 }
 
-// What changed in a project folder is news when it is a diagram or the topic;
-// the rest (project.json and whatever saving it leaves) is bookkeeping. Herdr
-// sends the folder itself when too much changed to list: anything may have
-// (and so may a path not spelled the way dir is).
 export const isNews = (f, dir) => /\.mmd$|topic\.txt$/.test(f) || !slashes(f).startsWith(`${dir}/`);
 
-// *.mmd in the folder, read, each with when its text last changed: the time
-// recorded with the same text, else now (a new or changed file).
 async function listed(dir, meta, now) {
   let names = [];
   try {
@@ -171,9 +132,6 @@ async function listed(dir, meta, now) {
   return { list, files };
 }
 
-// The project's diagrams, oldest-touched ones deleted first. Each comes back
-// as { file, mtime, touched, pinned, src }, newest first. New or changed
-// files get their time recorded in project.json (and in meta).
 export async function load(dir, meta, now = Date.now(), onExpired = null) {
   const { list: found, files } = await listed(dir, meta, now);
   const list = found
@@ -188,7 +146,7 @@ export async function load(dir, meta, now = Date.now(), onExpired = null) {
     if (kept) keep.push(f);
     else {
       await fs.unlink(`${dir}/${f.file}`).catch(() => {});
-      await onExpired?.(f.file); // a mirrored file goes on its machine too, or the next pull brings it back
+      await onExpired?.(f.file);
       delete files[f.file];
     }
   }
@@ -200,9 +158,6 @@ export async function load(dir, meta, now = Date.now(), onExpired = null) {
   return keep;
 }
 
-// Every project at once, when Blueprint starts: expired diagrams go, and so
-// does a project folder left with no diagram and not opened or asked to draw
-// for KEEP_DAYS.
 export async function pruneAll(now = Date.now()) {
   let names = [];
   try {

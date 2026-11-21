@@ -1,13 +1,9 @@
-// Pure helpers for the keybinds tab. Checked by `node rows.test.mjs`.
-
-// Friendlier names for dialogs that keys open with mod.open.
 const MOD_NAMES = {
   multirepo: "Multirepo dialog", "port-forward": "Port forward", simulator: "Simulator", picker: "Go to space or tab",
   "wt-new": "New worktree", "wt-open": "Open worktree", "wt-remove": "Remove worktree",
 };
 const SECTION_TITLES = { global: "Everywhere", terminal: "In a terminal" };
 
-// What a keys.json action does, in words (Herdr's help words for plain commands).
 export function describe(action) {
   const binding = typeof action === "string" && action.startsWith("{") ? JSON.parse(action) : action;
   if (binding && typeof binding === "object") {
@@ -23,8 +19,6 @@ export function describe(action) {
   return arg ? `${words} ${arg}` : words;
 }
 
-// One flat list: Herdr's keys.json sections first, then each view's own keys.
-// Row kinds: "group" (a source), "section" (a part of it), "key".
 export function keyRows(bound, views) {
   const rows = [];
   const sections = [...new Set(bound.map((k) => k.section))];
@@ -44,7 +38,6 @@ export function keyRows(bound, views) {
   return rows.map((row, i) => ({ ...row, id: String(i) }));
 }
 
-// Key rows matching the query, each kept under its group and section titles.
 export function filterRows(rows, query) {
   if (!query) return rows;
   const out = [];

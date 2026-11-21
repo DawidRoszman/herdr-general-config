@@ -1,4 +1,3 @@
-// A review's pull requests read as one diff: node --test mods/walkthrough/lib/prs.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { pullRequestSections, sourceKey, describe, runGh } from "./sources.js";

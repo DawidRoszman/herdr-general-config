@@ -1,28 +1,13 @@
-// The frame's command palette: everything you can do, by name, with its key.
-// Places (spaces, tabs) stay in the picker. Fuzzy: your letters in
-// order, word starts and runs rank higher. Empty: recent first, then every
-// group. Choices are entries of their own ("Layout: Zen"); commands that need
-// a name ask for it. Enter runs, ↑/↓ move, Esc closes.
-//
-// A copy of Herdr's own palette (frame/palette, rewritten on every start, so it can't be edited),
-// with this setup's entries added to NAMED below ("Keybinds"). cmd-shift-p opens this copy.
-// After a Herdr update, compare with frame/palette/main.js and carry its changes over.
-
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { commands, layouts, keys, run, theme, props, closeOverlay, openOverlay, shared, window as win } from "herdr";
 
-// The list keeps one height while you move: rows and group titles have fixed
-// heights, and the window shows as many as fit in LIST_H.
-// 10 rows: with the search line it fits the popup (at most 85% of the
-// window) down to ~580 px windows at zoom 1.3.
 const SHOWN = 10;
 const ROW_H = 32;
 const HEAD_H = 26;
 const LIST_H = SHOWN * ROW_H;
 const GROUPS = ["Recent", "Tab", "Pane", "Space", "Layout", "Terminal", "Agent", "Window", "App"];
 
-// The palette's names for commands: [command, args, group, title, keywords].
 const NAMED = [
   ["tab.new", {}, "Tab", "New tab", "tab agent new task"],
   ["mod.open", { name: "picker" }, "Tab", "Go to space or tab…", "switch jump find"],
@@ -73,7 +58,6 @@ const NAMED = [
   ...["graphite", "ink", "moss", "atom-one-dark"].map((n) => ["app.theme", { name: n }, "App", `Theme: ${n.replace(/-/g, " ")}`, "colors look"]),
 ];
 
-// Commands that act on something you point at (ids, terminals): not for a list.
 const HIDDEN = new Set([
   "space.move", "tab.move", "space.select", "tab.select", "pane.focus", "terminal.keep",
   "terminal.park", "terminal.kill", "terminal.show", "agent.focus", "layout.set", "layout.toggle",
@@ -87,18 +71,19 @@ function titleOf(name) {
   return { group: noun.charAt(0).toUpperCase() + noun.slice(1), title: `${verb.replace(/_/g, " ")} ${noun}`.replace(/^./, (c) => c.toUpperCase()) };
 }
 
-// Every entry for the state we're in now.
 function entries() {
   const known = new Set(commands().map((c) => c.name));
+  const builtinPrefixes = new Set([...known].map((c) => c.split(".")[0]));
   const mac = win()?.platform === "macos";
-  const list = NAMED.filter(([n]) => known.has(n))
+  const list = NAMED.filter(([n]) => known.has(n) || !builtinPrefixes.has(n.split(".")[0]))
     .filter(([n]) => !(mac && n.startsWith("window.")))
+    .filter(([, args]) => !(args.mod === "t3-chat" && shared("t3-chat.enabled") === false))
     .map(([name, args, group, title, words]) => ({ name, args, group, title, words }));
   for (const l of layouts()) {
     const t = { main: "Herdr", terminals: "Terminals", win98: "Herdr 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
     list.push({ name: "layout.switch", args: { name: l }, group: "Layout", title: `Layout: ${t}`, words: `look ${l}` });
   }
-  // Anything new in the app shows up too, until it gets a better name here.
+
   const named = new Set(NAMED.map(([n]) => n));
   for (const c of commands()) {
     if (named.has(c.name) || HIDDEN.has(c.name) || c.args.some((a) => a.required && a.name !== "name")) continue;
@@ -107,20 +92,19 @@ function entries() {
   return list.map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
 }
 
-// The key bound to an entry: `name` or `name:value` in keys.json.
 function keyOf(e, bound) {
   const v = Object.values(e.args)[0];
   const want = v === undefined ? e.name : `${e.name}:${v}`;
-  const k = bound.find((b) => b.section === "global" && b.action === want);
+  const layoutSection = shared("layout") ? `layout:${shared("layout")}` : null;
+  const k = (layoutSection && bound.find((b) => b.section === layoutSection && b.action === want))
+    ?? bound.find((b) => b.section === "global" && b.action === want);
   return k ? k.keys : null;
 }
 
-// "ctrl-shift-p" -> ["ctrl", "shift", "p"]; "ctrl--" -> ["ctrl", "-"].
 function keyParts(k) {
   return k.endsWith("--") ? [...k.slice(0, -2).split("-"), "-"] : k.split("-");
 }
 
-// Fuzzy score of `q` in `text`, with the matched positions; null: no match.
 function fuzzy(q, text) {
   const t = text.toLowerCase();
   let score = 0;
@@ -148,7 +132,7 @@ export default class Palette extends View {
     this.input.focus();
     cx.timer.after(600, () => this.input.focus());
     this.at = 0;
-    // How far the list is scrolled, px.
+
     this.scroll = 0;
     this.recent = JSON.parse(localStorage.getItem("recent") ?? "[]");
     this.handle = cx.focus_handle();
@@ -173,7 +157,6 @@ export default class Palette extends View {
     }
   }
 
-  // The rows to show: grouped when empty, ranked while typing.
   rows() {
     const all = entries();
     const q = this.query.trim().toLowerCase().replace(/\s+/g, "");
@@ -218,9 +201,7 @@ export default class Palette extends View {
     const rows = this.rows();
     const bound = keys();
     this.at = Math.min(this.at, Math.max(0, rows.length - 1));
-    // One continuous strip: each row (and the group title before it) at a
-    // fixed y. Scrolling moves the strip in pixels, only as far as it takes to
-    // keep the selected row (and its group's title, if it opens one) in view.
+
     const tops = [];
     let y = 0;
     rows.forEach((r, i) => {
@@ -240,10 +221,7 @@ export default class Palette extends View {
     this.scroll = Math.max(0, Math.min(this.scroll, this.maxScroll));
     const key = (k) =>
       h_flex().gap(3).children(keyParts(k).map((p) => div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p)));
-    // In a scrolling list each item is placed at its edges from the model
-    // above, not stacked: GPUI rounds every height to whole pixels, and a
-    // stack of rounded heights drifts away from the model (19 px at zoom 1.3
-    // by row 40, cutting the selection off). Edges from the model can't add up.
+
     const place = (el, start, end) =>
       fixed
         ? el.absolute().left(0).right(0).top(start - this.scroll).bottom(LIST_H - (end - this.scroll))
@@ -285,7 +263,7 @@ export default class Palette extends View {
       .on_key_down((e, cx) => {
         const k = e.key;
         if (k === "escape") return this.close();
-        // Stops at the ends: wrapping jumps out of sight.
+
         if (k === "down") this.at = Math.min(this.at + 1, rows.length - 1);
         else if (k === "up") this.at = Math.max(this.at - 1, 0);
         else if (k === "pagedown") this.at = Math.min(this.at + SHOWN, rows.length - 1);
@@ -317,9 +295,9 @@ export default class Palette extends View {
               .mb(6)
               .when(fixed, (el) => el.h(LIST_H).overflow_hidden())
               .on_scroll_wheel((e, cx) => {
-                // The event bridge converts both wheel and touchpad deltas to pixels.
+
                 this.scroll = Math.max(0, Math.min(this.scroll - e.delta.y, this.maxScroll));
-                // The selection stays on screen, so the next frame doesn't scroll back to it.
+
                 while (this.at < rows.length - 1 && tops[this.at].row < this.scroll) this.at++;
                 while (this.at > 0 && tops[this.at].row + ROW_H > this.scroll + LIST_H) this.at--;
                 cx.notify();

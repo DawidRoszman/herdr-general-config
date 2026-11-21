@@ -1,10 +1,39 @@
 import assert from "node:assert/strict";
-import { boardContext, parseBoard, age, clock, agentAddress, checkItem, uncheckItem, buildView, taskSpace, prGroups } from "./board.js";
+import { boardScope, boardSources, combineViews, parseBoard, age, clock, agentAddress, checkItem, uncheckItem, buildView, taskSpace, prGroups } from "./board.js";
 
-const coordinators = { work: "s-work", personal: "s-personal" };
-assert.equal(boardContext({ spaceId: "s-personal", coordinators, current: "work" }), "personal");
-assert.equal(boardContext({ spaceId: "s-other", coordinators, current: "work" }), "work");
-assert.equal(boardContext({ spaceId: "s-other", coordinators: undefined, current: undefined }), null);
+const sources = boardSources({ projects: {
+  shop: { label: "Shop", coordinator: { folder: "/c/shop" } },
+  notes: { label: "Notes", coordinator: null },
+  blog: { label: "Blog", coordinator: { folder: "/c/blog" } },
+} });
+assert.deepEqual(sources, [{ project: "shop", label: "Shop", folder: "/c/shop" }, { project: "blog", label: "Blog", folder: "/c/blog" }],
+  "one board per project with a coordinator, in the projects' order");
+assert.deepEqual(boardSources(undefined), []);
+const profileOfSources = { projects: { shop: { label: "Shop", coordinator: { folder: "/c/shop" } }, blog: { label: "Blog", coordinator: { folder: "/c/blog" } } } };
+assert.deepEqual(boardSources(profileOfSources, "blog"), [{ project: "blog", label: "Blog", folder: "/c/blog" }], "one project's board alone");
+assert.deepEqual(boardSources(profileOfSources, "gone"), []);
+
+const coordinators = { "work/shop": "s-shop", "personal/general": "s-general" };
+assert.deepEqual(boardScope({ spaceId: "s-shop", coordinators, current: "personal" }), { profile: "work", project: "shop" }, "a coordinator's space: its project, whatever profile is shown");
+assert.deepEqual(boardScope({ spaceId: "s-other", coordinators, current: "work" }), { profile: "work", project: null }, "any other space: every project of the shown profile");
+assert.deepEqual(boardScope({ spaceId: "s-other", coordinators: undefined, current: undefined }), { profile: null, project: null });
+assert.deepEqual(boardSources({ label: "No projects" }), []);
+
+{
+  const viewOf = (board) => buildView(parseBoard(JSON.stringify(board)).board, () => null, Date.parse("2026-11-09T22:30:00Z"));
+  const shop = viewOf({ updated: "2026-11-09T20:00:00Z", needsYou: [{ id: "q1", task: "SHOP-1", question: "Ship it?" }], checked: [{ id: "c1", kind: "try", question: "Tried" }],
+    tasks: [{ key: "SHOP-1", stage: "pr-open" }] });
+  const blog = viewOf({ updated: "2026-11-09T21:00:00Z", needsYou: [{ id: "q1", question: "Which theme?" }, { question: "No id" }] });
+  const combined = combineViews([{ source: sources[0], view: shop }, { source: { project: "gone", label: "Gone", folder: "/c/gone" }, view: null }, { source: sources[1], view: blog }]);
+  assert.deepEqual(combined.needsYou.map((item) => [item.number, item.uid, item.project, item.folder, item.text]),
+    [[1, "shop/q1", "Shop", "/c/shop", "Ship it?"], [2, "blog/q1", "Blog", "/c/blog", "Which theme?"], [3, "blog/2", "Blog", "/c/blog", "No id"]],
+    "every project's items, numbered through, each with its board's folder; the same id in two boards stays two items");
+  assert.equal(combined.needsYou[0].taskRef.key, "SHOP-1");
+  assert.equal(combined.needsYou[1].taskRef, null);
+  assert.deepEqual(combined.checked.map((item) => item.uid), ["shop/c1"]);
+  assert.equal(combined.updated, "2026-11-09T21:00:00Z", "the latest update of any board");
+  assert.deepEqual(combineViews([{ source: sources[0], view: null }]), { needsYou: [], checked: [], updated: null });
+}
 
 assert.equal(parseBoard(null).error, "board.json is missing");
 assert.match(parseBoard("{ nope").error, /not valid JSON/);
@@ -71,7 +100,6 @@ assert.deepEqual(prGroups([]), []);
 
 console.log("board: ok");
 
-// Try items: checked off and back, by id, keeping every other field.
 {
   const at = "2026-11-10T21:00:00.000Z";
   const raw = {
@@ -90,7 +118,7 @@ console.log("board: ok");
   assert.equal(checked.updated, at);
   assert.equal(checked.note, "kept");
   assert.equal(checked.tasks, raw.tasks);
-  assert.equal(raw.needsYou.length, 3); // the input is not changed
+  assert.equal(raw.needsYou.length, 3);
 
   assert.match(checkItem(checked, "t1", at).error, /already checked/);
   assert.match(checkItem(raw, "nope", at).error, /No item nope/);
@@ -98,12 +126,11 @@ console.log("board: ok");
   assert.match(uncheckItem(raw, "t1", at).error, /not checked/);
   assert.match(uncheckItem(raw, "nope", at).error, /No checked item/);
 
-  // Back in its place by since, without checkedAt.
   const { board: back } = uncheckItem(checked, "t1", at);
   assert.deepEqual(back.needsYou.map((item) => item.id), ["d1", "t1", "t2"]);
   assert.deepEqual(back.needsYou[1], raw.needsYou[1]);
   assert.deepEqual(back.checked, []);
-  // An item with no since goes last.
+
   const { board: noSince } = uncheckItem({ needsYou: raw.needsYou, checked: [{ id: "t9", kind: "try", checkedAt: at }] }, "t9", at);
   assert.deepEqual(noSince.needsYou.map((item) => item.id), ["d1", "t1", "t2", "t9"]);
 

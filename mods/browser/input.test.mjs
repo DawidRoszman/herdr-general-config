@@ -1,4 +1,3 @@
-// node input.test.mjs
 import assert from "node:assert/strict";
 import { keyToCdp, mouseToCdp, wheelToCdp, addressToUrl, modifierBits } from "./input.js";
 

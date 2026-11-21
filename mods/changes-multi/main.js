@@ -1,28 +1,21 @@
-// Herdr's Changes panel (cloned from changes) that also covers multirepo folders (the `mr` CLI's):
-// inside a task (.mr-task.json above the folder) it shows the changes of every repo of the task,
-// at a project's root (.mr.json there) those of every repo of the project; elsewhere one git repo,
-// as before. Each file belongs to its repo: its diff comes from there, and Commit commits every
-// repo that has changes with the one message. What it shows is a view (views.js): All, Unstaged, Staged,
-// or Branch (the branch's work against its base: each repo's own, or a branch typed in).
-
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, appHome, nextCommand } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, appHome, nextCommand, checking, layout } from "herdr";
 import { highlightDiff } from "./delta.js";
 import { VIEWS, statusFiles, nameStatusFiles, diffSides } from "./views.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
-  const pane = f?.pane ? panes().find(p => p.pane === f.pane) : null;
+  const all = panes(), pane = f?.pane ? all.find(p => p.pane === f.pane) : null;
+
+  const tabCwd = pane && !pane.cwd ? all.find(p => p.tab === pane.tab && p.cwd)?.cwd : null;
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
-  return { cwd: pane?.cwd || f?.cwd || space?.folder, on };
+  return { cwd: pane?.cwd || tabCwd || f?.cwd || space?.folder, on };
 }
 const key = () => JSON.stringify(location());
-// Reads write nothing under .git (no index refresh or lock, no fsmonitor cookie):
-// the folder watch would see it, and every refresh would start the next one.
+
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
-// Where the multirepo markers are, from the folder up: "task\n<root>\n<.mr-task.json>",
-// "project\n<root>\n<.mr.json>" (only at the folder itself), else "none".
+
 const FIND_MR = `d="$1"
 while :; do
   if [ -f "$d/.mr-task.json" ]; then printf 'task\\n%s\\n' "$d"; cat "$d/.mr-task.json"; exit 0; fi
@@ -32,10 +25,6 @@ while :; do
 done
 echo none`;
 
-// The repos the panel covers: a multirepo task's or project's, else the git repo of cwd.
-// [{ name, root, bases }]: name is "" for a lone repo, so its paths show as before. bases: the branches
-// Branch compares with, first found wins (a stacked task's parent, then the project's base for the repo,
-// as mr's Task.base); a lone repo has none and uses origin's default.
 async function reposOf(cwd, on) {
   const found = await exec("sh", ["-c", FIND_MR, "sh", cwd], { on });
   const [kind, root, ...rest] = found.code === 0 ? found.stdout.split("\n") : ["none"];
@@ -52,7 +41,6 @@ async function reposOf(cwd, on) {
   return { kind: "repo", root: top.stdout.trim(), repos: [{ name: "", root: top.stdout.trim(), bases: [] }] };
 }
 
-// "acme-shop-backend" -> "backend": the dash-ended prefix all shown repos share.
 function shortNames(names) {
   if (names.length < 2) return Object.fromEntries(names.map((n) => [n, n]));
   let prefix = names[0];
@@ -61,7 +49,6 @@ function shortNames(names) {
   return Object.fromEntries(names.map((n) => [n, n.slice(prefix.length) || n]));
 }
 
-// The "?" key list (a copy of prs/keyhelp.js: mods can't import across folders), from help-keys.json.
 const isHelpKey = (stroke) => stroke === "?" || stroke === "shift-/";
 async function loadKeys() {
   try {
@@ -85,16 +72,13 @@ function keyHelp(sections, t) {
 }
 const ROW = { header: 26, file: 28 };
 const DIFF_ROW_HEIGHT = 20;
-const FILE_HEADER_HEIGHT = 34; // expand all: a file's header in the diff, as the PR review draws it
+const FILE_HEADER_HEIGHT = 34;
 
-// Which cached diff is a file's: a new one when its status or line counts change. An untracked
-// file has no counts (git numstat skips it), so its edits show when it is picked or staged.
 const diffSignature = (f) => (f.fresh ? `${f.root}|${f.rel}|fresh` : `${f.root}|${f.rel}|${f.against.join(" ")}|${f.status}|${f.add}|${f.del}`);
-const DIFF_PAGE = 15; // lines ctrl-d / ctrl-u move the diff
+const DIFF_PAGE = 15;
 
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
 
-// Numbers each diff line once, so a frame only draws the rows on screen.
 function diffRows(lines) {
   let old = 0, next = 0;
   return lines.map((line) => {
@@ -121,16 +105,16 @@ export default class Changes extends View {
     this.listScroll = VirtualListScrollHandle.new();
     this.diffScroll = VirtualListScrollHandle.new();
     this.diffTop = 0;
-    // Expand all: every shown file's diff stacked under its header, instead of the picked file's.
+
     this.isExpanded = localStorage.getItem("changes.expanded") === "1";
-    this.diffCache = new Map(); // diffSignature(file) -> { shown, rows }; a changed file gets a new signature
-    // root|rel -> the file's last diff: shown while a changed file's new one loads, so a refresh never blanks it
+    this.diffCache = new Map();
+
     this.lastDiffs = new Map();
-    this.cacheVersion = 0; // counts cache writes, so the stacked rows are rebuilt only then
-    this.stacked = null; // { key, rows, heights, starts, width }: stackedRows()'s last answer
+    this.cacheVersion = 0;
+    this.stacked = null;
     this.isLoadingAll = false;
-    this.isFollowingDiffScroll = false; // the diff was scrolled by hand: the file list follows it
-    this.folded = new Set(); // expand all: files whose diff is folded under their header (click it)
+    this.isFollowingDiffScroll = false;
+    this.folded = new Set();
     this.query = "";
     this.isSearching = false;
     this.search = InputState.new({ placeholder: "Filter files" });
@@ -138,32 +122,45 @@ export default class Changes extends View {
     this.search.on("submit", (_e, cx) => { this.isSearching = false; this.handle.focus(); this.step(cx, 0); });
     this.search.on("blur", (_e, cx) => { this.isSearching = false; cx.notify(); });
     this.view = localStorage.getItem("changes.view") ?? "all";
-    this.baseOverride = localStorage.getItem("changes.base") ?? ""; // Branch's base typed in; "" is each repo's own
-    this.bases = []; // Branch: the bases its repos were compared with, at the last refresh
+    this.baseOverride = localStorage.getItem("changes.base") ?? "";
+    this.bases = [];
     this.baseInput = InputState.new({ value: this.baseOverride, placeholder: "each repo's base" });
     this.baseInput.on("submit", (_e, cx) => { this.setBase(this.baseInput.value().trim(), cx); this.handle.focus(); });
     this.baseInput.on("focus", (_e, cx) => { this.isTypingBase = true; cx.notify(); });
     this.baseInput.on("blur", (_e, cx) => { this.isTypingBase = false; cx.notify(); });
     this.keySections = [];
     cx.spawn(async () => { this.keySections = await loadKeys(); });
-    // focusable (mod.json): pane.go brings the keyboard here with "focus".
+
     cx.spawn(async (cx) => { for (;;) { if (await nextCommand() === "focus") this.handle.focus(); cx.notify(); } });
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
-    this.refresh(cx);
-    cx.timer.every(10000, (cx) => this.refresh(cx));
+    this.watching = new Set();
+    if (checking()) return;
+    if (this.isVisible()) this.refresh(cx);
+    cx.timer.every(10000, (cx) => { if (this.isVisible()) this.refresh(cx); });
+  }
+
+  isVisible() {
+    const findNode = (n, id) => (n?.id === id ? n : (n?.children ?? []).map((c) => findNode(c, id)).find(Boolean));
+    const root = layout(), panel = findNode(root, "panel"), body = findNode(root, "panel-body");
+    return !panel || (!panel.hidden && (!body || body.active === "changes"));
   }
 
   watch(root, cx) {
-    if (this.on || this.watched === root) return;
+    if (this.on || this.watched === root || this.watching.has(root)) return;
     this.watched = root;
+    this.watching.add(root);
     cx.spawn(async (cx) => {
       try {
         while (this.watched === root) {
           await watchFolder(root);
-          if (this.watched === root) this.refresh(cx);
+          if (this.watched === root && this.isVisible()) this.refresh(cx);
         }
-      } catch { this.watched = null; }
+      } catch {
+        if (this.watched === root) this.watched = null;
+      } finally {
+        this.watching.delete(root);
+      }
     });
   }
 
@@ -188,7 +185,7 @@ export default class Changes extends View {
         let total = 0;
         for (const repo of scope.repos) {
           let listed;
-          // A repo Branch can't compare (no such base there) is left out and said, the others still show.
+
           try { listed = await this.repoFiles(repo, on, view); }
           catch (e) { if (view !== "branch") throw e; problems.push(String(e.message ?? e)); continue; }
           if (listed.base) bases.push(listed.base);
@@ -202,10 +199,9 @@ export default class Changes extends View {
         this.root = scope.root; this.on = on; this.scope = scope; this.shorts = shorts; this.files = files.slice(0, 1000); this.limited = total > 1000; this.error = null;
         this.watch(scope.root, cx);
         if (this.open && !this.files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
-        // The first file's diff shows until you pick another.
+
         if (!this.open && !this.closed && this.files.length) this.open = this.files[0].path;
-        // Stacked diffs: gone files leave the cache; the picked file reloads, as it does alone
-        // (an untracked file keeps its signature while it is edited).
+
         const signatures = new Set(this.files.map(diffSignature));
         for (const signature of this.diffCache.keys()) if (!signatures.has(signature)) this.diffCache.delete(signature);
         const paths = new Set(this.files.map((f) => `${f.root}|${f.rel}`));
@@ -219,7 +215,7 @@ export default class Changes extends View {
       } catch (e) { if (key() === context && this.viewKey() === viewKey) this.error = String(e); }
       finally {
         this.loading = false;
-        if (this.viewKey() !== viewKey) this.refresh(cx); // the view changed while this one loaded
+        if (this.viewKey() !== viewKey) this.refresh(cx);
         cx.notify();
       }
     });
@@ -229,7 +225,6 @@ export default class Changes extends View {
     return `${this.view}|${this.baseOverride}`;
   }
 
-  // Another view, or Branch's base: its files and diffs are another list.
   showView(cx) {
     this.files = []; this.open = null; this.closed = false; this.note = null; this.error = null; this.bases = [];
     this.setLines([]); this.diffCache.clear(); this.lastDiffs.clear(); this.cacheVersion++;
@@ -251,15 +246,13 @@ export default class Changes extends View {
     this.showView(cx);
   }
 
-  // Branch's base in a repo, as a ref: the branch typed in, else the repo's own, else origin's default
-  // (origin/HEAD); origin's copy of a branch before a local one. null when the repo has none of them.
   async branchBase(repo, git) {
     const names = this.baseOverride ? [this.baseOverride] : [...repo.bases, "HEAD"];
     for (const name of names) {
       for (const ref of name === "HEAD" ? ["origin/HEAD"] : [`origin/${name}`, name]) {
         if ((await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).code !== 0) continue;
         if (ref !== "origin/HEAD") return ref;
-        const named = await git(["rev-parse", "--abbrev-ref", ref]); // origin/HEAD -> origin/main
+        const named = await git(["rev-parse", "--abbrev-ref", ref]);
         return named.code === 0 ? named.stdout.trim() : ref;
       }
     }
@@ -299,7 +292,6 @@ export default class Changes extends View {
     return { files, total: listed.length, base };
   }
 
-  // One file's diff as rows, colored by delta: the picked file's (load) or each stacked one's (loadAll).
   async diffOf(file) {
     const on = this.on, root = file.root;
     let lines;
@@ -331,7 +323,6 @@ export default class Changes extends View {
     if (key() === context && this.open === path) this.setLines(shown, rows);
   }
 
-  // Expand all: the shown files' missing diffs, one after another; each shows as it comes.
   loadAll(cx) {
     if (this.isLoadingAll) return;
     const context = this.context;
@@ -354,7 +345,6 @@ export default class Changes extends View {
     });
   }
 
-  // Expand all's rows: a header per shown file, then its diff (or a loading line); starts: path -> its header's row.
   stackedRows() {
     const shown = this.shownFiles();
     const cacheKey = `${this.cacheVersion}|${[...this.folded].join("\n")}|${shown.map((f) => f.path).join("\n")}`;
@@ -376,7 +366,6 @@ export default class Changes extends View {
     return this.stacked;
   }
 
-  // What the diff area lists now: the stacked diffs, or the picked file's.
   shownRows() {
     return this.isExpanded ? this.stackedRows().rows : this.rows;
   }
@@ -429,13 +418,11 @@ export default class Changes extends View {
     cx.notify();
   }
 
-  // The files shown: all repos', or the selected repo's, matching the filter.
   shownFiles() {
     const files = this.repoFilter ? this.files.filter((f) => f.root === this.repoFilter) : this.files;
     return this.query ? files.filter((f) => f.path.toLowerCase().includes(this.query)) : files;
   }
 
-  // The list's rows: in All (multirepo), a header before each repo's files.
   fileRows() {
     const shown = this.shownFiles();
     const isMulti = Boolean(this.scope && this.scope.kind !== "repo");
@@ -449,13 +436,12 @@ export default class Changes extends View {
     return rows;
   }
 
-  // j/k: the next / previous file (headers skipped), its diff shown, kept in view. 0: the current or first.
   step(cx, delta) {
     const rows = this.fileRows();
     const files = rows.filter((r) => r.header === undefined);
     if (!files.length) return;
     const at = files.findIndex((f) => f.path === this.open);
-    // Nothing open yet: j and k start at the first file, G at the last.
+
     const target = at < 0 ? (delta === Infinity ? files.length - 1 : 0) : Math.min(files.length - 1, Math.max(0, at + delta));
     const next = files[target];
     if (next.path !== this.open) this.show(next.path, cx);
@@ -472,7 +458,6 @@ export default class Changes extends View {
     this.diffScroll.scroll_to_item(this.diffTop, "top");
   }
 
-  // h/l: the previous / next repo chip (All first).
   stepRepo(cx, delta) {
     const roots = ["", ...(this.scope?.repos ?? []).map((r) => r.root)];
     if (roots.length < 2) return;
@@ -486,7 +471,7 @@ export default class Changes extends View {
   key(e, cx) {
     const stroke = e.keystroke;
     if (this.typing || this.isTypingBase) {
-      if (stroke !== "escape") return; // the commit message (or Branch's base) has the keys
+      if (stroke !== "escape") return;
       this.typing = this.isTypingBase = false;
       this.handle.focus();
     } else if (this.isShowingKeys || isHelpKey(stroke)) {
@@ -529,7 +514,6 @@ export default class Changes extends View {
     cx.notify();
   }
 
-  // The repo chips (multirepo only): All, then each repo of the task or project with its changed files.
   repoChips(t) {
     const counts = new Map();
     for (const f of this.files) counts.set(f.root, (counts.get(f.root) ?? 0) + 1);
@@ -546,7 +530,7 @@ export default class Changes extends View {
 
   commit(cx) {
     if (!this.message.trim() || !this.root || this.busy || this.loading || this.context !== key() || this.view === "branch") return;
-    // Staged commits the index as it is; the other views commit everything uncommitted.
+
     const steps = this.view === "staged" ? [] : [["add", "-A"]];
     const on = this.on, context = this.context, message = this.message.trim();
     const roots = [...new Map(this.shownFiles().map((f) => [f.root, f.repoLabel || f.root])).entries()];
@@ -566,7 +550,6 @@ export default class Changes extends View {
     cx.notify();
   }
 
-  // All · Unstaged · Staged · Branch, and in Branch its base: typed in, or each repo's own (shown).
   viewBar(t) {
     const tab = (v) => {
       const isOn = this.view === v.id;
@@ -585,7 +568,6 @@ export default class Changes extends View {
         .when(Boolean(shownBases), (e) => e.child(div().min_w(0).truncate().text_color(t.dim).child(this.baseOverride ? "" : shownBases)))));
   }
 
-  // A file's header in the stacked diff (and the sticky one on top), as the PR review's Files tab.
   fileHeaderRow({ text, status, add, del, path, isFolded }, t) {
     const statusColor = status === "A" ? t.ansi2 : status === "D" || status === "U" ? t.ansi1 : t.blocked;
     return h_flex().w_full().h(FILE_HEADER_HEIGHT).flex_none().px(12).gap(8).items_center().cursor_pointer().bg(this.open === path ? t.selected : t.raised).border_t(1).border_b(1).border_color(t.border)
@@ -631,7 +613,7 @@ export default class Changes extends View {
     const diffWidth = stacked ? stacked.width : this.diffWidth;
     const diffHeights = stacked ? stacked.heights : DIFF_ROW_HEIGHT;
     const stickyHeader = stacked ? stacked.rows[stacked.starts.get(stacked.rows[this.diffTop]?.path)] : null;
-    // A layout can't redraw the file list, so the wheel event does: it shows the file the last layout found on top.
+
     const followScroll = (range) => {
       this.diffTop = range.start;
       if (stacked && this.isFollowingDiffScroll) this.open = stacked.rows[range.start]?.path ?? this.open;
@@ -655,7 +637,7 @@ export default class Changes extends View {
       .when(isMulti, (e) => e.child(this.repoChips(t)))
       .when(this.isSearching || Boolean(this.query), (e) => e.child(div().px(10).pt(8).child(
         Input.new(this.search).h(28).px(8).items_center().rounded(6).border(1).border_color(this.isSearching ? t.accent : t.input).bg(t.background).text_size(12))))
-      // Expand all: the file headers in the diff are the list, so the list above goes.
+
       .when(!this.isExpanded || !shown.length, (e) => e.child(v_flex().relative().flex_none().h(Math.min(isMulti ? 260 : 200, Math.max(44, fileRows.reduce((n, r) => n + (r.header !== undefined ? ROW.header : ROW.file), 0) + 12))).p(6).border_b(1).border_color(t.border)
         .child(!shown.length
           ? div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.query ? `No file matches "${this.query}"` : this.root ? emptyText : "No folder"))
@@ -675,7 +657,7 @@ export default class Changes extends View {
                   .child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
                 .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
             }))
-            // Rows of a virtual list cannot hold handlers: a header picks its repo, a file shows its diff.
+
             .on_item_click((key, cx) => {
               this.handle.focus();
               if (key.startsWith("head:")) this.selectRepo(key.slice(5), cx);
@@ -695,11 +677,11 @@ export default class Changes extends View {
         .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(diffWidth).h_full().child(v_virtual_list("changes-diff", diffRowsShown.length, diffHeights, (i) => (diffRowsShown[i].kind === "file" ? `file:${diffRowsShown[i].path}` : String(i)),
             (range) => { followScroll(range); return diffRowsShown.slice(range.start, range.end).map((row) => this.diffRow(row, t)); })
-            // Rows of a virtual list cannot hold handlers: a file's header folds or unfolds its diff.
+
             .on_item_click((key, cx) => { this.handle.focus(); if (key.startsWith("file:")) this.toggleFold(key.slice(5), cx); })
             .track_scroll(this.diffScroll).size_full())))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
-        // The shown file's header stays on top, like GitHub's; it has no handlers, so the wheel still reaches the list.
+
         .when(Boolean(stickyHeader), (e) => e.child(div().absolute().top(0).left(0).right(0).child(this.fileHeaderRow(stickyHeader, t))))
         .when(!this.isExpanded && !this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"))))
       .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)))

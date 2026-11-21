@@ -1,5 +1,3 @@
-"""Self-check for accounts.py: python3 -I test_accounts.py"""
-
 import json
 import os
 import sys
@@ -8,7 +6,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import accounts  # noqa: E402
+import accounts
 
 assert accounts.account_kind("me@gmail.com") == "personal"
 assert accounts.account_kind("me@acme.io") == "work"
@@ -25,12 +23,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert (work["kind"], work["configDir"], work["org"]) == ("work", "~/.claude-acme", "Corp")
     assert accounts.claude_account(str(tmp / "missing"))["kind"] == "unknown"
 
-# This very process: its CLAUDE_CONFIG_DIR (or the default) gives an account record.
 assert set(accounts.process_claude_account(os.getpid())) == {"email", "org", "configDir", "kind", "profile"}
 
-# A process started as a profile (profiles.py run, or a folder's .envrc) says so in its environment.
-import subprocess  # noqa: E402
-WAITING = [sys.executable, "-c", "import time; time.sleep(30)"]  # not a system binary: macOS hides those' environment
+import subprocess
+WAITING = [sys.executable, "-c", "import time; time.sleep(30)"]
 child = subprocess.Popen(WAITING, env={**os.environ, "HERDR_PROFILE": "client", "CLAUDE_CONFIG_DIR": str(tmp / ".claude-acme")})
 try:
     started = accounts.process_claude_account(child.pid)

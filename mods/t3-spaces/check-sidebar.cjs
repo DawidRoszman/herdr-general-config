@@ -22,9 +22,8 @@ function element(kind = "div", source) {
   return proxy;
 }
 
-// Mods run in their own vm context: a plain copy compares with this one's objects.
 const plain = v => JSON.parse(JSON.stringify(v));
-// A row's laid-out children, without the absolutely placed tree lines.
+
 const inFlow = row => row.items.filter(n => !("absolute" in n.style));
 
 function find(node, id) {
@@ -46,7 +45,6 @@ function fire(node, event, ...args) {
   return node.handlers[event](...args);
 }
 
-// A mod as Herdr would load it, all in one scope: what main.js imports from its own folder, each file once and before what needs it.
 function bundle(dir, file = "main.js", seen = new Set()) {
   if (seen.has(file)) return "";
   seen.add(file);
@@ -69,7 +67,7 @@ function fixture(width) {
   const slots = { sidebar: { id: "sidebar", size: { px: width } }, spaces: { id: "spaces", size: { px: 90 } } };
   const state = { "agents.sort": "grouped" };
   const calls = [], overlays = [], stores = new Map(), scopes = new Map(), labelled = [], shown = { agent: "child" }, commands = [], closed = [], orderWrites = [], sharedWrites = [], notifications = [];
-  // What a test may change about the window and the app: the window, the layout's root fields, the update state.
+
   const ui = { window: { platform: "macos" }, root: {}, updates: { app: {} } };
   let hcAnswer = () => ({ code: 0 });
   const theme = new Proxy({ selected: "#2c2c2f", hover: "#202024", working: "#6b93ff", blocked: "#f0a33a", done: "#ececf0", muted: "#a9a9b4", foreground: "#f4f4f6", dim: "#77777f", ansi3: "#c8a84b", ansi4: "#5f8fe0", ansi11: "#e8cf7a", ansi12: "#8fb4f2" }, { get: (t, k) => t[k] ?? "#a9a9b4" });
@@ -110,7 +108,6 @@ function fixture(width) {
   return { ...env, load, slots, state, calls, overlays, stores, scopes, labelled, shown, commands, closed, ui, orderWrites, sharedWrites, notifications, answerHc: fn => { hcAnswer = fn; } };
 }
 
-// The shown worktree's (or multirepo task's) space closes: its repo's space is shown, not the next one Herdr picked.
 {
   const f = fixture(256), sp = f.load("t3-spaces"), list = f.spaces();
   const repo = JSON.stringify([null, "/work/p1"]);
@@ -134,7 +131,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const st = sp.render(cx);
   let at = ag.render(cx);
   assert.ok(find(at, "fold-t0") && !find(at, "sub-grandchild"), "sub-agents start folded");
-  // The child is in error: folded, it still shows, one step in, hung from the parent.
+
   assert.equal(find(at, "sub-child").style.pl, 30, "a stuck sub-agent shows under its folded parent");
   f.terminals().find(k => k.address === "grandchild").status = "blocked";
   const stuck = ag.render(cx);
@@ -186,7 +183,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(find(agent, "pin-t0").handlers.on_click, undefined, "faded out, the pin has no click target");
   assert.equal(find(agent, "pin-t0").style.opacity, 0);
   assert.deepEqual(find(at, "controls-t0").items.map(n => n.key), ["tip-fold-t0", "when-t0", "tip-status-t0-mark"], "a parent shows its fold arrow and time before the status, as the shipped list");
-  // T3 turns its arrow; here the two directions cross-fade in one slot.
+
   const arrow = (tree, id) => ["down", "right"].filter(w => find(tree, `${id}-${w}`)?.style.opacity === 1);
   assert.deepEqual(arrow(at, "fold-t0-arrow"), ["down"]);
   assert.deepEqual(strings(find(at, "when-t0")), ["<1m"], "time in its state, as the shipped list");
@@ -218,7 +215,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.ok(strings(find(at, "fold-t0")).includes("2"), "folded badge counts descendants");
   assert.deepEqual(arrow(at, "fold-t0-arrow"), ["right"], "folded, the arrow points right");
   assert.equal(find(at, "fold-t0").style.text_color, f.theme().dim, "count is dim");
-  // Inside a hovered row a button's own fill doesn't show: its arrow and count brighten together instead.
+
   fire(find(at, "fold-t0"), "on_hover", true, cx);
   const lit = find(ag.render(cx), "fold-t0");
   assert.deepEqual([lit.style.text_color, find(lit, "fold-t0-arrow-right").items[0].style.text_color], [f.theme().foreground, f.theme().foreground], "hovered, the arrow and the count brighten together");
@@ -263,7 +260,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(find(ag.render(cx), "sub-grandchild"), null);
   fire(find(ag.render(cx), "agent-fold-t0"), "on_click", {}, cx);
   assert.ok(find(ag.render(cx), "sub-child"));
-  // Moving down, the next row reports before the last one's leaving: a sub-agent's row takes over from its parent's card, up or still on its way.
+
   const settle = () => { while (cx.timers.length) { const t = cx.timers.shift(); if (!t.gone) t.fn(cx); } };
   for (const opened of [true, false]) {
     fire(find(ag.render(cx), "ag-t0"), "on_hover", true, cx);
@@ -278,7 +275,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     settle();
     assert.equal(find(ag.render(cx), "details-sub-child"), null, "and it goes with the pointer");
   }
-  // Its click opens the peek where the card stands: the card goes at once, with no fade under it, and the row redraws to show that.
+
   fire(find(ag.render(cx), "sub-child"), "on_hover", true, cx);
   settle();
   let redrawn = false;
@@ -288,7 +285,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual(f.calls.pop(), ["terminal.peek", { terminal: "child" }]);
   fire(find(ag.render(cx), "sub-child"), "on_hover", false, cx);
   settle();
-  // A row that goes from under the pointer never reports its leaving: its card doesn't come back with it.
+
   const kid = f.terminals().find(k => k.address === "child");
   fire(find(ag.render(cx), "agent-fold-t0"), "on_click", {}, cx);
   fire(find(ag.render(cx), "sub-child"), "on_hover", true, cx);
@@ -298,7 +295,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   kid.status = "error";
   assert.equal(find(ag.render(cx), "details-sub-child")?.style.content, undefined, "its row is back, with the pointer long gone: no card");
   fire(find(ag.render(cx), "agent-fold-t0"), "on_click", {}, cx);
-  // A sub-agent with a pane has two rows: hovering one isn't hovering the other, and the next one reporting first keeps the hover and the card.
+
   f.agents().push({ address: "child", pane: "pn", space: "s1", space_name: "project 1", tab: "b1", title: "child task", seq: 9, program: f.agents()[0].program, focused: false, status: "working" });
   fire(find(ag.render(cx), "sub-child"), "on_hover", true, cx);
   settle();
@@ -354,7 +351,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   fire(update, "on_click", {}, cx);
   assert.deepEqual(f.calls.pop(), ["app.update", {}]);
   f.ui.updates = { app: {} };
-  // The inbox's undo notice, in the footer's free space as T3's: short, then Undo, which the inbox does.
+
   f.state["t3-inbox.notice"] = { action: "Settled", count: 2, gen: 3, shown: true, live: true, at: Date.now() };
   assert.ok(find(footer.render(cx), "undo-notice-3"), "Lists have Undo too");
   f.slots["sidebar-lists"] = { id: "sidebar-lists", active: "inbox" };
@@ -388,7 +385,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const at = ag.render(cx), heading = find(at, "agents-heading");
   assert.deepEqual([heading.style.pr, find(heading, "ag-sort").style.size, find(heading, "ag-sort").style.rounded], [8, 28, 8], "T3's header button, 8 from the edge");
   assert.equal(heading.items[0].style.text_color, f.theme().muted, "section titles are a step brighter than group labels");
-  // A space's group is T3's project folder: its mark and name, the chevron where the rows' content ends.
+
   const group = find(at, "sp-s0"), chevron = inFlow(group).at(-1);
   assert.deepEqual([group.style.px, group.style.rounded], [find(at, "ag-t0").style.px, 8]);
   assert.deepEqual(["down", "right"].map(w => find(chevron, `chevron-sp-s0-${w}`).style.opacity), [1, 0], "open, it points down, as T3's");
@@ -399,7 +396,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   fire(lit, "on_mouse_down:right", {}, cx);
   assert.deepEqual(plain(f.overlays.pop().props), { tab: "space", target: { id: "s0" } }, "right-click is the space's menu");
   fire(group, "on_hover", false, cx);
-  // Closed, it says how many it hides and whether one wants you, and still shows the row you're on.
+
   f.agents().splice(1, 0, { ...f.agents()[0], address: "t9", pane: "p9", seq: 9, focused: false, status: "blocked", title: "stuck" });
   f.terminals().push({ address: "t9", state: "live", status: "blocked" });
   ag.toggleFold("sp-s0", cx, false);
@@ -409,12 +406,11 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(inFlow(closed).find(n => n.style.size === 6).style.bg, f.theme().blocked, "the dot speaks for what's hidden");
   ag.toggleFold("sp-s0", cx, false);
   f.agents().splice(1, 1); f.terminals().pop();
-  // The list's motion: a row that moved is drawn where it was under a new id, then let go; one that left fades out where it
-  // was, drawn inert; folds and the sort play it too, as this list starts at the top (T3 skips only a bottom shelf's opening).
+
   const y = (tree, id) => walk(tree).find(n => String(n.key).startsWith(`fly-${id}-`));
   const leaving = (tree, key) => walk(tree).find(n => String(n.key).startsWith(`leaving-${key}-`));
   const fireTimers = ms => { const due = cx.timers.filter(t => t.ms === ms); cx.timers = cx.timers.filter(t => t.ms !== ms); for (const t of due) if (!t.gone) t.fn(cx); };
-  // Drawn for its leaving: no handlers, no tooltip, and no id the list uses.
+
   const inert = n => walk(n.items[0]).every(c => !Object.keys(c.handlers).length && typeof c.key !== "string");
   cx.timers.length = 0;
   const remote = f.agents().find(a => a.address === "vps/t2"), wasStatus = remote.status;
@@ -430,7 +426,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(y(ag.render(cx), "t0").style.top, 0, "then it's let go");
   remote.status = wasStatus;
   {
-    // A group's lit chevron goes with the pointer even when its leave never comes.
+
     const every = cx.timer.every, watches = [], scope = f.scopes.get("t3-agents");
     cx.timer.every = (ms, fn) => { const t = { ms, fn, cancel() { t.gone = true; } }; watches.push(t); return t; };
     const box = { x: 0, y: 100, width: 208, height: 32 }, wasPointer = scope.window.mouse_position, row = () => find(ag.render(cx), "sec-4");
@@ -460,7 +456,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual([leaving(ag.render(cx), "m:sec-4").style.opacity, y(ag.render(cx), "m:sp-s0").style.opacity], [0, 1]);
   fireTimers(200);
   assert.equal(leaving(ag.render(cx), "m:sec-4"), undefined, "faded, they go");
-  // Unfolding sub-agents: the new one fades in, the rows under it slide down from where they were.
+
   const below = y(ag.render(cx), "m:sp-s2").key;
   ag.toggleFold("t0", cx);
   const unfolded = ag.render(cx);
@@ -472,13 +468,13 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.ok(gone && strings(gone).includes("grandchild task") && inert(gone), "folding, they fade out");
   fireTimers(16);
   fireTimers(200);
-  // Closing a space's folder, its rows leave inert too.
+
   ag.toggleFold("sp-s2", cx, false);
   assert.ok(inert(leaving(ag.render(cx), "vps/t2")), "an agent's row leaves inert too");
   fireTimers(16); fireTimers(200);
   ag.toggleFold("sp-s2", cx, false);
   ag.render(cx); fireTimers(16); fireTimers(200);
-  // The sort menu, as T3's: nothing lit until a key or the pointer arrives.
+
   const f2 = fixture(256), menu = f2.load("t3-agents", { sortMenu: true, overlay: "o" });
   const m0 = menu.render(cx);
   assert.equal(find(m0, "sort-priority").style.bg, undefined, "no highlight on opening");
@@ -487,7 +483,7 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // A card from another machine says so: a server mark before its program, and here (unlike T3) the machine named beside it, without hovering.
+
   const f = fixture(256), root = f.load("t3-inbox").render(cx);
   const card = find(root, "card-vps/t2"), mark = find(card, "machine-vps/t2");
   assert.ok(walk(mark).some(n => n.source === "mods/t3-inbox/icons/server.svg"));
@@ -496,7 +492,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(find(find(root, "card-t0"), "machine-t0"), null, "this computer's cards carry no mark");
 }
 {
-  // Agents' times come from when the tab changed, not when the list next draws, and go on by themselves.
+
   const f = fixture(256), run = { ...cx, spawn: fn => { fn(run); } }, ticks = [], every = cx.timer.every;
   cx.timer.every = ms => ticks.push(ms);
   const ag = f.load("t3-agents");
@@ -506,7 +502,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   ag.render(cx);
   t0.status = "idle"; tab.changed_at = Date.now() - 2 * 3600000;
   assert.ok(strings(find(ag.render(cx), "when-t0")).includes("2h"), "back from the Inbox, it ended two hours ago, not now");
-  // A pin ends a snooze though the Inbox isn't running; pins that aren't new, and agents not snoozed, write no label.
+
   const k = f.terminals().find(k => k.address === "t0");
   k.labels = { snoozed: String(Date.now() + 60000) };
   const pin = () => { fire(find(ag.render(run), "ag-t0"), "on_hover", true, run); fire(find(ag.render(run), "pin-t0"), "on_click", {}, run); };
@@ -518,7 +514,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   pin();
   assert.deepEqual(f.labelled.splice(0), [], "nothing to end");
   pin();
-  // A group whose last agent ended never reports the pointer leaving: it isn't lit when it comes back.
+
   fire(find(ag.render(cx), "sp-s2"), "on_hover", true, cx);
   const stayed = f.agents().splice(1, 1);
   ag.render(cx);
@@ -526,13 +522,13 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(find(ag.render(cx), "sp-s2").items.at(-1).style.text_color, f.theme().dim);
 }
 {
-  // The inbox: Working holds busy trees; Settle is by hand, undone by new work, never by looking.
+
   const f = fixture(256), inbox = f.load("t3-inbox"), run = { ...cx, spawn: fn => { fn(run); } };
   const remote = f.agents()[1], k = f.terminals().find(k => k.address === "vps/t2"), child = f.terminals().find(c => c.address === "child");
   child.status = "idle";
   assert.deepEqual(strings(find(inbox.render(run), "working-header")), ["Working", "1"], "a working tree moves down to Working");
   fire(find(inbox.render(run), "card-t0"), "on_hover", true, run);
-  // Settle sits in the corner faded out, fading in over the state when it's offered (T3's group-hover crossfade).
+
   const hidden = find(inbox.render(run), "settle-t0"), labels = f.labelled.length;
   assert.ok(hidden.style.opacity === 0 && !("role" in hidden.style) && !hidden.handlers.on_click && !hidden.handlers["on_mouse_down:left"], "a working tree can't be settled: faded, its button takes no press");
   assert.equal(f.labelled.length, labels);
@@ -551,7 +547,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const at = inbox.render(run);
   assert.ok(!find(at, "card-vps/t2") && strings(find(at, "settled-header")).includes("1"), "settled leaves the cards for the tail");
   {
-    // The settle key (t3-inbox.settle) acts on the agent in view: a busy one stays, a settled one comes back, then goes again.
+
     const t0 = f.agents()[0], n = f.labelled.length;
     inbox.render(run); inbox.settleKey(run);
     assert.equal(f.labelled.length, n, "the key doesn't settle a working agent");
@@ -565,7 +561,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     t0.focused = true; remote.focused = false;
   }
   {
-    // Clear asks through Herdr's confirm dialog; only its answer closes settled panes.
+
     const n = f.calls.length;
     f.spaces()[0].tabs[0].active = true;
     fire(find(inbox.render(run), "settled-clear"), "on_hover", true, run);
@@ -596,13 +592,13 @@ for (const width of [208, 240, 256, 320, 480]) {
   k.turn = 5;
   inbox.render(run);
   assert.deepEqual(f.labelled.pop(), ["label", "vps/t2", "settled="], "a turn ended since brings it back");
-  // The space filter, as T3's project scope: picking a space hides the others' agents; All spaces brings them back.
+
   const scope = (id) => fire(find(find(inbox.render(run), "inbox-scope-menu").style.content, `scope-${id}`), "on_click", { modifiers: {} }, run);
   scope("s2");
   assert.ok(find(inbox.render(run), "card-vps/t2") && !find(inbox.render(run), "working-header"), "only the chosen space's agents");
   scope("all");
   assert.ok(find(inbox.render(run), "working-header"), "all spaces again");
-  // The brand bar switches the sidebar, its icon the mode a click shows; with the inbox showing, a settled agent's done is no news.
+
   assert.equal((walk(find(f.load("t3-chrome").render(cx), "sidebar-mode")).find(n => n.kind === "svg")?.source), "mods/t3-chrome/icons/inbox.svg", "in Lists it offers the Inbox");
   fire(find(f.load("t3-chrome").render(cx), "sidebar-mode"), "on_click", {}, cx);
   assert.deepEqual(f.calls.pop(), ["t3-tabs.sidebar", {}]);
@@ -614,13 +610,13 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(walk(find(f.load("t3-tabs").render(cx), "tab-b0")).some(n => n.style.rounded_full), false, "no done dot for a settled agent's tab");
   f.terminals().find(c => c.address === "t0").labels = { snoozed: String(Date.now() + 60000) };
   assert.equal(walk(find(f.load("t3-tabs").render(cx), "tab-b0")).some(n => n.style.rounded_full), false, "nor for a snoozed one's");
-  // Snoozed with a sub-agent stuck, the Inbox shows it as needing the person, so the hidden sidebar's toggle counts it.
+
   f.terminals().find(c => c.address === "child").status = "error"; f.slots.sidebar.hidden = true;
   const stuck = () => strings(find(f.load("t3-tabs").render(cx), "agents-blocked"));
   const snoozedCount = stuck();
   f.terminals().find(c => c.address === "t0").labels = {};
   assert.deepEqual(snoozedCount, stuck(), "the same count, snoozed or not");
-  // A hidden Inbox doesn't draw, so nothing clears a settled label: new work must count all the same.
+
   f.terminals().find(c => c.address === "t0").labels = { settled: "1:0" };
   assert.deepEqual(stuck(), snoozedCount, "settled, with its sub-agent stuck, it needs the person");
   f.terminals().find(c => c.address === "child").status = "idle"; f.terminals().find(c => c.address === "grandchild").status = "idle";
@@ -637,11 +633,10 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // A parent's unread reply shows first, its working sub-agents beside it; once read, waiting on them is
-  // working, everywhere, for as long as the longest-working one has worked.
+
   const f = fixture(256), inbox = f.load("t3-inbox");
   f.agents()[0].status = "idle"; f.terminals().find(c => c.address === "child").status = "idle";
-  /** @type {any} */ (f.terminals().find(c => c.address === "grandchild")).status_ms = Date.now() - 90000;
+   (f.terminals().find(c => c.address === "grandchild")).status_ms = Date.now() - 90000;
   assert.deepEqual(strings(find(inbox.render(cx), "state-t0")), ["Working", "1m"], "the waiting parent shows its sub-agent's working time");
   f.agents()[0].status = "done"; f.panes()[0].status = "done";
   const drawn = inbox.render(cx);
@@ -656,7 +651,7 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // A mod pane's word marks its tab as an agent's would; a closed pane's says nothing.
+
   const f = fixture(256);
   const spins = tree => walk(tree).some(n => n.source === "mods/workspace-chrome/spinner.svg");
   f.spaces()[0].tabs.push({ id: "bx", name: "review", named: true, active: false });
@@ -675,9 +670,7 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // Dragging, as T3's sidebar: labels and gaps open only while a row is lifted; Pinned pins and reorders,
-  // Active unpins and unsettles, Settled settles; empty sections take drops; Esc, leaving, or a row
-  // vanishing put it back; Working never lifts; a sweep from Settle or undo takes a run of rows along.
+
   const f = fixture(256), run = { ...cx, spawn: fn => { fn(run); } }, inbox = f.load("t3-inbox");
   for (const a of f.agents()) { a.status = "done"; a.focused = false; }
   for (const k of f.terminals()) if (k.parent) k.status = "idle";
@@ -686,7 +679,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const root = () => inbox.render(run);
   const h = (id) => find(root(), id)?.style.h;
   const badge = (v) => find(find(root(), "drag-ghost"), `badge-${v}`);
-  // Press 10px into an 80px row, then move: the sidebar sees the pointer at y.
+
   const lift = (from, y = 20) => {
     fire(find(root(), from), "on_mouse_down:left", { position: { x: 0, y: 0 }, local_position: { x: 0, y: 10 }, bounds: { height: 80 } }, run);
     fire(root(), "on_mouse_move", { position: { x: 0, y }, local_position: { x: 0, y: 100 + y } }, run);
@@ -751,7 +744,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.match(value, /^settled=\d+:/, "dropped on Settled, it's settled");
   t0.labels = { settled: value.slice(8) };
   inbox.open = true;
-  // As T3's settled rows, it leads with its project's mark, the one its card shows, not its program's icon.
+
   const mark = find(root(), "slim-mark-t0");
   assert.deepEqual(strings(mark), ["P"], "project 0's monogram");
   assert.ok(!walk(mark).some(n => n.kind === "svg" && n.source === "icons/pi.svg"), "no program icon");
@@ -783,7 +776,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual(f.labelled.splice(0).map(([, a, v]) => [a, v.split("=")[0]]).sort(), [["t0", "settled"], ["vps/t2", "settled"]], "letting go settles every marked row");
   fire(settleButton, "on_click", {}, run);
   assert.equal(f.labelled.length, 0, "the button's click after a sweep doesn't settle again");
-  // As core writes them back: the label the settle set, else the row stays pending and won't lift (its stamp is ms).
+
   for (const k of [t0, f.terminals().find(k => k.address === "vps/t2")]) k.labels = { settled: inbox.pending.settled[k.address] ?? `${Date.now()}:0` };
 
   const n = f.labelled.length;
@@ -804,7 +797,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   release();
   assert.deepEqual(f.calls.slice(before), [["pane.focus", { pane: "p9" }]], "and the release still hands the keyboard back");
   assert.equal(f.labelled.length, n, "none of those changed anything");
-  // Off the bottom edge, past the Settled shelf, it lands where the badge said (Herdr reports no release outside).
+
   fire(root(), "on_size_change", { width: 256, height: 900 }, run);
   for (const k of f.terminals()) if (k.address === "vps/t2") k.labels = {};
   lift("card-vps/t2");
@@ -834,10 +827,10 @@ for (const width of [208, 240, 256, 320, 480]) {
 {
   const f = fixture(256), sp = f.load("t3-spaces"), ag = f.load("t3-agents");
   let root = sp.render(cx);
-  // The Spaces/Agents divider is the layout's own, as upstream: neither list sizes it.
+
   for (const tree of [root, ag.render(cx)]) assert.equal(walk(tree).filter(n => "on_size_change" in n.handlers).length, 0, "no list measures itself to move the divider");
   assert.ok(!f.calls.some(([name]) => name === "layout.resize"), "rendering never resizes the layout");
-  // Dragging, as the inbox's: rows are 32px, this computer's header, s0, s1, then vps's header and s2.
+
   const press = (id, y = 0) => fire(find(sp.render(cx), id), "on_mouse_down:left", { position: { x: 0, y } }, cx);
   const move = (y, x = 0) => fire(find(sp.render(cx), "space-list"), "on_mouse_move", { position: { x, y } }, cx);
   const release = () => fire(find(sp.render(cx), "space-list"), "on_mouse_up:left", {}, cx);
@@ -846,7 +839,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const fly = (tree, key) => walk(tree).find(n => keyOf(n)?.startsWith(`fly-${key}-`));
   const moves = () => f.calls.filter(([name]) => name === "space.move");
   {
-    // A machine's lit chevron goes with the pointer even when its leave never comes, as an agents group's does.
+
     const every = cx.timer.every, watches = [], scope = f.scopes.get("t3-spaces"), was = scope.window.mouse_position;
     cx.timer.every = (ms, fn) => { const t = { ms, fn, cancel() { t.gone = true; } }; watches.push(t); return t; };
     scope.window.mouse_position = () => ({ x: 10, y: 10 });
@@ -863,7 +856,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   fire(still, "on_mouse_up:left", {}, cx);
   assert.deepEqual(f.calls.pop(), ["space.select", { id: "s0" }], "a press that didn't move selects");
   release();
-  // The first frame lifted is the list as it was, the gap in its place, nothing fading; the next opens the gap where it lands.
+
   press("space-s0"); move(40);
   root = sp.render(cx);
   assert.deepEqual(rows(root), ["machine-local", "gap-32", "space-s1", "machine-vps", "space-s2"]);
@@ -883,13 +876,13 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual([sp.hot, sp.overMachine, find(root, "space-s1").hoverStyle.bg, find(root, "space-s1").style.active], [null, null, undefined, undefined], "while lifted, nothing lights under it");
   fire(still, "on_mouse_up:left", {}, cx);
   assert.ok(!f.calls.some(([name]) => name === "space.select"), "a drag's release doesn't select");
-  // Past s1's middle, measured from the rows without the lifted one, s1 makes way, sliding up.
+
   move(24);
   root = sp.render(cx);
   assert.deepEqual(rows(root), ["machine-local", "space-s1", "gap-32", "machine-vps", "space-s2"], "the list opens where it would land");
   assert.equal(fly(root, "space-s1").style.top, 33, "s1 slides up from where it was");
   assert.equal(find(root, "space-lifted").style.top, 57);
-  // Half a row onto vps's rows: no machine takes another's space, so it goes back where it was.
+
   move(60);
   assert.deepEqual(rows(sp.render(cx)), ["machine-local", "gap-32", "space-s1", "machine-vps", "space-s2"], "over another machine, the gap goes home");
   release();
@@ -901,29 +894,29 @@ for (const width of [208, 240, 256, 320, 480]) {
   root = sp.render(cx);
   assert.deepEqual(rows(root), ["machine-local", "space-s1", "space-s0", "machine-vps", "space-s2"], "until the move's echo, the rows stay as they were let go");
   assert.deepEqual([fly(root, "space-s0").style.top, fly(root, "space-s0").style.opacity], [57 - 66, 1], "it slides from where it was let go to its place");
-  f.spaces().splice(1, 0, f.spaces().shift()); // The move's echo.
+  f.spaces().splice(1, 0, f.spaces().shift());
   assert.deepEqual(rows(sp.render(cx)), ["machine-local", "space-s1", "space-s0", "machine-vps", "space-s2"]);
   assert.equal(sp.landing, null, "once it's arrived the model's order is the list's");
   f.spaces().splice(0, 0, f.spaces().splice(1, 1)[0]);
   sp.render(cx);
-  // vps's one space has nowhere to go in its machine; pulled up into this computer's rows, it stays.
+
   press("space-s2", 0); move(-10); sp.render(cx); move(-60); sp.render(cx);
   assert.deepEqual(rows(sp.render(cx)), ["machine-local", "space-s0", "space-s1", "machine-vps", "gap-32"]);
   release();
   assert.deepEqual(moves().length, 1, "nor into another machine from below");
-  // Leaving the list puts it back.
+
   press("space-s1"); move(-10); sp.render(cx); move(-30); sp.render(cx);
   fire(find(sp.render(cx), "space-list"), "on_hover", false, cx);
   assert.equal(sp.drag, null, "leaving ends the drag");
   assert.equal(moves().length, 1, "and moves nothing");
   assert.equal(fly(sp.render(cx), "space-s1").style.top, 34 - 64, "it slides back");
-  // A space that leaves the list while lifted ends the drag.
+
   press("space-s1"); move(20); sp.render(cx);
   sp.folded.add(null);
   assert.equal(find(sp.render(cx), "space-lifted"), null);
   assert.equal(sp.drag, null);
   sp.folded.delete(null);
-  // Let go outside the window, neither a release nor a leave comes: where the pointer is ends the drag, and no later click moves a space.
+
   const watches = [], every = cx.timer.every, scope = f.scopes.get("t3-spaces");
   cx.timer.every = (ms, fn) => { const t = { ms, fn, cancel() { t.gone = true; } }; watches.push(t); return t; };
   const box = { x: 0, y: 0, width: 256, height: 400 }, lift = () => { press("space-s1"); fire(find(sp.render(cx), "space-list"), "on_mouse_move", { position: { x: 0, y: 40 }, bounds: box }, cx); sp.render(cx); };
@@ -948,8 +941,7 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // The list's motion, as T3's: a row that comes fades in riding the kept row above it, one that goes fades out as an inert
-  // ghost of itself, the rest slide; 150ms ease-out.
+
   const f = fixture(256), sp = f.load("t3-spaces"), list = f.spaces();
   const keyOf = n => "key" in n ? n.key : null;
   const fly = (tree, key) => walk(tree).find(n => keyOf(n)?.startsWith(`fly-${key}-`));
@@ -957,7 +949,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   const settle = () => cx.timers.filter(t => t.ms === 16 && !t.gone).forEach(t => { t.gone = true; t.fn(cx); });
   let tree = sp.render(cx);
   assert.deepEqual([fly(tree, "space-s1").style.opacity, fly(tree, "space-s1").style.top], [1, 0], "the first frame plays nothing");
-  // A new space joins when it's shown (its git known, or a moment gone), and its fade starts then.
+
   list.splice(2, 0, { id: "s3", name: "project 3", active: false, folder: "/work/p3", machine: null, tabs: [] });
   tree = sp.render(cx);
   assert.equal(fly(tree, "space-s3"), undefined, "waiting for its git, it isn't drawn");
@@ -968,7 +960,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   settle();
   tree = sp.render(cx);
   assert.deepEqual([fly(tree, "space-s3").style.opacity, fly(tree, "machine-vps").style.top], [1, 0], "then let go");
-  // Closed, it fades out where it was, lined up with the rows inside the list's padding.
+
   list.splice(2, 1);
   tree = sp.render(cx);
   const gone = leaving(tree, "space-s3");
@@ -977,17 +969,17 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(fly(tree, "machine-vps").style.top, 33, "the rows below close up");
   settle();
   assert.equal(leaving(sp.render(cx), "space-s3").style.opacity, 0, "it fades out");
-  // A machine folding: its rows go the same way, its header stays.
+
   fire(find(sp.render(cx), "machine-vps"), "on_click", {}, cx);
   tree = sp.render(cx);
   assert.ok(leaving(tree, "space-s2") && fly(tree, "machine-vps") && !fly(tree, "space-s2"), "its spaces leave");
 }
 
 {
-  // A ghost (a lifted or leaving row) is drawn as its row, without the list's ids, handlers, labels or keyboard stops.
+
   const o = fixture(256), view = o.load("t3-spaces"), list = o.spaces(), repo = JSON.stringify([null, "/w/E/.git"]);
   const keyOf = n => "key" in n ? n.key : null;
-  o.state["t3-focus"] = "elsewhere"; // Keyboard mode: the list's rows are stops.
+  o.state["t3-focus"] = "elsewhere";
   list[2].machine = null;
   const wt = { repo, linked: true, name: "E", branch: "x", ahead: 0, behind: 0 };
   view.git[JSON.stringify([null, "/work/p1"])] = wt;
@@ -1004,7 +996,7 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 
 {
-  // New space here goes as the space it made arrives, with no leave to say so: back later, it isn't lit.
+
   const f = fixture(256), sp = f.load("t3-spaces"), list = f.spaces();
   sp.machines = [{ name: "spare", state: "asleep" }];
   fire(find(sp.render(cx), "machine-new-spare"), "on_hover", true, cx);
@@ -1026,7 +1018,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual(treeLines(sp.row({ w: f.spaces()[1], i: 1, g: null, tree: "├─" }, f.theme())), [[17.25, "line"], [17.25, "elbow"]], "a middle worktree keeps the line going");
   assert.deepEqual(treeLines(sp.row({ w: f.spaces()[1], i: 1, g: null, tree: null }, f.theme())), [], "checkouts draw no lines");
   {
-    // project 1 is a worktree of project 0's repo.
+
     const g = { repo: "/r", linked: false, name: "project 0", branch: "main", ahead: 0, behind: 0 };
     sp.git[JSON.stringify([null, "/work/s0"])] = g;
     sp.git[JSON.stringify([null, "/work/p1"])] = { ...g, linked: true, branch: "x" };
@@ -1034,7 +1026,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(ids(), ["s0", "s1", "s2"]);
     const arrow = find(sp.render(cx), "space-fold-s0");
     assert.equal(arrow.style.mr + arrow.style.px, 0, "past its padding, its chevron ends where the row's content does, as a folder's");
-    // T3 turns its arrow; Herdr can't, so the two directions cross-fade in one slot, ids stable so the fade plays.
+
     const way = (tree, name) => find(tree, `space-fold-s0-${name}`);
     assert.deepEqual([way(arrow, "down").items[0].source, way(arrow, "down").style.opacity, way(arrow, "right").style.opacity, arrow.items.length], ["mods/t3-spaces/icons/chevron-down.svg", 1, 0, 1], "a checkout shows its fold arrow at the end, as an agent parent");
     assert.equal(arrow.style.text_color, f.theme().dim, "the arrow is dim");
@@ -1059,7 +1051,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     sp.git = {};
   }
   {
-    // A repo's worktrees hang together with its checkout closed, under a dim row standing for it.
+
     const o = fixture(256), list = o.spaces(), view = o.load("t3-spaces"), repo = JSON.stringify([null, "/w/Engineer/.git"]);
     list[2].machine = null;
     const set = (id, g) => { view.git[JSON.stringify([null, `/work/${id}`])] = g; };
@@ -1070,7 +1062,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual([...view.ordered().map(r => r.tree ?? null)], [null, null, "├─", "└─"]);
     const moves = () => o.calls.filter(([name]) => name === "space.move");
     assert.deepEqual(moves(), [], "a row with no space never reaches the model's order");
-    // Dragged past it, a space goes past the whole group: its worktrees count, though the head isn't a space.
+
     fire(find(view.render(cx), "space-s0"), "on_mouse_down:left", { position: { x: 0, y: 0 } }, cx);
     for (const y of [10, 100]) fire(find(view.render(cx), "space-list"), "on_mouse_move", { position: { x: 0, y } }, cx);
     view.render(cx);
@@ -1079,11 +1071,11 @@ for (const width of [208, 240, 256, 320, 480]) {
     view.landing = null;
     let root = view.render(cx), head = find(root, headId);
     assert.ok(strings(head).includes("Engineer"), "named for its repo");
-    // Its arrow is a checkout's: dim until itself hovered, in the same column.
+
     const foldId = `${headId}-fold`;
     assert.equal(find(root, foldId).style.text_color, o.theme().dim, "the arrow is dim, as a checkout's");
     assert.equal(find(root, foldId).style.mr, -6);
-    // Its arrow folds, and makes nothing.
+
     const before = o.calls.length;
     let halted = false;
     fire(find(root, foldId), "on_click", {}, { ...cx, stop_propagation() { halted = true; } });
@@ -1091,21 +1083,21 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(o.calls.length, before, "folding makes no space");
     assert.deepEqual(rows(), ["s0", headId], "folded, its worktrees go");
     assert.ok(strings(find(view.render(cx), headId)).includes("2"), "and it says how many");
-    // Closed, the worktree you're on still shows, last in the tree, and isn't counted.
+
     list.forEach(s => { s.active = s.id === "s2"; });
     assert.deepEqual(rows(), ["s0", headId, "s2"], "the worktree in view stays");
     assert.equal(view.ordered().at(-1).tree, "└─");
     assert.ok(strings(find(view.render(cx), headId)).includes("1"));
     list.forEach(s => { s.active = s.id === "s0"; });
     fire(find(view.render(cx), foldId), "on_click", {}, cx);
-    // No tab to go to: the click opens the checkout, once however often it's pressed.
+
     assert.equal(find(view.render(cx), headId).style.accessibility_label, "Open Engineer");
     const opens = () => o.calls.filter(([name]) => name === "space.new").length;
     fire(find(view.render(cx), headId), "on_click", {}, cx);
     assert.deepEqual(o.calls.at(-1), ["space.new", { folder: "/w/Engineer", machine: "" }]);
     fire(find(view.render(cx), headId), "on_click", {}, cx);
     assert.equal(opens(), 1, "a second press doesn't make a second space");
-    // It arrives last, and takes the head's place, the fold kept: the group doesn't jump to the end.
+
     fire(find(view.render(cx), foldId), "on_click", {}, cx);
     list.push({ id: "s9", name: "Engineer", active: false, folder: "/w/Engineer", machine: null, tabs: [] });
     view.shown.add("s9");
@@ -1119,12 +1111,12 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(rows(), ["s0", "s9", "s1", "s2"]);
     list.splice(1, 1);
     delete view.git[JSON.stringify([null, "/w/Engineer"])];
-    // One worktree alone stays a plain row.
+
     set("s0", null);
     set("s2", null);
     assert.deepEqual(rows(), ["s0", "s1", "s2"], "one alone gets no row over it");
     assert.equal(view.ordered()[1].tree, null);
-    // No .git folder (a bare repo): nothing to open, so no pen.
+
     const bare = JSON.stringify([null, "/w/bare.git"]);
     set("p1", { ...tree, repo: bare }); set("s2", { ...tree, repo: bare });
     const made = opens();
@@ -1133,7 +1125,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.ok(view.foldedRepos.has(bare));
   }
   {
-    // A place not asked about yet isn't "not a repo": a cd in a worktree leaves its group and the model's order alone.
+
     const o = fixture(256), list = o.spaces(), view = o.load("t3-spaces");
     list[2].machine = null;
     const at = dir => JSON.stringify([null, dir]), g = { repo: "/r", linked: true, name: "E", branch: "x", ahead: 0, behind: 0 };
@@ -1160,7 +1152,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(shape(), [["s0", null], ["s2", "└─"], ["s1", null]], "known not to be a repo, it leaves");
   }
   {
-    // Two dim rows opened one after the other: each checkout takes its own row's place, neither group goes to the end.
+
     const o = fixture(256), list = o.spaces(), view = o.load("t3-spaces");
     const space = (id, folder) => ({ id, name: id, active: false, folder, machine: null, tabs: [] });
     const add = (id, folder, repo, linked) => {
@@ -1179,7 +1171,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(list.map(s => s.id), ["ma", "a1", "a2", "mb", "b1", "b2", "x"]);
   }
   {
-    // A worktree away from its checkout: the model moves to the rows' order, so space keys go down the list.
+
     const o = fixture(256), list = o.spaces(), view = o.load("t3-spaces");
     list[2].machine = null;
     const g = { repo: "/r", linked: false, name: "project 0", branch: "main", ahead: 0, behind: 0 };
@@ -1194,7 +1186,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     view.ordering.at -= 1000;
     ids();
     assert.equal(moves().length, 2, "a write that lost a sync conflict is retried");
-    list.splice(1, 0, list.splice(2, 1)[0]); // The move's echo.
+    list.splice(1, 0, list.splice(2, 1)[0]);
     ids();
     assert.equal(view.ordering, null, "in order, nothing is pending");
     view.foldedRepos.add("/r");
@@ -1205,7 +1197,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(moves().pop(), ["space.move", { id: "s2", index: 2 }], "a folded worktree still keeps its place");
     list.splice(1, 0, list.splice(2, 1)[0]);
     view.foldedRepos.clear();
-    // Dragging: rows are 32px, and the model moves as the rows did, worktrees after their checkout.
+
     const keyOf = n => "key" in n ? n.key : null;
     const order = tree => find(tree, "space-rows").items.filter(n => keyOf(n)?.startsWith("fly-")).map(n => keyOf(n.items[0]) ?? `gap-${n.items[0].style.h}`);
     const lift = (id, ...ys) => {
@@ -1215,12 +1207,12 @@ for (const width of [208, 240, 256, 320, 480]) {
     };
     const drop = () => fire(find(view.render(cx), "space-list"), "on_mouse_up:left", {}, cx);
     assert.deepEqual(list.map(s => s.id), ["s0", "s2", "s1"]);
-    // A checkout lifts with its worktrees and lands as a group, between groups.
+
     let tree = lift("space-s0", 40);
     assert.deepEqual(order(tree), ["space-s1", "gap-65"], "the gap is the group's");
     assert.equal(find(tree, "space-lifted").style.top, 33, "it stays inside the list");
     assert.deepEqual(find(tree, "space-lifted").items.map(n => strings(n).find(x => x.startsWith("project"))), ["project 0", "project 2"], "its worktree rides with it");
-    // A drag holds its space, not an index a move can shift under it.
+
     const up = find(view.render(cx), "space-list");
     list.unshift(list.pop());
     fire(up, "on_mouse_up:left", {}, cx);
@@ -1235,7 +1227,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     tree = lift("space-s1", -20);
     assert.deepEqual(order(tree), ["space-s0", "space-s2", "gap-32"], "halfway into a group it stays below it");
     drop();
-    // A worktree moves among its own: past the group's ends it stops at them, as ordered() would put it back there.
+
     view.git[JSON.stringify([null, "/work/p1"])] = { ...g, linked: true, branch: "y" };
     assert.deepEqual(ids(), ["s0", "s2", "s1"]);
     tree = lift("space-s2", 60);
@@ -1254,13 +1246,13 @@ for (const width of [208, 240, 256, 320, 480]) {
     const n = moves().length;
     drop();
     assert.equal(moves().length, n, "so it moves nothing");
-    // Without worktrees, a space dropped between two lands between them.
+
     for (const id of ["s0", "s2"]) view.git[JSON.stringify([null, `/work/${id}`])] = null;
     tree = lift("space-s0", 40);
     assert.deepEqual(order(tree), ["space-s2", "gap-32", "space-s1"]);
     drop();
     assert.deepEqual(moves().pop(), ["space.move", { id: "s0", index: 2 }]);
-    // Folded, a group's hidden worktrees still count: a space dropped after it goes after them all.
+
     const s3 = { id: "s3", name: "project 3", active: false, folder: "/work/p3", machine: null, tabs: [] };
     list.splice(0, Infinity, s3, ...["s0", "s2", "s1"].map(id => list.find(s => s.id === id)));
     view.shown.add("s3");
@@ -1300,7 +1292,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.equal(find(root, "tab-b0").hoverStyle.bg, undefined);
   assert.equal(find(root, "tab-other").hoverStyle.bg, f.theme().hover);
   assert.equal(find(root, "tab-strip").style.gap, 4);
-  // Tabs take their whole names while the room allows, the longest give way first; past that the strip keeps the active tab in view.
+
   {
     const strip = f.spaces()[0].tabs, kept = strip.splice(0), view = f.load("t3-tabs");
     strip.push(...["a", "b", "c", "d"].map(id => ({ id, name: id, active: id === "a" })));
@@ -1309,7 +1301,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     const pick = (id) => strip.forEach(c => { c.active = c.id === id; });
     const room = (width) => fire(find(view.render(cx), "tab-scroll"), "on_size_change", { width }, cx);
     const wheel = (x, y) => fire(view.render(cx), "on_scroll_wheel", { delta: { x, y } }, cx);
-    // A name's width, so its tab is `whole` wide: 51 around the name.
+
     const name = (id, whole) => fire(find(view.render(cx), `name-${id}`), "on_size_change", { width: whole - 51 }, cx);
     assert.equal(w("a"), 144, "before its name is measured");
     assert.equal(find(view.render(cx), "name-a").style.h, 0, "the measure doesn't show");
@@ -1348,7 +1340,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(at(), 162, "a swipe stops at the last tab");
     wheel(10000, 0);
     assert.equal(at(), 0, "and at the first");
-    // Its name lengthening moves the strip for its new end; another tab's doesn't.
+
     pick("d");
     assert.equal(at(), 162);
     name("d", 200);
@@ -1364,24 +1356,23 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(at(), 0, "with room for every tab the strip stays put");
     strip.splice(0, strip.length, ...kept);
   }
-  // A tab nobody named reads as its agent, the name its pane header and inbox card show.
+
   Object.assign(first, { name: "1", named: false });
   f.terminals().find(k => k.address === "t0").labels = { "pi.session": "mine" };
   assert.ok(strings(find(f.load("t3-tabs").render(cx), "tab-b0")).includes("mine"), "an unnamed tab reads as its agent's session");
   assert.ok(strings(f.load("t3-pane", { pane: "p0" }).render(cx)).includes("mine"), "its pane header reads the same");
 
-  // New opens a terminal tab in the space picked: no agent step.
   const menu = f.load("t3-new-menu"); f.calls.length = 0;
   menu.choose(menu.items().find(item => item.space?.id === f.spaces()[0].id));
   assert.deepEqual(f.calls.splice(0), [["tab.new", { space: f.spaces()[0].id }]], "New opens a tab");
-  // Two machines: New space asks which, as T3's Add project asks for an environment.
+
   fire(find(menu.render(cx), "space-new"), "on_click", {}, cx);
   assert.deepEqual(f.calls, [], "New space asks first");
   menu.choose(menu.items().find(item => item.machine === "vps"));
   assert.deepEqual(f.calls.pop(), ["space.new", { machine: "vps" }], "New space opens a space there");
   f.calls.length = 0;
   {
-    // The sidebar's way to a new machine, in the footer both Lists and Inbox keep.
+
     const f = fixture(256);
     const add = find(f.load("t3-chrome", { footer: true }).render(cx), "add-machine");
     assert.equal(add.style.accessibility_label, "Add machine");
@@ -1389,7 +1380,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(f.calls.pop(), ["mod.open", { name: "machine-add" }]);
   }
   {
-    // "+" on a machine's header names that machine, this computer included: without one the focused space's machine wins.
+
     const f = fixture(256), sp = f.load("t3-spaces");
     sp.machines = [{ name: "vps", state: "connected" }];
     fire(find(sp.render(cx), "machine-add-local"), "on_click", {}, cx);
@@ -1402,11 +1393,11 @@ for (const width of [208, 240, 256, 320, 480]) {
   const bare = tabs.render(cx);
   assert.deepEqual(bare.items.slice(0, 2).map(n => n.key), ["tip-sidebar-toggle", "tab-scroll"], "hidden, the toggle sits first, after the window buttons");
   const toggle = find(bare, "sidebar-toggle");
-  // t0 works, but its sub-agent is stuck: it needs the person too.
+
   assert.deepEqual(toggle.items.slice(1).map(n => [n.key, strings(n)]), [["agents-blocked", ["!", "2"]]], "hidden, the toggle sums up agents most urgent first, idle left out");
   assert.equal(toggle.style.accessibility_label, "Show sidebar, 2 needing you");
   {
-    // One look across the preset: the same "needs you" mark everywhere, no scrollbars, English throughout.
+
     f.spaces()[0].tabs[0].status = "blocked";
     f.panes()[0].status = "blocked";
     const all = () => [tabs.render(cx), f.load("t3-agents").render(cx), f.load("t3-spaces").render(cx), f.load("t3-chrome").render(cx), f.load("t3-pane", { pane: "p0" }).render(cx)].flatMap(walk);
@@ -1436,7 +1427,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.deepEqual(f.calls.pop(), ["tab.move", { id: "b0", index: 2 }]);
   fire(find(root, "tab-other"), "on_mouse_down:right", {}, cx);
   assert.equal(f.overlays.pop().props.target.id, "other");
-  // + and the window's buttons are the bar's end, a block of their own after the other mods' controls, sized to fit.
+
   assert.equal(find(root, "tab-new"), null);
   const end = f.load("t3-tabs", { part: "end", block: "tabs-end" });
   fire(find(end.render(cx), "tab-new"), "on_click", {}, cx);
@@ -1450,7 +1441,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   fire(find(end.render(cx), "close-window"), "on_hover", true, cx);
   assert.equal(find(end.render(cx), "close-window").style.text_color, f.theme().foreground, "the window's close lights as the others do: it's no tab's ×");
   fire(find(end.render(cx), "close-window"), "on_hover", false, cx);
-  // The strip under the work column says whether the bar's controls fold, at 1024.
+
   const measure = f.load("t3-tabs", { part: "measure" });
   fire(find(measure.render(cx), "bar-measure"), "on_size_change", { width: 1023 }, cx);
   assert.equal(f.scopes.get("t3-tabs").shared("bar.compact"), true);
@@ -1474,7 +1465,7 @@ for (const width of [208, 240, 256, 320, 480]) {
   assert.ok("absolute" in actions.style, "hovering a pane's header moves nothing else");
 }
 {
-  // Icons: every UI glyph drawn is a file that exists.
+
   const f = fixture(256);
   f.spaces()[0].tabs[0].status = "blocked";
   const trees = [f.load("t3-tabs").render(cx), f.load("t3-tabs", { part: "end" }).render(cx), f.load("t3-agents").render(cx), f.load("t3-spaces").render(cx), f.load("t3-chrome").render(cx), f.load("t3-chrome", { footer: true }).render(cx), f.load("t3-pane", { pane: "p0" }).render(cx)].flatMap(walk);
@@ -1486,9 +1477,9 @@ for (const width of [208, 240, 256, 320, 480]) {
 }
 (async () => {
   {
-    // A rebuilt machine: one click forgets it and pairs again, and a failed pairing can be retried without forgetting twice.
+
     const f = fixture(256);
-    /** @type {any} */ let done;
+     let done;
     const run = { ...cx, spawn: fn => { done = fn(run); } };
     const sp = f.load("t3-spaces"), vps = { name: "vps", target: "me@vps:2222", session: "main", state: "unreachable", why: 'a different core answers there ("c2")' };
     sp.machines = [{ ...vps, why: "connection refused" }];
@@ -1515,7 +1506,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     const running = () => { const run = { ...cx, spawn: fn => { fn(run); } }; return run; };
     const answer = machines => ({ code: 0, stdout: JSON.stringify({ machines }) });
     {
-      // Connected some other way (Add machine, hc machine add): no repair is left, and its spaces show, after a restart too.
+
       const f = fixture(256), run = running();
       f.stores.set("t3-spaces", new Map([["machines.reconnecting", JSON.stringify({ vps: { machine: { name: "vps", target: "me@vps", state: "unreachable" }, removed: true, error: "no route" } })]]));
       f.answerHc(() => answer([{ name: "vps", target: "me@vps", state: "connected" }]));
@@ -1531,7 +1522,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.ok(sp.reconnecting.vps, "a Connect under way ends its own repair");
     }
     {
-      // A temporary machine with a space is known as any other: connected, with its +. One with no space isn't listed.
+
       const f = fixture(256), run = running();
       f.answerHc(() => answer([{ name: "vps", target: "vps", state: "connected", temporary: true }, { name: "spare", state: "asleep", temporary: true }]));
       const sp = f.load("t3-spaces");
@@ -1542,7 +1533,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.equal(find(tree, "machine-spare"), null);
     }
     {
-      // machines() says a machine changed: the headings ask hc at once, not at the next poll.
+
       const f = fixture(256), run = running(), sp = f.load("t3-spaces"), asked = () => f.labelled.splice(0).filter(a => a[0] === "machine").length;
       const scope = f.scopes.get("t3-spaces");
       asked();
@@ -1556,7 +1547,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       await flush();
     }
     {
-      // Git's looks: once a place while it answers, one machine doesn't hold up another, only where spaces are, and only in view.
+
       const f = fixture(256), run = running(), sp = f.load("t3-spaces"), scope = f.scopes.get("t3-spaces"), list = f.spaces();
       const at = (dir, on = null) => JSON.stringify([on, dir]);
       const looks = [], watches = [];
@@ -1571,7 +1562,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       scope.watchFolder = dir => new Promise(res => watches.push({ dir, res }));
       const count = dir => looks.splice(0).filter(d => d === dir).length;
       const wake = dir => { for (const w of watches.splice(0).filter(w => { if (w.dir === dir) return true; watches.push(w); return false; })) w.res([]); };
-      list.unshift(list.pop()); // The machine that won't answer comes first: one queue would never reach the rest.
+      list.unshift(list.pop());
       let open;
       hold = new Promise(res => { open = res; });
       let back;
@@ -1590,7 +1581,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       away = null;
       await flush();
       assert.ok(at("/work/s2", "vps") in sp.git);
-      // A closed repo: forgotten and let go. The first terminal's old folders aren't looked at on a commit.
+
       const s1 = list.splice(2, 1)[0], pane = f.panes()[0];
       sp.checkNew(run);
       assert.ok(!sp.watching.has("/work/p1/.git") && !(at("/work/p1") in sp.git));
@@ -1604,7 +1595,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       wake("/work/p1/.git");
       await flush();
       assert.deepEqual(looks.splice(0), [], "a commit in the closed repo looks at nothing");
-      // Opened again while its old watch still waits: one change wakes both, and one watch goes on.
+
       list.push(s1);
       sp.checkNew(run);
       await flush();
@@ -1619,8 +1610,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       await flush();
       assert.equal(count("/work/p1"), 1);
       assert.equal(watches.filter(w => w.dir === "/work/p1/.git").length, 1, "the old loop ends, so changes aren't looked at twice");
-      // The fallback look is for what's in view: with the Inbox in front, or the sidebar hidden, it waits.
-      // A look starts a tick after it's due: the multirepo mark is asked for first (multirepoAt), even when known.
+
       const due = async () => { for (const k in sp.checked) sp.checked[k] = 0; looks.splice(0); sp.checkNew(run); await flush(); return looks.length; };
       f.ui.window.active = true;
       f.slots["sidebar-lists"] = { id: "sidebar-lists", active: "inbox" };
@@ -1634,7 +1624,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.ok(await due() > 0, "docked alone, with no Lists to be hidden in");
     }
     {
-      // The icon through a cd: until the new place answers, the space keeps it, not a flash of its letter.
+
       const f = fixture(256), sp = f.load("t3-spaces"), scope = f.scopes.get("t3-spaces"), key = dir => JSON.stringify([null, dir]);
       f.state["space.icons"] = { [key("/work/s0")]: "cache/t3-icons/x.svg", [key("/old")]: "cache/t3-icons/y.svg", [key("/empty")]: null };
       let open;
@@ -1651,7 +1641,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.ok(!hasIcon(), "and it shows");
       assert.ok(!(key("/empty") in f.state["space.icons"]), "answers of no icon stay only for places in use");
       assert.equal(f.state["space.icons"][key("/old")], "cache/t3-icons/y.svg");
-      // Agents draws beside Spaces, which keeps asking: it asks only where nobody has answered (a worktree has no mark in Spaces).
+
       const ag = f.load("t3-agents"), asks = [];
       f.scopes.get("t3-agents").exec = async (_cmd, args, { cwd }) => { if (args.includes("--show-toplevel")) asks.push(cwd); return { code: 1, stdout: "", stderr: "" }; };
       delete f.state["space.icons"][JSON.stringify(["vps", "/work/s2"])];
@@ -1663,9 +1653,9 @@ for (const width of [208, 240, 256, 320, 480]) {
     }
   }
   {
-    // A hover style's color reaches text but never an svg: Herdr colors an icon as it builds the tree. So a button with an icon brightens by state.
+
     const f = fixture(256), views = [f.load("t3-chrome"), f.load("t3-chrome", { footer: true }), f.load("t3-tabs"), f.load("t3-pane", { pane: "p0" }), f.load("t3-spaces"), f.load("t3-agents"), f.load("t3-inbox"), f.load("t3-tabs", { part: "end" })];
-    fire(views[3].render(cx), "on_hover", true, cx); // A pane's buttons show while its header is hovered.
+    fire(views[3].render(cx), "on_hover", true, cx);
     for (const view of views) for (const n of walk(view.render(cx))) if (n.hoverStyle.text_color) assert.ok(!walk(n).some(c => c.kind === "svg"), `${n.key}: a hover style can't brighten its icon`);
     const rest = f.theme().dim, bright = f.theme().foreground;
     for (const [view, id] of [[views[0], "sidebar-mode"], [views[1], "add-machine"], [views[7], "tab-new"], [views[4], "space-new"], [views[5], "ag-sort"]]) {
@@ -1686,8 +1676,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(toggle().style.text_color, rest, "the toggle goes with the sidebar, so it can't wait for the pointer to report leaving");
   }
   {
-    // Every control says what it is. A pane's header focuses it; it's no control.
-    // As in T3, an icon alone says it on hover too; words may, naming what they do. A row's own fold and the editor's icon picks explain themselves.
+
     const f = fixture(256);
     const pane = f.load("t3-pane", { pane: "p0" });
     pane.hovered = true;
@@ -1704,7 +1693,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     }
   }
   {
-    // A mark with no words says what it is on hover; what sits at the window's bottom opens upward, as a Popup doesn't flip.
+
     const f = fixture(256), ag = f.load("t3-agents"), footer = f.load("t3-chrome", { footer: true });
     const mark = () => find(ag.render(cx), "tip-status-t0-mark");
     assert.equal(strings(mark().style.content).length, 0, "its card waits for the hover");
@@ -1717,7 +1706,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(find(footer.render(cx), "tip-add-machine").style.anchor, "bottom_center");
   }
   {
-    // Whatever opens over its button covers it, and the pointer may not move: it doesn't stay lit.
+
     const f = fixture(256), footer = f.load("t3-chrome", { footer: true }), agents = f.load("t3-agents"), inbox = f.load("t3-inbox");
     for (const [view, id] of [[footer, "settings"], [footer, "add-machine"], [agents, "ag-sort"], [inbox, "inbox-search"], [inbox, "inbox-new-tab"]]) {
       fire(find(view.render(cx), id), "on_hover", true, cx);
@@ -1727,7 +1716,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     }
   }
   {
-    // Lists and Inbox make the same things the same way: with two machines New space asks, in the layout's menu; docked alone it can't.
+
     const f = fixture(256), menu = { newMenu: "t3-new-menu" };
     for (const [mod, space, tab] of [["t3-spaces", "space-new", "space-new-tab"], ["t3-inbox", "inbox-new-space", "inbox-new-tab"]]) {
       const view = f.load(mod, menu);
@@ -1741,7 +1730,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       fire(find(f.load(mod).render(cx), space), "on_click", {}, cx);
       assert.deepEqual(f.calls.splice(0), [["space.new", {}]], `${space} docked alone`);
       assert.equal(f.overlays.length, 0);
-      // A popup's button toggles: the press closed it on its way in, so the click opens nothing. The other button's still opens its step.
+
       const pressClick = (id) => { fire(find(view.render(cx), id), "on_mouse_down:left", {}, cx); f.state[`t3-new-menu.${id === space ? "pickClosed" : "closed"}`] = Date.now(); fire(find(view.render(cx), id), "on_click", {}, cx); };
       pressClick(space); pressClick(tab);
       assert.deepEqual([f.calls.length, f.overlays.length], [0, 0], `${space} and ${tab} close what they opened`);
@@ -1761,13 +1750,13 @@ for (const width of [208, 240, 256, 320, 480]) {
       assert.deepEqual(f.calls.splice(0), [["mod.open", { name: "t3-picker" }]], "the keyboard's click has no press: it opens");
       delete f.state["t3-picker.closed"];
     }
-    // A machine's row is T3's shelf with its folder's +: 24, 2 before the chevron at the row's end. Its dot follows its name.
+
     const lists = f.load("t3-spaces", menu), row = find(lists.render(cx), "machine-local");
     const add = find(row, "machine-add-local").style, slots = row.items.at(-1).style;
     assert.deepEqual([row.style.h, row.style.mx, row.style.px, add.size, add.rounded, slots.gap], [32, 2, 8, 24, 8, 2]);
     assert.equal(row.style.text_size, 12, "the same size as the agents' group headers and Inbox's shelves");
     assert.ok(row.items.findIndex(n => find(n, "machine-state-local")) < row.items.findIndex(n => find(n, "machine-add-local")), "the dot is before the +");
-    // Hover labels name the control, and its key only when the key does the same.
+
     lists.machines = [{ name: "spare", state: "asleep" }];
     const blank = find(lists.render(cx), "machine-new-spare");
     assert.deepEqual([blank.style.px, blank.items[0].style.size, blank.style.gap], [10, 16, 10], "New space here lays out as a space's row");
@@ -1778,8 +1767,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(label("machine-add-local"), ["New space here (⌘N)"], "⌘N makes it on this space's machine");
     assert.deepEqual(label("machine-add-vps"), ["New space here"], "and not on another");
     assert.deepEqual(label("machine-state-local"), ["Connected"]);
-    // Three kinds: a button does what the row doesn't (a ground on hover, a label); an indicator is the row's (it lights with it);
-    // a mark only says (a label, no ground).
+
     const fold = () => find(lists.render(cx), "machine-fold-local");
     assert.equal(find(lists.render(cx), "tip-machine-fold-local"), null, "the chevron has no label: the row folds");
     assert.deepEqual([fold().hoverStyle.bg, fold().style.text_color], [undefined, f.theme().dim]);
@@ -1792,7 +1780,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     lists.hot = null;
   }
   {
-    // A row's details, as T3's thread card: at the row's top right, with T3's tooltip group for timing and fade.
+
     const f = fixture(256), inbox = f.load("t3-inbox");
     f.panes()[0].branch = "feat/x";
     f.panes()[1].branch = "main";
@@ -1800,7 +1788,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     const card = (a) => anchor(a)?.style.content;
     const row = (a) => find(inbox.render(cx), `card-${a}`);
     const hover = (a, on) => fire(row(a), "on_hover", on, cx);
-    cx.timers.length = 0; // Other tests' hovers left theirs.
+    cx.timers.length = 0;
     const due = (ms) => cx.timers.filter(t => t.ms === ms && !t.gone);
     const pass = (ms) => { for (const t of due(ms)) { t.gone = true; t.fn(cx); } };
     assert.equal(anchor("t0"), null, "nothing until hovered");
@@ -1821,13 +1809,13 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.ok(row("t0").style.relative !== undefined);
     assert.deepEqual(strings(card("t0")).slice(1), ["P", "project 0", "feat/x", "Pi"], "its mark and project, branch, program; no machine on this one");
     assert.equal(strings(card("t0"))[0], row("t0").style.accessibility_label, "led by the title the row shows");
-    // The pointer can report entering the next row before leaving this one.
+
     hover("vps/t2", true);
     assert.equal(card("t0").style.opacity, 0, "the one it replaces fades under it");
     assert.equal(card("vps/t2").style.opacity, 1, "unfaded");
     assert.deepEqual(strings(card("vps/t2")).slice(1), ["P", "project 2", "vps", "main", "Pi"], "another machine's names it");
     const labelDelay = (id) => { fire(find(inbox.render(cx), `tip-over-${id}`), "on_hover", true, cx); const { ms } = cx.timers.at(-1); fire(find(inbox.render(cx), `tip-over-${id}`), "on_hover", false, cx); return ms; };
-    // The machine is named on the card, so it has no label of its own (see above): Settle is the control here.
+
     assert.equal(labelDelay("settle-vps/t2"), 0, "a control's label in the row opens at once too");
     hover("t0", false);
     assert.ok(card("vps/t2"), "the late leave of the row before doesn't close it");
@@ -1858,7 +1846,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(card("t0").style.opacity, 1, "coming back while it fades out lifts it again");
   }
   {
-    // A hover label, as T3's: the label with its bound key, a dim hint, and nothing up unless the button is lit.
+
     const f = fixture(256), tabs = f.load("t3-tabs", { part: "end" }), inbox = f.load("t3-inbox");
     f.spaces()[0].active = true;
     const card = (view, id) => find(view.render(cx), `tip-${id}`).style.content;
@@ -1876,18 +1864,17 @@ for (const width of [208, 240, 256, 320, 480]) {
     fire(find(inbox.render(cx), "tip-over-inbox-scope"), "on_hover", true, cx);
     while (cx.timers.length) { const t = cx.timers.shift(); if (!t.gone) t.fn(cx); }
     assert.deepEqual(strings(card(inbox, "inbox-scope")), ["Filter by space", "Shift+click to pick several"], "a second line only for what can't be seen");
-    // A program's icon has no label of its own, as T3's rows.
+
     f.panes()[0].program = f.agents()[0].program;
     for (const [name, view] of Object.entries({ tabs: f.load("t3-tabs"), inbox, agents: f.load("t3-agents"), pane: f.load("t3-pane", { pane: "p0" }) })) {
       const nodes = walk(view.render(cx));
       assert.ok(nodes.some(n => n.source === "icons/pi.svg"), `${name}: the icon is there`);
-      // A label whose trigger is the icon alone; a tab's, with its name, is the tab's.
+
       assert.ok(!nodes.some(n => String(n.key).startsWith("tip-") && strings(n.items[0]).length === 0 && walk(n).some(c => c.source === "icons/pi.svg")), `${name}: no label on a program's icon`);
     }
   }
   {
-    // A tab as T3's panel tab: 24px, 12px; unlike T3's its icon stays, and × comes at its end, over the status mark, while the tab is hovered.
-    // A tab drags as a space does, and leaving ends either.
+
     const f = fixture(256), tabs = f.load("t3-tabs"), spaces = f.load("t3-spaces");
     f.spaces()[0].active = f.spaces()[0].tabs[0].active = true;
     f.spaces()[0].tabs.push({ id: "other", index: 2, name: "other", named: true });
@@ -1897,13 +1884,13 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual([close().style.size, close().style.accessibility_label], [16, "Close other"], "every tab has it, not only the active one");
     assert.equal(close().items.length, 0, "at rest it's empty, with no status to show");
     assert.ok(walk(find(tabs.render(cx), "tab-other")).some(n => n.source === "mods/t3-tabs/icons/terminal.svg"), "the tab's icon, a terminal's when it has no program");
-    // The pointer on a tab's name is on the tab too; the card goes by the name, the × by the tab.
+
     const hoverName = (id, on) => { fire(find(tabs.render(cx), `tab-${id}`), "on_hover", on, cx); fire(find(tabs.render(cx), `label-${id}`), "on_hover", on, cx); };
     hoverName("other", true);
     assert.equal(close().items[0].source, "mods/t3-tabs/icons/x.svg", "hovered, a ×");
     assert.ok(walk(find(tabs.render(cx), "tab-other")).some(n => n.source === "mods/t3-tabs/icons/terminal.svg"), "and the icon stays");
     assert.equal(find(tabs.render(cx), "tab-other").style.text_color, f.theme().foreground);
-    // Its whole name and nothing else, with an Inbox row's timing: after 150ms for the first and at once for the next.
+
     const tabCard = (id) => find(tabs.render(cx), `details-${id}`)?.style.content;
     assert.equal(tabCard("other"), undefined, "the first waits");
     cx.timers.filter(t => t.ms === 150 && !t.gone).forEach(t => { t.gone = true; t.fn(cx); });
@@ -1942,7 +1929,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(spaces.drag, null, "leaving the list ends a space's drag");
   }
   {
-    // On the way to a tab's ×, nothing in the way: the name's card goes, and its own label waits.
+
     const f = fixture(256), tabs = f.load("t3-tabs");
     f.spaces()[0].tabs.push({ id: "other", index: 2, name: "other", named: true });
     const pending = () => cx.timers.filter(t => !t.gone).forEach(t => { t.gone = true; t.fn(cx); });
@@ -1960,7 +1947,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     hoverName(true);
     pending();
     assert.deepEqual(strings(card()), ["other"], "a name cut short does");
-    // The pointer moves on within the tab: off the name, onto the ×.
+
     fire(find(tabs.render(cx), "label-other"), "on_hover", false, cx);
     fire(find(tabs.render(cx), "close-other"), "on_hover", true, cx);
     assert.deepEqual([card().style.opacity, card().style.top], [0, -4], "the × fades the card away");
@@ -1974,11 +1961,11 @@ for (const width of [208, 240, 256, 320, 480]) {
     fire(find(tabs.render(cx), "label-other"), "on_hover", true, cx);
     pending();
     assert.deepEqual(strings(card()), ["other"], "back on the name, it returns");
-    // A tab gone from under the pointer reports no leaving; every other tab's card still has to open.
+
     tabs.hot = "close-gone";
     tabs.render(cx);
     assert.equal(tabs.hot, null);
-    // A × that slid under a still pointer (the tab before it closed) has no box yet. Its leave can be dropped, so the first move away decides.
+
     {
       const every = cx.timer.every, watches = [], w = f.scopes.get("t3-tabs").window;
       cx.timer.every = (_ms, fn) => { const task = { fn, cancel() { task.gone = true; } }; watches.push(task); return task; };
@@ -1992,7 +1979,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       at = { x: 700, y: 300 };
       tick();
       assert.equal(tabs.hot, null, "moved off with no leave reported, the × isn't left lit, keeping every tab's card away");
-      // A move that stays on it reports a box, so it isn't taken for leaving.
+
       at = { x: 500, y: 12 };
       fire(find(tabs.render(cx), "tip-over-close-other"), "on_hover", true, cx);
       fire(find(tabs.render(cx), "close-other"), "on_hover", true, cx);
@@ -2005,7 +1992,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     }
   }
   {
-    // A person's close asks when it ends terminals, as T3's; only the dialog's command closes.
+
     const f = fixture(256), jobs = [], spawn = cx.spawn;
     f.spaces().splice(0, Infinity,
       { id: "s", active: true, tabs: [{ id: "a", name: "Alpha", named: true, active: true }, { id: "b", name: "Beta", named: true }] },
@@ -2020,7 +2007,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     cx.spawn = spawn;
     assert.equal(jobs.length, 1, "of the layout's three copies only the tab strip answers, or one close opens three dialogs");
     const say = async command => { f.commands.push(command); jobs[0](cx); await new Promise(resolve => setImmediate(resolve)); };
-    // What `hc get` says: its own shell at the prompt, a program it started, a program that is the terminal, or no answer.
+
     const shell = { pid: 1, foreground: { pid: 1, name: "zsh" } }, program = { pid: 1, foreground: { pid: 2, name: "sleep" } }, own = { pid: 1, foreground: { pid: 1, name: "sleep" } };
     let fg = () => program;
     f.answerHc(args => ({ code: 0, stdout: JSON.stringify(fg(args[1])) }));
@@ -2063,7 +2050,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     await say("close-pane:p4");
     assert.deepEqual(f.calls.pop(), ["pane.close", { pane: "p4" }], "a space's last pane closes the space, which Herdr asks about itself");
     assert.equal(f.overlays.length, 0);
-    // Empty panes have nothing to lose: nothing asks, and the same goes for a tab of them.
+
     f.calls.length = 0;
     fg = () => shell;
     await say("close-pane:p1");
@@ -2086,7 +2073,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual([f.calls, f.overlays.length], [[], 0], "with nothing focused, nothing to close");
   }
   {
-    // Both modes walk their drawn rows and stop at either end, including while hidden.
+
     const f = fixture(256), jobs = [], spawn = cx.spawn;
     cx.spawn = fn => jobs.push(fn);
     f.load("t3-tabs"); f.load("t3-tabs", { part: "end" }); f.load("t3-tabs", { part: "measure" }); f.load("t3-chrome"); f.load("t3-chrome", { footer: true });
@@ -2109,7 +2096,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     const mixed = ["t0", "pane:p9", "t5"];
     assert.deepEqual(await press("next", { order: mixed, view: "t0" }), [["pane.focus", { pane: "p9" }]], "a mod pane's row has no agent to focus");
     assert.deepEqual(await press("next", { order: mixed, view: "pane:p9" }), [["agent.focus", { terminal: "t5" }]], "and the walk goes on from it");
-    // A zoom on another pane of the target's tab goes first, in the same tick; on the target itself, a toggle would undo it.
+
     const p2 = f.panes().find(p => p.pane === "p2"), other = { pane: "px", tab: p2.tab, terminal: "tx", zoomed: true };
     f.panes().push(other);
     assert.deepEqual(await press("next", { order, view: "t0" }), [["pane.zoom", { pane: "p2" }], ["agent.focus", { terminal: "vps/t2" }]], "the zoom goes to the target before the focus");
@@ -2127,7 +2114,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     f.slots.lists.active = "inbox"; f.slots.sidebar.hidden = true;
     assert.deepEqual(await press("next", { order, view: "t0" }), [["agent.focus", { terminal: "vps/t2" }]], "hidden Inbox keeps its mode");
     assert.deepEqual(await press("prev", { order, view: "t0" }), []);
-    // Busy work cannot be settled; sidebar switching still works while hidden.
+
     assert.deepEqual(await press("sidebar"), [["layout.select", { stack: "sidebar-lists", child: "lists" }]]);
     assert.deepEqual(await press("settle"), [], "hidden, a busy agent stays");
     delete f.slots.sidebar.hidden;
@@ -2137,7 +2124,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(await press("sidebar"), [["layout.select", { stack: "sidebar-lists", child: "inbox" }]]);
   }
   {
-    // Every menu goes by arrows and Enter, and says when a search finds nothing.
+
     const f = fixture(256), key = (view, id, k) => fire(find(view.render(cx), id), "on_key_down", { key: k }, cx);
     const sort = f.load("t3-agents", { sortMenu: true });
     assert.equal(find(sort.render(cx), "sort-grouped").style.bg, undefined, "it opens with nothing lit");
@@ -2151,7 +2138,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(inbox.scopeAt, 1);
     assert.equal(find(panel(), "scope-all").style.bg, undefined);
     {
-      // Past the rows that show, ↑/↓ keep the highlight in view, round the ends too; the rows keep their clicks.
+
       f.spaces().push(...Array.from({ length: 12 }, (_, i) => ({ id: `x${i}`, name: `extra ${i}`, active: false, folder: `/work/x${i}`, machine: null, tabs: [] })));
       const rows = () => walk(find(panel(), "inbox-scope-list")).filter((n) => String(n.key).startsWith("scope-")).map((n) => n.key);
       assert.equal(rows().length, 9, "nine show");
@@ -2166,15 +2153,14 @@ for (const width of [208, 240, 256, 320, 480]) {
       f.spaces().splice(-12);
       inbox.scopeAt = 0;
     }
-    // As T3's: hangs from the button's left edge, 288 wide.
+
     assert.deepEqual([find(inbox.render(cx), "inbox-scope-menu").style.anchor, find(panel(), "inbox-scope-panel").style.w], ["top_left", 288]);
     const spaces = f.load("t3-new-menu");
     spaces.filter = "no such space";
     assert.ok(strings(spaces.render(cx)).includes("No matching spaces."));
   }
   {
-    // The keyboard's way round (check-focus.cjs has its rules): no control is a stop until the mode's on; then each is, a row
-    // shows with the keyboard on it what it shows hovered, and Enter does what the pointer does.
+
     const f = fixture(256), tabs = f.load("t3-tabs"), ag = f.load("t3-agents"), sp = f.load("t3-spaces"), footer = f.load("t3-chrome", { footer: true }), brand = f.load("t3-chrome");
     const on = (mod, id) => { mod.fs.keyboard = true; mod.fs.handles.set(id, { focus() {}, is_focused: () => true }); };
     for (const [view, id] of [[tabs, "tab-b0"], [tabs, "sidebar-toggle"], [ag, "ag-t0"], [ag, "ag-sort"], [sp, "space-s0"], [sp, "space-new"], [footer, "settings"], [brand, "sidebar-mode"]]) {
@@ -2185,14 +2171,14 @@ for (const width of [208, 240, 256, 320, 480]) {
     for (const [view, id] of [[ag, "ag-t0"], [ag, "ag-sort"], [ag, "fold-t0"], [sp, "space-s0"], [sp, "space-new"], [footer, "settings"], [footer, "add-machine"], [brand, "sidebar-mode"], [brand, "sidebar-toggle"], [tabs, "tab-b0"]])
       assert.equal(find(view.render(cx), id).style.tab_index, 0, `${id} is a stop`);
     assert.equal(find(f.load("t3-tabs", { part: "end" }).render(cx), "tab-new").style.tab_index, 0);
-    // Tab's × and the pin come with the keyboard, as with the pointer.
+
     assert.equal(find(tabs.render(cx), "close-b0").style.tab_index, undefined);
     on(tabs, "tab-b0");
     const tab = find(tabs.render(cx), "tab-b0");
     assert.equal(find(tab, "close-b0").style.tab_index, 0);
     assert.ok(walk(find(tab, "close-b0")).some((n) => n.source === "mods/t3-tabs/icons/x.svg"), "the × shows");
     assert.ok(tab.items.some((n) => n.style?.border === 2 && n.style.border_color === f.theme().accent), "the ring is on the tab");
-    // A tab and a space go by their mouse-ups: a key has to say so itself.
+
     fire(tab, "on_key_down", { keystroke: "enter" }, cx);
     assert.deepEqual(f.calls.pop(), ["tab.select", { id: "b0" }]);
     on(sp, "space-s0");
@@ -2201,7 +2187,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(find(ag.render(cx), "pin-t0").style.tab_index, undefined);
     on(ag, "ag-t0");
     assert.equal(find(ag.render(cx), "pin-t0").style.tab_index, 0, "a hidden control is there once the keyboard's on its row");
-    // Menus: Home, End and typing, with the same highlight the arrows move.
+
     const sort = f.load("t3-agents", { sortMenu: true }), key = (e) => fire(find(sort.render(cx), "sort-menu"), "on_key_down", e, cx), lit = () => find(sort.render(cx), "sort-priority").style.bg === f.theme().selected ? "priority" : "grouped";
     key({ key: "home" });
     assert.equal(lit(), "priority");
@@ -2210,7 +2196,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     key({ key: "p", key_char: "p", modifiers: {} });
     assert.equal(lit(), "priority");
   }
-  // Another window on the core finds Home by its own name, and nothing that only looks like it.
+
   {
     const f = fixture(256), list = f.spaces(), tabs = f.load("t3-tabs");
     const place = (id, name, extra) => list.push({ id, name, named: true, active: false, machine: null, tabs: [], ...extra });
@@ -2227,7 +2213,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(plain(f.calls.filter(([name]) => name === "space.rename")), [["space.rename", { id: "mine", name: "Home\u200b" }]], "a Home made before gets the name, once");
     assert.equal(f.state["t3-home.space"], "mine", "the Home it knows stays");
   }
-  // Home: a space of its own, in no list, and the keys that walk spaces go around it.
+
   {
     const f = fixture(256), list = f.spaces(), jobs = [], spawn = cx.spawn;
     cx.spawn = fn => jobs.push(fn);
@@ -2235,10 +2221,10 @@ for (const width of [208, 240, 256, 320, 480]) {
     cx.spawn = spawn;
     const say = async command => { f.commands.push(command); jobs[0](cx); await new Promise(resolve => setImmediate(resolve)); };
     const made = () => plain(f.calls.splice(0));
-    // spaces() catches up after a command: a step waits to see the one before.
+
     const tick = async () => { cx.timers.at(-1).fn(cx); await new Promise(resolve => setImmediate(resolve)); };
     f.calls.length = 0;
-    // Before this computer's layout is read, a Home that exists would read as missing.
+
     const machines = f.scopes.get("t3-tabs").machines;
     f.scopes.get("t3-tabs").machines = () => [{ name: null, layout: "loading" }];
     await say("home");
@@ -2246,10 +2232,10 @@ for (const width of [208, 240, 256, 320, 480]) {
     f.scopes.get("t3-tabs").machines = machines;
     await say("home");
     assert.deepEqual(made(), [["space.new", { name: "Home\u200b", machine: "", folder: "/home/test" }]]);
-    // A slow core: past 2s it still counts as the Home it asked for, or it'd be an orphan in the lists.
+
     for (let i = 0; i < 100; i++) await tick();
     assert.equal(f.state["t3-home.space"], undefined, "not known until it's seen");
-    // In the model's middle: its place doesn't change the keys' count or the spaces' rows.
+
     const home = { id: "h", name: "Home\u200b", named: true, active: true, machine: null, folder: "/home/test", tabs: [{ id: "shell", name: "1" }] };
     list[0].active = false; list.splice(1, 0, home);
     await tick();
@@ -2270,7 +2256,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.ok(!f.calls.some(([name]) => name === "space.move"), "and the rows' order still counts it: nothing moves");
     f.calls.length = 0;
 
-    // At Home the bar is empty, Herdr's mark is lit and goes there, and what the bar's keys would do elsewhere stays out of it.
     const strip = f.load("t3-tabs", { part: "strip" }).render(cx);
     assert.equal(find(strip, "tab-page"), null, "no tab");
     assert.equal(find(f.load("t3-tabs", { part: "end" }).render(cx), "tab-new"), null, "no +");
@@ -2284,7 +2269,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     await say("close-tab");
     assert.deepEqual([made(), f.overlays.length], [[], 0], "a key pressed out of habit doesn't close Home");
 
-    // The page: what can be done next as buttons, each stroke of a bound key on a cap of its own.
     {
       f.slots.lists = { id: "sidebar-lists", active: "inbox" };
       f.state["t3-inbox.rows"] = { order: ["t0"], view: null };
@@ -2295,7 +2279,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       fire(find(tree(), "home-goto"), "on_click", {}, cx);
       fire(find(tree(), "home-new"), "on_click", {}, cx);
       assert.deepEqual(plain(f.calls.splice(0)), [["t3-tabs.next", {}], ["mod.open", { name: "t3-picker" }], ["t3-tabs.new", {}]]);
-      // Go to and New tab are popups' buttons here too; Next agent has none to toggle.
+
       for (const [id, key] of [["home-goto", "t3-picker.closed"], ["home-new", "t3-new-menu.closed"], ["home-next", "t3-picker.closed"]]) {
         fire(find(tree(), id), "on_mouse_down:left", {}, cx); f.state[key] = Date.now(); fire(find(tree(), id), "on_click", {}, cx);
       }
@@ -2313,25 +2297,23 @@ for (const width of [208, 240, 256, 320, 480]) {
       delete f.slots.sidebar.hidden;
       delete f.slots.lists;
       delete f.state["t3-inbox.rows"];
-      // The mode's owner closing ends the mode: its row can move the page aside, and its timers go with it.
+
       f.state["t3-focus"] = page.fs.me;
       page.close();
       assert.equal(f.state["t3-focus"], null);
     }
 
-    // Its pane's header says nothing of it: the brand bar's lit mark tells where this is.
     const panes = f.panes();
     panes.push({ pane: "ph", tab: "page", mod: "t3-home", title: "t3-home" });
     assert.ok(!strings(f.load("t3-pane", { pane: "ph" }).render(cx)).includes("t3-home"));
     panes.pop();
 
-    // A pane goes as any does; the last gives way to the default page, which itself stays.
     const last = { pane: "pb", tab: "page", terminal: "t9" };
     panes.push(last);
     f.answerHc(() => ({ code: 0, stdout: JSON.stringify({ pid: 1, foreground: { pid: 1, name: "zsh" } }) }));
     await say("close-pane:pb");
     assert.deepEqual(made(), [["pane.split", { direction: "right", pane: "pb", mod: "t3-home" }], ["pane.close", { pane: "pb" }]]);
-    // A program running: nothing moves until the person says yes. A no leaves the pane alone, with no page beside it.
+
     f.answerHc(() => ({ code: 0, stdout: JSON.stringify({ pid: 1, foreground: { pid: 2, name: "lazygit" } }) }));
     await say("close-pane:pb");
     assert.deepEqual(made(), [], "asking");
@@ -2343,7 +2325,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(made(), [], "Home always has a page");
     panes.pop();
 
-    // Its last program ending takes the space with it, past the × above: back to a new Home, not wherever Herdr landed.
     {
       const strip = f.load("t3-tabs");
       strip.render(cx);
@@ -2356,7 +2337,6 @@ for (const width of [208, 240, 256, 320, 480]) {
       list[0].active = false; list.splice(1, 0, home); home.active = true;
     }
 
-    // The spaces the keys count and walk leave Home out, wherever it sits, and wrap.
     for (const [command, id] of [["space:1", "s0"], ["space:2", "s1"], ["space:3", "s2"], ["space-next", "s0"], ["space-prev", "s2"]]) {
       await say(command);
       assert.deepEqual(made(), [["space.select", { id }]], `${command} from Home`);
@@ -2371,7 +2351,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     await say("new");
     assert.deepEqual(made(), [["tab.new", {}]], "elsewhere New is a tab there");
   }
-  // With the Inbox showing, the bar holds the agent in view and what's around it; the sidebar says what needs the person.
+
   {
     const f = fixture(256), spawn = cx.spawn, jobs = [];
     const program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
@@ -2415,7 +2395,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     pick("prog");
     assert.deepEqual(shown(), ["other", "prog", "rev"]);
 
-    // Keys and the wheel go by what's shown, around the ends; Lists keeps Herdr's own.
     pick("mine", "A"); view.render(cx); taken();
     await say("tab:3");
     assert.deepEqual(taken(), [["tab.select", { id: "prog" }]], "the third shown, not the third of the space");
@@ -2434,7 +2413,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [["tab.select", { id: "kid" }]]);
     inbox(true);
 
-    // Only tabs with no agent drag, and among themselves.
     const press = (id) => fire(find(view.render(cx), `tab-${id}`), "on_mouse_down:left", { position: { x: 0, y: 0 }, click_count: 1 }, cx);
     const over = (id) => fire(find(view.render(cx), `tab-${id}`), "on_mouse_move", { position: { x: 50, y: 0 } }, cx);
     const release = (id) => fire(find(view.render(cx), `tab-${id}`), "on_mouse_up:left", {}, cx);
@@ -2445,7 +2423,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [["tab.move", { id: "rev", index: 1 }]], "to its place in the space's real order");
     press("rev"); over("prog"); over("mine"); release("mine");
     assert.deepEqual(taken(), [["tab.move", { id: "rev", index: 1 }]], "an agent's tab takes no drop: it lands at the line it showed");
-    // The bar's list can change under a press: an agent starting takes its tab out of the bar.
+
     const starts = agent("X", "prog", "working");
     press("rev"); f.agents().push(starts); view.render(cx); release("rev");
     assert.deepEqual(taken(), [["tab.select", { id: "rev" }]], "the tab pressed, whatever moved");
@@ -2455,7 +2433,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [["tab.select", { id: "rev" }]], "the tab dragged over gone: no drop on it");
     f.agents().pop();
 
-    // Closing the agent in view's tab stays in its space, on the tab shown before (cff9d6d), however Herdr went; nothing else moves.
     const close = (id) => { const i = tabs.findIndex(c => c.id === id); tabs.splice(i, 1); const a = list.findIndex(x => x.tab === id); if (a >= 0) { f.agents().splice(f.agents().findIndex(x => x.tab === id), 1); f.terminals().splice(f.terminals().findIndex(x => x.tab === id), 1); list.splice(a, 1); } };
     pick("mine", "A"); view.render(cx); taken();
     close("other"); view.render(cx);
@@ -2471,7 +2448,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(taken(), [["tab.select", { id: "prog" }]], "with the Lists too");
   }
 
-  // A focus or a zoom this mod didn't go ahead of (a toast, hc, the zoom button): the later of the two wins, once, and what the stale zoom showed gets its done back.
   {
     const f = fixture(256), program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
     const tabs = f.spaces()[0].tabs;
@@ -2490,7 +2466,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     };
     frame("away", "E", "Z");
     assert.deepEqual(zooms(), [], "a zoom in a tab out of view asks nothing");
-    // The stale frame shows Z, and in the focus's own step Herdr marks it seen.
+
     list[1].status = "idle"; list[1].labels["herdr.seen"] = "1";
     frame("two", "Y", "Z");
     assert.deepEqual(zooms(), [["pane.zoom", { pane: "pY" }]], "the focus moved: the zoom follows");
@@ -2507,8 +2483,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(zooms(), [], "agreeing, nothing to do");
   }
 
-  // A close this mod can't go ahead of (the program ending, a menu's Close): Herdr showed its pick and marked it seen, so an agent
-  // that was unread a frame before gets its done back once it's out of view, Herdr's own Mark unread.
   {
     const f = fixture(256), program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
     const tabs = f.spaces()[0].tabs, ctx = cx;
@@ -2523,7 +2497,7 @@ for (const width of [208, 240, 256, 320, 480]) {
     };
     const view = f.load("t3-tabs");
     const pick = (id, address) => { tabs.forEach(c => { c.active = c.id === id; }); f.agents().forEach(a => { a.focused = a.address === address; }); f.shown.agent = address ?? null; view.render(ctx); };
-    // Herdr's pick: the tab goes, its right neighbour shows and, the window active, is seen.
+
     const exit = (id, to) => { const n = f.agents().find(a => a.tab === to); tabs.splice(tabs.findIndex(c => c.id === id), 1); f.agents().splice(f.agents().findIndex(a => a.tab === id), 1); if (n) { n.status = "idle"; n.labels["herdr.seen"] = "1"; } pick(to, n?.address); };
     const labels = () => f.labelled.map(a => a.join(" "));
     f.slots["sidebar-lists"] = { id: "sidebar-lists", active: "inbox" };
@@ -2563,7 +2537,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     f.slots["sidebar-lists"].active = "inbox";
   }
 
-  // Closing a tab with no agent goes back where the person was, not to the neighbour Herdr picks, which isn't somewhere they went.
   {
     const f = fixture(256), program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
     const tabs = f.spaces()[0].tabs, ctx = cx;
@@ -2592,7 +2565,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     pick("prog"); taken();
     assert.deepEqual(shown(), ["mine", "prog"], "the agent the bar holds is still the one they last looked at");
 
-    // A close this mod makes goes first, so Herdr's neighbour is never shown: that would cost an agent its unread done.
     {
       const spawn = ctx.spawn, jobs = [];
       ctx.spawn = fn => jobs.push(fn);
@@ -2613,7 +2585,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       f.state["t3-home.space"] = "h"; f.spaces().push({ id: "h", name: "Home", active: false, tabs: [{ id: "hp", name: "Home" }] });
       see("mine", "A"); taken();
       await say("close-tab-now:mine");
-      // As any tab since cff9d6d: back to a tab of its space first (which one is the trail's: here a show within goBack's 500ms isn't counted), then the close.
+
       const [back, ...rest] = taken();
       assert.ok(back[0] === "tab.select" && back[1].id !== "mine" && tabs.some((c) => c.id === back[1].id), "the agent in view: back in its space first");
       assert.deepEqual(rest, [["tab.close", { id: "mine", confirmed: true }]], "then the close");
@@ -2622,7 +2594,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       await say("close-tab-now:mine");
       assert.deepEqual(taken(), [["space.select", { id: "h" }], ["tab.close", { id: "mine", confirmed: true }]], "its space's last tab too: Herdr would show another space's");
       tabs.splice(0, tabs.length, ...all);
-      // Herdr moved the space's own active tab to the closed one's neighbour, out of sight: a key back mustn't show it, which would cost it its unread done.
+
       see("prog"); see("mine", "A"); taken();
       f.spaces()[0].active = false; f.spaces().at(-1).active = true; closer.render(ctx);
       tabs.forEach(c => { c.active = c.id === "other"; });
@@ -2632,7 +2604,7 @@ for (const width of [208, 240, 256, 320, 480]) {
       await say("space:1");
       assert.deepEqual(taken(), [["tab.select", { id: "mine" }]], "by its number too");
       f.slots["sidebar-lists"].active = "inbox";
-      // With the Inbox shown, ctrl-1…9 is its nth row instead (12f7c1f), in the order it publishes.
+
       f.state["t3-inbox.rows"] = { order: ["A"], view: null };
       await say("space:1");
       assert.ok(taken().some(([name, args]) => name === "agent.focus" && args.terminal === "A"), "the Inbox's first row");
@@ -2641,15 +2613,12 @@ for (const width of [208, 240, 256, 320, 480]) {
       f.spaces().pop(); delete f.state["t3-home.space"]; f.panes().pop(); gone("new");
     }
 
-    // Nowhere to go back to, as after a restart: Herdr's pick stands.
     const fresh = f.load("t3-tabs");
     fresh.render(ctx); taken();
     gone("prog"); tabs.forEach(c => { c.active = c.id === "mine"; }); fresh.render(ctx);
     assert.deepEqual(taken(), [], "no memory, no jump");
   }
 
-  // The agent in view closed by what this mod doesn't make (its menu, its program ending): the neighbour Herdr shows for a frame isn't somewhere the person went;
-  // its space stays, on the tab shown before (cff9d6d).
   {
     const f = fixture(256), program = { key: "pi", name: "Pi", agent: true, tint: true, icon: "icons/pi.svg" };
     const tabs = f.spaces()[0].tabs;
@@ -2669,7 +2638,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(find(view.render(cx), "tab-strip").items.map(n => walk(n).map(x => x.key).find(k => /^tab-/.test(k ?? "")).slice(4)), ["was", "prog"], "the agent last looked at is still the one the bar holds");
   }
 
-  // Lists publish only rows their folds draw, even hidden; the inactive copy cannot reset the order.
   {
     const f = fixture(256), firstWatch = cx.watches.length;
     f.slots.lists = { id: "sidebar-lists", active: "lists" }; f.slots.sidebar.hidden = true;
@@ -2691,7 +2659,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(plain(f.state["t3-agents.rows"].order), ["t0", "vps/t2"]);
   }
 
-  // Settle needs no Inbox copy. The same key works in every mode/visibility combination, with the same Undo.
   for (const mode of ["lists", "inbox"]) for (const hidden of [false, true]) {
     const f = fixture(256), a = f.agents()[0], k = f.terminals()[0];
     f.slots.lists = { id: "sidebar-lists", active: mode }; f.slots.sidebar.hidden = hidden;
@@ -2731,7 +2698,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(f.state["t3-inbox.notice"], null);
   }
 
-  // A failed Settle cannot move the person or remove a pin.
   {
     const f = fixture(256); f.terminals().splice(2); f.agents()[0].status = "idle";
     f.state["agents.pins"] = ["t0"];
@@ -2761,7 +2727,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.deepEqual(f.calls, [], "finishing a slow Settle cannot pull someone away from where they've gone");
   }
 
-  // Status is idle without moving the Lists row; snoozed working trees do not count on the toggle.
   {
     const f = fixture(256), a = f.agents()[0], k = f.terminals()[0]; f.terminals().splice(2);
     f.slots.lists = { id: "sidebar-lists", active: "lists" }; f.slots.sidebar.hidden = true;
@@ -2785,7 +2750,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     assert.equal(find(ag.render(cx), "status-t0").style.accessibility_label, "Needs you");
   }
 
-  // Review is the sole Settle exception: its tab goes back, a split stays with its agent. Both modes and × share it.
   for (const mode of ["lists", "inbox"]) for (const split of [false, true]) {
     const f = fixture(256), tabs = f.spaces()[0].tabs, reviewTab = split ? "b0" : "review";
     f.slots.lists = { id: "sidebar-lists", active: mode };
@@ -2803,7 +2767,6 @@ for (const width of [208, 240, 256, 320, 480]) {
     await view.settle(cx); assert.deepEqual(f.calls, [], "analysis in progress cannot be settled");
   }
 
-  // An agent pane closing is still a close of the agent in view, even when its tab survives.
   for (const mode of ["lists", "inbox"]) {
     const f = fixture(256), tab = f.spaces()[0].tabs[0]; tab.active = true;
     f.slots.lists = { id: "sidebar-lists", active: mode };

@@ -1,4 +1,3 @@
-// node sample.test.mjs: the sampling script's output from a Linux box and a Mac, as figures.
 import assert from "node:assert/strict";
 import { parseSample } from "./sample.js";
 
@@ -24,8 +23,8 @@ assert.deepEqual(linux.temps, { cpu: 52.5, gpu: 38 }, "the hottest gpu sensor; n
 assert.deepEqual(linux.disk, { used: 702334392 * 1024, free: 1242568456 * 1024, total: 1949318196 * 1024, path: "/home" });
 
 const mac = parseSample(`os mac
-CPU usage: 8.94% user, 3.36% sys, 87.68% idle 
-load  1.51 1.89 2.02 
+CPU usage: 8.94% user, 3.36% sys, 87.68% idle
+load  1.51 1.89 2.02
 memsize 25769803776
 Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                                    53876.

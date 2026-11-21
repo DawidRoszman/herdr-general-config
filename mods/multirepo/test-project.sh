@@ -1,7 +1,4 @@
 #!/bin/sh
-# A throwaway multirepo project to try the mod on: ~/.herdr/mr-test/AcmeShop with three repos whose
-# origins are local bare repos (no GitHub, so every repo stays at "no PR"), registered with mr, with
-# three tasks already made (one stacked on another). `test-project.sh rm` removes it all, tasks included.
 set -eu
 BASE="$HOME/.herdr/mr-test"
 PROJECT="$BASE/AcmeShop"
@@ -40,7 +37,6 @@ done
 rm -rf "$BASE/seed"
 python3 "$MR" init "$PROJECT"
 
-# A task with work in progress across two repos, and one with a repo on its own branch for the ticket.
 python3 "$MR" new feat/SHOP-130-checkout-flow backend portal --project "$PROJECT" >/dev/null
 task="$HOME/.herdr/projects/AcmeShop/feat-SHOP-130-checkout-flow"
 printf 'def checkout(): ...\n' > "$task/acme-shop-backend/src/checkout.py"

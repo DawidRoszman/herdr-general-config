@@ -1,6 +1,3 @@
-// Pure helpers for the PR monitor and review views. Checked by `node model.test.mjs`.
-
-// Quotes each argument for the remote shell ssh hands `python3 - <args>` to (as multirepo does).
 export function remoteCommand(args) {
   return ["python3", "-", ...args.map((a) => `'${String(a).replaceAll("'", "'\\''")}'`)].join(" ");
 }
@@ -14,37 +11,23 @@ export function prState(pr) {
   return pr.state.toLowerCase();
 }
 
-// "feat/SHOP-110-search-filters" -> "SHOP-110-search-filters": what the work is, whatever its type
-// (feat/, test/, fix/…), so feat/X in one repo and test/X in another are one piece of work.
 export function branchTopic(branch) {
   return branch.replace(/^[a-z]+\//, "");
 }
 
-// "feat/SHOP-110-search-filters" -> "SHOP-110", else the branch without its type prefix.
 export function shortBranch(branch) {
   return branch.match(/[A-Z][A-Z0-9]*-\d+/)?.[0] ?? branchTopic(branch);
 }
 
-// project: a multirepo project's root, or with isRepo a plain repo's folder. machine null: this Mac.
-// branches: every branch of the topic (feat/X, test/X), when there are several; branch is the main one.
 export function reviewTab(machine, project, branch, isRepo = false, branches = [branch]) {
   return { name: `PR ${shortBranch(branch)}`, mod: "prs", props: { view: "review", machine, project, branch, ...(branches.length > 1 ? { branches } : {}), ...(isRepo ? { isRepo } : {}) } };
 }
 
-// Which branch review a tab shows, as one string: review tabs publish theirs (shared OPEN_REVIEWS) so
-// a click finds the tab already open, in whichever space it is.
 export const OPEN_REVIEWS = "prs.openReviews";
 export function reviewKey(machine, project, branch) {
   return `${machine ?? ""}|${project}|${branchTopic(branch)}`;
 }
 
-// The space a project's PR review belongs in: one on the project's machine whose folder is the
-// project (or plain repo), inside it, or one of its multirepo tasks or worktrees (~/.herdr/projects/<name>/,
-// ~/.herdr/worktrees/<name>/). The one on the PR's branch first; else the project's own (its folder, else
-// a space named after the project, else one inside its folder), never another branch's task; null when none.
-// A multirepo task's space has no branch of its own (its folder holds the repos, it isn't one), so a
-// space is also on the branch when it sits in that branch's task or worktree folder, named by branchSlug.
-// `checkout`: where git has the branch checked out (a worktree anywhere, from worktreeOf), whose space is first.
 export function projectSpace(spaces, { machine, root, name, branch, checkout = null }) {
   const here = spaces.filter((s) => (s.machine ?? null) === (machine ?? null));
   const atCheckout = checkout && checkout !== root ? spaceAt(here, machine, checkout) : null;
@@ -55,61 +38,51 @@ export function projectSpace(spaces, { machine, root, name, branch, checkout = n
     ?? own.find((s) => s.folder === root || s.folder.startsWith(`${root}/`)) ?? null;
 }
 
-// The space on a machine whose folder is folder or inside it, or null.
 export function spaceAt(spaces, machine, folder) {
   return spaces.find((s) => (s.machine ?? null) === (machine ?? null) && (s.folder === folder || Boolean(s.folder?.startsWith(`${folder}/`)))) ?? null;
 }
 
-// A folder in a project (or plain repo), or in one of its multirepo tasks or worktrees.
 function isInsideProject(folder, root, name) {
   return Boolean(folder) && (folder === root || folder.startsWith(`${root}/`)
     || (Boolean(name) && (folder.includes(`/.herdr/projects/${name}/`) || folder.includes(`/.herdr/worktrees/${name}/`))));
 }
 
-// A space on a branch: git says so, or it sits in that branch's task or worktree folder (named by branchSlug).
 function isOnBranch(space, name, branch) {
   const branchFolders = name ? [`/.herdr/projects/${name}/${branchSlug(branch)}`, `/.herdr/worktrees/${name}/${branchSlug(branch)}`] : [];
   return space.branch === branch || branchFolders.some((f) => space.folder?.endsWith(f) || space.folder?.includes(`${f}/`));
 }
 
-// Which machine's copy of a PR the list shows when its project is on several machines (copies sorted by
-// machine name, each with machine, root, project and branch): where you work on it, so a click and g go
-// there. The machine with a space on the PR's branch in that project (or in its task folder, task from
-// mr prs), else the focused space's machine, else the first by name.
 export function preferredCopy(copies, spaces, focusedMachine) {
   const hasBranchSpace = (c) => Boolean(c.task && spaceAt(spaces, c.machine, c.task)) || spaces.some((s) => (s.machine ?? null) === (c.machine ?? null)
     && isInsideProject(s.folder, c.root, c.project) && isOnBranch(s, c.project, c.branch));
   return copies.find(hasBranchSpace) ?? copies.find((c) => (c.machine ?? null) === (focusedMachine ?? null)) ?? copies[0];
 }
 
-// Where `git worktree list --porcelain` has a branch checked out, or null.
 export function worktreeOf(porcelain, branch) {
   for (const block of String(porcelain).split("\n\n")) {
     const lines = block.split("\n");
-    // Not one whose folder is gone (prunable): git still lists it until pruned.
+
     if (lines.includes(`branch refs/heads/${branch}`) && !lines.some((l) => l.startsWith("prunable"))) return lines.find((l) => l.startsWith("worktree "))?.slice(9) ?? null;
   }
   return null;
 }
 
-// What here.js's FIND_PLACE printed: a multirepo task ("task" and its .mr-task.json) or a plain repo
-// ("repo", its main checkout, its branch), as openReview's arguments; null for neither.
 export function parsePlace(stdout) {
   const [kind, ...rest] = String(stdout).split("\n");
   if (kind === "task") {
     const task = JSON.parse(rest.join("\n"));
-    return { root: task.project, branch: task.branch ?? "", isRepo: false, name: task.project.split("/").pop() };
+
+    const root = task.host?.project ?? task.project;
+    return { root, branch: task.branch ?? "", isRepo: false, name: root.split("/").pop(), ...(task.host ? { machine: task.host.machine } : {}) };
   }
   if (kind === "repo" && rest[0]) return { root: rest[0], branch: rest[1] ?? "", isRepo: true, name: rest[0].split("/").pop() };
   return null;
 }
 
-// A branch as a folder name, as mr.py's branch_slug: feat/SHOP-130-x -> feat-SHOP-130-x.
 export function branchSlug(branch) {
   return String(branch).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
 }
 
-// Where a repo checkout is listed from: a plain repo in a space, unless a multirepo project or task covers it.
 export function isCoveredByProject(repoRoot, projectRoots) {
   return repoRoot.includes("/.herdr/projects/") || projectRoots.some((root) => repoRoot === root || repoRoot.startsWith(`${root}/`));
 }
@@ -118,15 +91,11 @@ export function machineLabel(machine) {
   return machine ?? "this Mac";
 }
 
-// ---------------------------------------------------------------- monitor
-
-// Monitor groups: one per (machine, project, branch topic), open work first, review requests from me on top.
-// branch: the topic's most used branch (feat/X over a lone test/X); branches: all of them.
 export function groupByBranch(projects) {
   const groups = new Map();
   for (const { machine, project, root, isRepo, prs } of projects) {
     for (const pr of prs) {
-      // topic (mr prs): the task branch a repo's own branch belongs to (test/X-1, or one named differently).
+
       const key = `${machine}|${root}|${branchTopic(pr.topic ?? pr.branch)}`;
       if (!groups.has(key)) groups.set(key, { key, machine, project, root, isRepo: Boolean(isRepo), prs: [] });
       groups.get(key).prs.push(pr);
@@ -146,12 +115,12 @@ export function groupByBranch(projects) {
       isOpen: prs.some((pr) => pr.state === "OPEN"),
       isReviewRequestedFromMe: prs.some((pr) => pr.state === "OPEN" && pr.isReviewRequestedFromMe),
       updatedAt: prs.map((pr) => pr.updatedAt).sort().at(-1),
-      // The stack of the first repo's stacked PR stands for the branch's stacks (one per repo).
+
       stackKey: stacked ? `${stacked.slug}#${stacked.stack.number}` : null,
       stackPosition: stacked?.stack.position ?? 0,
     };
   });
-  // A stack's branches sort by the stack's latest update, so they stay together.
+
   const stackUpdatedAt = new Map();
   for (const g of list) if (g.stackKey && !(stackUpdatedAt.get(g.stackKey) >= g.updatedAt)) stackUpdatedAt.set(g.stackKey, g.updatedAt);
   return list
@@ -159,13 +128,10 @@ export function groupByBranch(projects) {
     .sort((a, b) => rank(a) - rank(b) || byRecency(a, b));
 }
 
-// Newest first; a stack's branches together, bottom (next to the base) first.
 function byRecency(a, b) {
   return (b.orderAt ?? b.updatedAt).localeCompare(a.orderAt ?? a.updatedAt)
     || (a.stackKey ?? "").localeCompare(b.stackKey ?? "") || (a.stackPosition ?? 0) - (b.stackPosition ?? 0);
 }
-
-// ---------------------------------------------------------- sidebar sections
 
 export const SECTIONS = [
   { id: "review", title: "Needs your review", icon: "eye" },
@@ -177,7 +143,6 @@ export const SECTIONS = [
 
 const isBot = (author) => /\[bot\]$|^app\/|dependabot|renovate/i.test(author ?? "");
 
-// Which section a branch's PRs belong to: what needs you first, then yours, then the rest.
 export function sectionOf(group) {
   if (!group.isOpen) return "closed";
   if (group.isReviewRequestedFromMe) return "review";
@@ -185,9 +150,6 @@ export function sectionOf(group) {
   return group.prs.every((pr) => isBot(pr.author)) ? "bots" : "others";
 }
 
-// The rows the sidebar draws: a header per section that has branches, then (unless folded) its
-// branches, with a project · machine line wherever the project changes inside a section.
-// folded: Set of section ids the person folded or unfolded against the default (toggled).
 export function sectionRows(groups, toggled, placeLabel) {
   const rows = [];
   for (const section of SECTIONS) {
@@ -208,14 +170,12 @@ export function sectionRows(groups, toggled, placeLabel) {
   return rows;
 }
 
-// What a branch is about: its PRs' title (the most common one), else the branch.
 export function groupTitle(group) {
   const counts = new Map();
   for (const pr of group.prs) counts.set(pr.title, (counts.get(pr.title) ?? 0) + 1);
   return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? group.branch;
 }
 
-// The icon and theme color of a PR's state.
 export function prStateIcon(pr) {
   const state = prState(pr);
   return {
@@ -230,21 +190,15 @@ export function checksIcon(state) {
   return { failed: { icon: "x-circle", color: "blocked" }, pending: { icon: "clock", color: "working" }, passed: { icon: "check-circle", color: "done" }, none: null }[state];
 }
 
-// ------------------------------------------------------------ review status
-
-// The review tab's status strip: { icon, color (theme name), text } for checks, review and merging.
-// failed | pending | passed | none, for a PR as the review tab has it (its check runs).
 export function checkState(pr) {
   const marks = checkItems(pr).map((c) => checkMark(c.outcome));
   return marks.includes("✗") ? "failed" : marks.includes("●") ? "pending" : marks.length ? "passed" : "none";
 }
 
-// An open PR whose checks GitHub is still running, or whose mergeability it is still working out.
 export function isSettling(pr) {
   return pr.state === "OPEN" && (checkState(pr) === "pending" || !pr.mergeStateStatus || pr.mergeStateStatus === "UNKNOWN");
 }
 
-// Whether the same PRs still point at the same head commits, so diffs already loaded stay right.
 export function hasSameHeads(before, after) {
   const head = (pr) => `${prKey(pr)}@${pr.commits.at(-1)?.oid ?? ""}`;
   return before.length === after.length && before.every((pr, i) => head(pr) === head(after[i]));
@@ -277,7 +231,7 @@ export function mergeStatus(pr) {
   if (state === "merged") return { icon: "merge", color: "ansi5", text: "Merged" };
   if (state === "closed") return { icon: "pull-request-closed", color: "blocked", text: "Closed" };
   if (state === "draft") return { icon: "pull-request-draft", color: "dim", text: "Draft: not ready to merge" };
-  // GitHub's UNSTABLE means checks are not all passing yet: failing, or still running.
+
   const checks = checkState(pr);
   const why = pr.reviewDecision === "REVIEW_REQUIRED" ? "review required" : pr.reviewDecision === "CHANGES_REQUESTED" ? "changes requested"
     : checks === "failed" ? "checks failing" : checks === "pending" ? "checks running" : "branch protection";
@@ -293,11 +247,10 @@ export function mergeStatus(pr) {
   }[pr.mergeStateStatus] ?? { icon: "clock", color: "dim", text: "Checking whether it can merge…" };
 }
 
-// Which actions the review tab offers for a PR (an author can't approve their own).
 export function prActions(pr, viewer) {
   const isOpen = pr.state === "OPEN";
   const isMine = Boolean(viewer) && pr.author?.login === viewer;
-  // Approved by me and not asked to review again since (a re-request after new commits wants a fresh look).
+
   const isRequestedFromMe = (pr.reviewRequests ?? []).some((r) => r.login && r.login === viewer);
   const hasApproved = Boolean(viewer) && !isRequestedFromMe
     && (pr.latestReviews ?? []).some((r) => r.author?.login === viewer && r.state === "APPROVED");
@@ -306,13 +259,12 @@ export function prActions(pr, viewer) {
     hasApproved,
     canComment: isOpen,
     canMerge: isOpen && !pr.isDraft,
-    canToggleDraft: isOpen && isMine, // only the author turns a PR into a draft or back
+    canToggleDraft: isOpen && isMine,
     isPrimaryApprove: reviewStatus(pr, viewer).color === "accent",
     isPrimaryMerge: isOpen && !pr.isDraft && ["CLEAN", "HAS_HOOKS"].includes(pr.mergeStateStatus),
   };
 }
 
-// "3m", "5h", "2d" since an ISO time.
 export function age(iso, now = Date.now()) {
   const seconds = Math.max(0, (now - new Date(iso).getTime()) / 1000);
   if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
@@ -320,7 +272,6 @@ export function age(iso, now = Date.now()) {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-// "failed" | "pending" | "passed" | "none", with counts summed over the group's PRs.
 export function checksSummary(prs) {
   const counts = { passed: 0, failed: 0, pending: 0 };
   for (const pr of prs) for (const name of Object.keys(counts)) counts[name] += pr.checkCounts?.[name] ?? 0;
@@ -344,7 +295,6 @@ export function commentCount(prs) {
 const CHECK_WORDS = { SUCCESS: "passed", FAILURE: "failed", ERROR: "errored" };
 const REVIEW_WORDS = { APPROVED: "approved", CHANGES_REQUESTED: "requested changes on", COMMENTED: "reviewed", DISMISSED: "dismissed a review on" };
 
-// What changed between two refreshes, as notifications. `before` is null on the first refresh: nothing is new then.
 export function prChanges(before, after) {
   if (!before) return [];
   const previous = new Map(before.map((pr) => [prKey(pr), pr]));
@@ -370,9 +320,6 @@ export function prChanges(before, after) {
   return changes;
 }
 
-// ----------------------------------------------------------------- review
-
-// `gh pr diff` output split per file: path -> numbered rows (old/new line numbers like the Changes panel).
 export function parseDiff(text) {
   const files = new Map();
   let rows = null;
@@ -402,14 +349,10 @@ export function parseDiff(text) {
   return files;
 }
 
-// The users whose review a PR asks for now (teams are left out: the reviewer picker only handles people).
 export function requestedLogins(pr) {
   return (pr.reviewRequests ?? []).map((r) => r.login).filter(Boolean);
 }
 
-// The reviewer picker's people: those already requested first, then the rest as given; never the
-// PR's author, whom GitHub refuses as a reviewer.
-// The people asked to review first, then those who reviewed already (a tick re-requests them), then everyone else.
 export function reviewerChoices(candidates, pr) {
   const requested = requestedLogins(pr);
   const reviewed = Object.keys(reviewVerdicts(pr)).filter((login) => !requested.includes(login));
@@ -419,30 +362,22 @@ export function reviewerChoices(candidates, pr) {
 
 const VERDICT_WORDS = { APPROVED: "approved", CHANGES_REQUESTED: "changes requested", COMMENTED: "commented", DISMISSED: "dismissed" };
 
-// Each reviewer's latest verdict as a word, the PR's author left out: { login: "approved" }.
 export function reviewVerdicts(pr) {
   return Object.fromEntries((pr.latestReviews ?? [])
     .filter((r) => r.author?.login && r.author.login !== pr.author?.login)
     .map((r) => [r.author.login, VERDICT_WORDS[r.state] ?? r.state.toLowerCase()]));
 }
 
-// Whether someone who reviewed can be asked again (GitHub's "Re-request review"): not while already asked.
 export function canReRequest(pr, login, viewer) {
   return pr.state === "OPEN" && Boolean(login) && login !== viewer && login !== pr.author?.login && !requestedLogins(pr).includes(login);
 }
 
-// What the picker sends when it closes: the logins newly ticked, and the requested ones unticked.
 export function reviewerChanges(requested, ticked) {
   return { add: [...ticked].filter((login) => !requested.includes(login)), remove: requested.filter((login) => !ticked.has(login)) };
 }
 
 const REVIEW_STATE_OF = { approve: "APPROVED", "request-changes": "CHANGES_REQUESTED" };
 
-/**
- * How a PR looks right after a change, before GitHub answers: the review tab shows this at once and
- * the next reload replaces it with what GitHub says. change: { action, body } for a pr-act action,
- * or { reviewers: logins } for the requested people (teams stay as they were).
- */
 export function optimisticPr(pr, change, viewer, now = new Date().toISOString()) {
   const me = { login: viewer };
   if (change.reviewers) {
@@ -469,20 +404,14 @@ export function optimisticPr(pr, change, viewer, now = new Date().toISOString())
   return pr;
 }
 
-// ------------------------------------------------------------------ stacks
-
-// The PR next to this one in its GitHub stack: step -1 toward the base, +1 away; undefined at an end.
 export function stackNeighbor(pr, step) {
   return pr.stack?.entries.find((entry) => entry.position === pr.stack.position + step);
 }
 
-// The open PRs a stacked PR's merge takes with it: GitHub merges every open PR below it too.
 export function mergedWith(pr) {
   return (pr.stack?.entries ?? []).filter((entry) => entry.position < pr.stack.position && entry.state === "OPEN");
 }
 
-// Every file's diff rows one after another, each under a header row, as GitHub's Files changed shows
-// them. Each row knows its file (fileIndex); fileStarts[i] is where file i's header row is.
 export function stackDiffs(files, rowsOf) {
   const rows = [];
   const fileStarts = [];
@@ -494,7 +423,6 @@ export function stackDiffs(files, rowsOf) {
   return { rows, fileStarts };
 }
 
-// Description, then reviews and comments (PR comments, review bodies and inline code comments) by time.
 export function overviewItems(pr) {
   const conversation = [
     ...pr.comments.map((c, i) => ({ key: `comment-${i}`, kind: "comment", author: c.author?.login ?? "ghost", body: c.body, at: c.createdAt, url: c.url })),
@@ -510,12 +438,8 @@ export function overviewItems(pr) {
   ];
 }
 
-// CheckRuns and StatusContexts in one shape, the latest run of each check only: a workflow run again
-// on the same commit (a re-run, a base change) leaves its older runs in GitHub's rollup, and an old
-// failure must not read as failing. A check run on two events is named with its run's event, as
-// GitHub does: "lint (push)". An mr.py older than workflowEvent gives no event.
 export function checkItems(pr) {
-  const latest = new Map(); // workflow|name|event -> the newest run's item
+  const latest = new Map();
   (pr.statusCheckRollup ?? []).forEach((c, i) => {
     const isRun = c.__typename === "CheckRun";
     const outcome = isRun ? (c.status === "COMPLETED" ? c.conclusion : c.status) : c.state;
@@ -525,7 +449,7 @@ export function checkItems(pr) {
     if (!latest.has(run) || item.at >= latest.get(run).at) latest.set(run, item);
   });
   const items = [...latest.values()].sort((a, b) => Number(a.key.slice(6)) - Number(b.key.slice(6)));
-  const events = new Map(); // workflow|name -> how many events it ran on
+  const events = new Map();
   for (const item of items) events.set(`${item.workflow}|${item.name}`, (events.get(`${item.workflow}|${item.name}`) ?? 0) + 1);
   return items.map(({ at, ...item }) => (events.get(`${item.workflow}|${item.name}`) > 1 && item.event ? { ...item, name: `${item.name} (${item.event})` } : item));
 }
@@ -547,9 +471,6 @@ export function commitItems(pr) {
   }));
 }
 
-// Files marked viewed in a review, per PR: { [prKey]: { head, paths } }. Only an open PR's marks
-// on its present head commit are kept, so new commits ask for a fresh look and the store stays
-// as small as the review's PRs.
 export function pruneViewed(viewed, prs) {
   const kept = {};
   for (const pr of prs) {
@@ -564,7 +485,6 @@ export function isViewed(viewed, pr, path) {
   return Boolean(marks && marks.head === pr.headRefOid && marks.paths.includes(path));
 }
 
-// Marks a file viewed, or unmarks it.
 export function toggleViewed(viewed, pr, path) {
   const marks = viewed[prKey(pr)]?.head === pr.headRefOid ? viewed[prKey(pr)].paths : [];
   const paths = marks.includes(path) ? marks.filter((p) => p !== path) : [...marks, path];
@@ -572,7 +492,6 @@ export function toggleViewed(viewed, pr, path) {
   return paths.length ? { ...others, [prKey(pr)]: { head: pr.headRefOid, paths } } : others;
 }
 
-// The Files list of a parsed diff (a commit's: GitHub's PR view lists only the PR's own files).
 export function diffFiles(diff) {
   return [...diff].map(([path, rows]) => ({
     key: path,
@@ -583,7 +502,6 @@ export function diffFiles(diff) {
   }));
 }
 
-// "2026-11-05T15:45:31Z" -> "Nov 5, 15:45" in local time.
 export function shortTime(iso) {
   if (!iso) return "";
   const date = new Date(iso);
@@ -594,8 +512,6 @@ export function shortTime(iso) {
 export function matches(item, query) {
   return !query || JSON.stringify(item).toLowerCase().includes(query);
 }
-
-// ---------------------------------------------------------------- filters
 
 export const DEFAULT_FILTERS = { author: "any", status: "active", review: "any", checks: "any", repo: "any", project: "any" };
 const STATUS_VALUES = ["active", "open", "draft", "merged", "closed", "all"];
@@ -608,7 +524,6 @@ function byCount(values) {
   return [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
 }
 
-// What each filter can be set to, from the PRs at hand (most common first). Project only when there are several.
 export function filterOptions(prs) {
   const options = {
     author: ["any", "me", ...byCount(prs.filter((pr) => pr.author !== pr.viewer).map((pr) => pr.author))],
@@ -643,14 +558,11 @@ export function matchesFilters(pr, filters) {
     && (filters.project === "any" || pr.project === filters.project);
 }
 
-// The next (or previous) value of one filter; an unknown value starts over.
 export function cycleFilter(options, value, step) {
   const at = options.indexOf(value);
   return options[(Math.max(at, 0) + step + options.length) % options.length];
 }
 
-// The review thread an inline comment (its index in pr.inlineComments) is in: the comment that
-// started it and the replies after it, as mr lists them (each thread's first, then its answers).
 export function threadOf(comments, index) {
   let start = index, end = index + 1;
   while (start > 0 && comments[start].isReply) start--;
@@ -658,8 +570,6 @@ export function threadOf(comments, index) {
   return comments.slice(start, end);
 }
 
-// What Claude, in the branch's checkout, is asked to do about a review thread. A multirepo task holds
-// each repo in its own folder, so the file is named with its repo.
 export function fixThreadPrompt(pr, thread, isRepo) {
   const [first] = thread;
   const where = `${isRepo ? "" : `the ${pr.repo} repo's `}${first.path}${first.line ? `:${first.line}` : ""}`;
@@ -671,14 +581,11 @@ export function fixThreadPrompt(pr, thread, isRepo) {
   ].join("\n\n");
 }
 
-// Claude's own PR watching, on every linked PR of the branch.
 export function watchPrompt(prs) {
   const urls = prs.map((pr) => pr.url).join(" ");
   return `Watch ${prs.length > 1 ? "these PRs" : "this PR"}: ${urls}. Subscribe to ${prs.length > 1 ? "their" : "its"} activity, and when a check fails or a reviewer comments, look into it and fix what you can.`;
 }
 
-// Where a diff row takes a review comment: a deleted line on the old side (LEFT), an added or
-// unchanged one on the new side (RIGHT). null for headers, hunk lines and notes.
 export function commentAnchor(row) {
   if (row?.kind === "-") return { side: "LEFT", line: row.number };
   if (row?.kind === "+" || row?.kind === " ") return { side: "RIGHT", line: row.number };
@@ -687,22 +594,15 @@ export function commentAnchor(row) {
 
 const lineKey = (path, { side, line }) => `${path} ${side} ${line}`;
 
-// The lines from anchor to focus (indices into one file's diff rows) as { start, end }, start <= end.
-// GitHub takes a multi-line comment only within one hunk, so the range stops at the hunk's edge.
 export function selectedRange(rows, anchor, focus) {
   const step = focus >= anchor ? 1 : -1;
   const isHunkEdge = (row) => !row || row.kind === "@" || row.kind === "file";
   let end = anchor;
   while (end !== focus && !isHunkEdge(rows[end + step])) end += step;
-  while (!commentAnchor(rows[end])) end -= step; // a note row ("\ No newline") takes no comment
+  while (!commentAnchor(rows[end])) end -= step;
   return step > 0 ? { start: anchor, end } : { start: end, end: anchor };
 }
 
-/**
- * The body of POST /repos/{owner}/{repo}/pulls/{number}/comments: one comment on rows start..end of
- * a file's diff (selectedRange), at the PR's head commit. A range ends at line/side and starts at
- * start_line/start_side; one line has no start.
- */
 export function lineCommentRequest({ body, commitId, path, rows, range }) {
   const first = commentAnchor(rows[range.start]);
   const last = commentAnchor(rows[range.end]);
@@ -711,9 +611,6 @@ export function lineCommentRequest({ body, commitId, path, rows, range }) {
   return range.start === range.end ? request : { ...request, start_side: first.side, start_line: first.line };
 }
 
-// A file's diff rows with each current review thread (inline comments, threadOf) under the line it
-// ends on, as { kind: "thread", comments } rows. Every row keeps its index in the file (fileRow).
-// Outdated threads have no line in this diff: the Overview lists them.
 export function withThreads(rows, path, comments) {
   const threads = new Map();
   comments.forEach((comment, index) => {
@@ -728,16 +625,11 @@ export function withThreads(rows, path, comments) {
   });
 }
 
-// Lines as the diff numbers them, GitHub's way: "+24" on the new side, "−12" on the old;
-// a range "+24–+26". first/last: { side, line } (commentAnchor); last may be first.
 export function lineRange(first, last = first) {
   const one = ({ side, line }) => `${side === "LEFT" ? "−" : "+"}${line}`;
   return first.side === last.side && first.line === last.line ? one(first) : `${one(first)}–${one(last)}`;
 }
 
-// About how many lines a comment's Markdown takes at a width of columns characters: the diff is a
-// virtual list, so a comment card's height has to be known before it draws. Generous: a blank line
-// is a paragraph's gap, a code block's fences its padding, a list item its spacing.
 export function markdownLines(text, columns) {
   let lines = 0;
   for (const line of text.trim().split("\n")) {

@@ -1,50 +1,33 @@
-// Worktree dialog: { space, action: "new" | "open" | "remove" } or
-// { folder, machine } for a repo without a space; optional { branch, tab, argv }.
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
-import { run, props, closeOverlay, theme, spaces, panes, exec, home } from "herdr";
+import { run, props, closeOverlay, theme, spaces, panes, exec, home, shared } from "herdr";
 import { notifyAndLog } from "./notifylog.js";
-// Every notification also goes in the bell's history (notifylog.js).
+
 const notify = (n) => notifyAndLog(n, "Worktrees");
 
-// Clone of Herdr's `worktree` dialog: a new or newly opened worktree space gets
-// the tabs of the `wts` tmux flow instead of a single shell.
-
-// run() returns nothing, but `herdr-app do` answers with the ids it made,
-// which the follow-up tabs need to land in the new space.
 async function herdrDo(command, args) {
   const r = await exec("herdr-app", ["do", command, JSON.stringify(args)]);
   let out = {};
-  try { out = JSON.parse(r.stdout); } catch { /* reported below with stderr */ }
+  try { out = JSON.parse(r.stdout); } catch {  }
   if (r.code !== 0 || out.error) throw new Error(out.error || r.stderr.trim() || `${command} failed`);
   return out;
 }
 
-// A new workspace's tabs, as in the `wts` tmux flow: claude, a terminal and nvim, in that order
-// (new tabs go next to the selected one, so the order is set at the end). Claude is a chat tab (the t3-chat mod, which runs Claude Code in a pane of its own tab): a space starts with a terminal, so the terminal tab is made first.
-// Blueprint opens on request only (cmd-shift-b). machine: a Herdr machine name, or null here.
 async function openWorkspace(folder, machine) {
   const { space, tab: terminal } = await herdrDo("space.new", { folder, machine: machine ?? "", tab: "terminal" });
-  const { tab: claude } = await herdrDo("tab.new", { space, name: "claude", mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } });
+  const { tab: claude } = await herdrDo("tab.new", { space, name: "claude", ...(shared("t3-chat.enabled") === false ? { folder, argv: ["claude"] } : { mod: "t3-chat", props: { view: "chat", folder, machine: machine ?? null } }) });
   const { tab: nvim } = await herdrDo("tab.new", { space, folder, name: "nvim", argv: ["nvim"] });
   for (const [index, id] of [claude, terminal, nvim].entries()) await herdrDo("tab.move", { id, index: index + 1 });
   await herdrDo("space.select", { id: space });
   await herdrDo("tab.select", { id: claude });
 }
 
-// Where a space is now: its first terminal's live folder, else where it was made.
 function place(s, all = panes()) {
   if (!s) return null;
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
   return all.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder || null;
 }
 
-// New worktrees are made by wt (worktrunk) on the repo's machine, as `wts` does: the project's
-// worktree-path from wt's config (else wt's default, next to the repo) and its approved hooks.
-// So a checkout sits under the project's folder, where its direnv .envrc (Claude account,
-// GH_TOKEN) applies; ~/.herdr/worktrees was outside it. Run in the login shell, where wt is on
-// PATH. Hooks not approved yet are not approved from here (no --yes): wt says so instead.
 const WT_SWITCH = 'command -v wt >/dev/null 2>&1 || exit 127; exec wt "$@"';
 async function wtSwitch(top, branch, isNew, on) {
   const args = ["-C", top, "switch", ...(isNew ? ["--create", "--base", "@"] : []), branch, "--no-cd", "--format", "json"];
@@ -54,10 +37,9 @@ async function wtSwitch(top, branch, isNew, on) {
   if (r.code !== 0 || !json) return { error: (r.stderr || r.stdout).trim().split("\n").slice(-4).join(" ") || "wt switch failed." };
   return { path: JSON.parse(json).path };
 }
-// Where wt puts a worktree by default ({{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}),
-// for machines without wt.
+
 const besideRepo = (main, branch) => `${main.replace(/\/+$/, "")}.${slug(branch)}`;
-// Home as ~ (git says C:/Users/x where Windows says C:\Users\x).
+
 const tilde = (path, userHome) => {
   const [p, h] = [path, userHome].map((s) => s.replace(/\\/g, "/"));
   return p.startsWith(h) ? `~${p.slice(h.length)}` : path;
@@ -68,8 +50,6 @@ const ago = (s) => {
   return d < 3600 ? `${Math.max(1, Math.round(d / 60))}m` : d < 86400 ? `${Math.round(d / 3600)}h` : d < 86400 * 60 ? `${Math.round(d / 86400)}d` : `${Math.round(d / 86400 / 30)}mo`;
 };
 
-// Every checkout of a repo (`git worktree list`), the main one first, then
-// the most recently committed: { path, branch, main, at }.
 async function checkouts(repo, on) {
   const list = await git(repo.main, ["worktree", "list", "--porcelain"], on);
   if (!list.ok) return [];
@@ -86,7 +66,6 @@ async function checkouts(repo, on) {
   return out.sort((a, b) => b.main - a.main || b.at - a.at);
 }
 
-// The space showing a checkout: its first terminal is in it (the deepest checkout wins).
 function spaceOf(path, all, on, spaceList, paneList) {
   const inside = (p, dir) => p === dir || p.startsWith(dir + "/");
   return spaceList.find((s) => (s.machine ?? null) === (on ?? null) && (() => {
@@ -101,29 +80,23 @@ async function git(cwd, args, on) {
   return { ok: r.code === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? r.stdout ?? "").trim() };
 }
 
-// The submodule repos git keeps for a checkout (nested ones too, checked out
-// or not): { name, dir, pinned }. `config` is the args that read its
-// .gitmodules; `pinned` is the commit its parent records ("" if none).
 async function modules(gitDir, config, on, out = [], parent = "") {
   const keys = await git(gitDir, ["--git-dir", gitDir, "config", ...config, "-z", "--get-regexp", "^submodule\\..*\\.path$"], on);
-  if (!keys.ok) return out; // no .gitmodules, or no submodules in it
-  // -z: "key\nvalue" records ended by NUL, so names and paths may hold spaces.
+  if (!keys.ok) return out;
+
   for (const record of keys.out.split("\0").filter(Boolean)) {
     const at = record.indexOf("\n");
     const name = record.slice("submodule.".length, at - ".path".length);
     const dir = `${gitDir}/modules/${name}`;
-    if (!(await git(gitDir, ["--git-dir", dir, "rev-parse", "--git-dir"], on)).ok) continue; // never checked out
+    if (!(await git(gitDir, ["--git-dir", dir, "rev-parse", "--git-dir"], on)).ok) continue;
     const pinned = await git(gitDir, ["--git-dir", gitDir, "rev-parse", `HEAD:${record.slice(at + 1)}`], on);
-    // Names are only unique within their parent: nested ones carry its name.
+
     out.push({ name: parent + name, dir, pinned: pinned.ok ? pinned.out : "" });
     if ((await git(gitDir, ["--git-dir", dir, "cat-file", "-e", "HEAD:.gitmodules"], on)).ok) await modules(dir, ["--blob", "HEAD:.gitmodules"], on, out, `${parent + name}/`);
   }
   return out;
 }
 
-// The worktree's submodules, and the names of those with commits that exist
-// nowhere else: not on a remote, and not the commit the parent pins (git
-// fetches that by hash, so it is often on no remote branch here).
 async function submodules(top, on) {
   const gitDir = await git(top, ["rev-parse", "--absolute-git-dir"], on);
   if (!gitDir.ok) throw new Error(gitDir.err || "git rev-parse failed.");
@@ -137,8 +110,6 @@ async function submodules(top, on) {
   return { mods, unpushed };
 }
 
-// The repo a folder belongs to: its main checkout and name, and whether
-// the folder is itself a linked worktree. null outside git.
 async function repoOf(folder, on) {
   const top = await git(folder, ["rev-parse", "--show-toplevel"], on);
   const common = await git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"], on);
@@ -153,14 +124,13 @@ export default class Worktree extends View {
     this.userHome = this.on ? null : home();
     this.opening = props()?.action === "open";
     this.text = props()?.branch ?? "";
-    this.list = undefined; // open: the checkouts, once read
+    this.list = undefined;
     this.at = 0;
     this.input = InputState.new({ value: this.text, placeholder: this.opening ? "filter worktrees" : "branch name" });
     this.input.on("change", (_e, cx) => { this.text = this.input.value(); this.error = ""; this.at = 0; this.listScroll?.scroll_to_item(0); cx.notify(); });
-    // Enter is taken here, not in key(), so one press never acts twice. In the open
-    // list it opens the selected checkout; it must not create a branch named after the filter.
+
     this.input.on("submit", (_e, cx) => (this.opening ? this.open(this.shown()[this.at]) : this.go(cx)));
-    // The open list starts in list mode (vim keys); "/" brings up the filter.
+
     this.inputFocused = !this.opening;
     this.input.on("focus", (_e, cx) => { this.inputFocused = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
@@ -170,7 +140,7 @@ export default class Worktree extends View {
     }
     this.busy = false;
     this.error = "";
-    this.repo = undefined; // undefined: looking, null: not in git
+    this.repo = undefined;
     this.dirty = false;
     this.unpushed = [];
     this.handle = cx.focus_handle();
@@ -186,7 +156,7 @@ export default class Worktree extends View {
           this.userHome = result.stdout.trim().replace(/\\/g, "/");
         }
         this.folder = props()?.folder || place(this.space()) || this.userHome;
-        // The repo is set last: Enter does nothing until the warnings it consents to are known.
+
         const repo = await repoOf(this.folder, this.on);
         if (repo && props().action === "remove") {
           this.dirty = (await git(repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on)).out !== "";
@@ -238,7 +208,7 @@ export default class Worktree extends View {
       const r = await git(this.repo.top, add, this.on);
       if (!r.ok) return r.err || "git worktree add failed.";
     }
-    // Leave spaces unnamed so they follow the checkout folder and nest under the repo.
+
     await openWorkspace(path, this.on);
     return "";
   }
@@ -260,24 +230,19 @@ export default class Worktree extends View {
     const s = this.space();
     const status = await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
     if (!status.ok) return status.err || "git status failed.";
-    // git refuses a worktree with submodules unless forced, because their
-    // history goes with it. The popup already showed what's at risk; only
-    // risk that appeared since it opened gets one more warning.
+
     const { mods, unpushed } = await submodules(this.repo.top, this.on);
     const changed = (status.out && !this.dirty) || unpushed.some((name) => !this.unpushed.includes(name));
     this.dirty ||= status.out !== "";
     this.unpushed = [...new Set([...this.unpushed, ...unpushed])];
     if (changed) return "It changed since this opened. Enter again removes it anyway.";
-    // Terminals first: a shell sitting in the folder keeps it busy on Windows.
+
     run("space.close", { id: s.id, confirmed: true });
     const force = this.dirty || mods.length > 0;
     const r = await git(this.repo.main, ["worktree", "remove", ...(force ? ["--force"] : []), this.repo.top], this.on);
     return r.ok ? "" : r.err || "git worktree remove failed.";
   }
 
-  // Vim-style, same as the port-forward dialog: j/k/l in the list, "/" starts a
-  // search; while typing only arrows move and Esc goes back to the list with the
-  // filter kept. Esc in the list clears a filter, then closes.
   key(e, cx) {
     if (this.opening) {
       const n = this.shown().length;
@@ -289,7 +254,7 @@ export default class Worktree extends View {
         else return;
       }
       else if (stroke === "/") {
-        // The box is only drawn while searching, so it can take focus after this frame.
+
         this.inputFocused = true;
         cx.timer.after(0, () => this.input.focus());
       }
@@ -365,7 +330,7 @@ export default class Worktree extends View {
                 rows.length === 0
                   ? div().p(10).text_color(t.dim).child("No matching worktrees.")
                   : v_virtual_list("wt-list", rows.length, 44, (i) => rows[i].path, (range) => rows.slice(range.start, range.end).map((c, k) => row(c, range.start + k)))
-                      // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+
               .on_item_click((path) => this.open(rows.find((c) => c.path === path)))
               .track_scroll(this.listScroll)
                       .size_full(),

@@ -1,16 +1,3 @@
-// A message's Markdown cut into blocks, so each is drawn with T3's own numbers (render-md.js) and
-// is one row of the chat list. Blocks only: inline marks (bold, code, links) stay TextView's.
-// Checked by `node markdown.test.mjs`.
-//
-// Block: { type, raw, ... }
-//   heading { level, text }      prose { }
-//   code { lang, title, text, isOpen }   (isOpen: the closing fence hasn't streamed in yet)
-//   table { header: [cell], align: ["left" | "center" | "right"], rows: [[cell]] }
-//   list { items: [{ ordered, marker, task, text }], isLoose }   (text: the item's own Markdown; task: "open" | "done" | null)
-//   quote { text, alert }        (alert: "note" | "tip" | "important" | "warning" | "caution" | null)
-//   details { summary, body }    html { }                  hr { }
-//   image { src, alt }           (src: a local path, file:// or web URL, as written; see imageLine)
-
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`]*)$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
 const HR = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
@@ -24,7 +11,6 @@ const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
 const isBlank = (line) => !line.trim();
 const isTableStart = (lines, i) => lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes("-");
 
-// A table row's cells: outer pipes dropped, `\|` kept as a pipe.
 export function tableCells(line) {
   const inner = line.trim().replace(/^\|/, "").replace(/\|$/, "");
   return inner.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
@@ -74,7 +60,7 @@ export function blocks(markdown) {
     }
 
     if (QUOTE.test(line)) {
-      // Lazy continuation: a paragraph line right after a quote line still belongs to it.
+
       while (i < lines.length && !isBlank(lines[i]) && (QUOTE.test(lines[i]) || !startsBlock(lines, i))) i += 1;
       const inner = lines.slice(start, i).map((l) => l.replace(QUOTE, ""));
       const alert = inner[0].match(ALERT);
@@ -103,7 +89,7 @@ export function blocks(markdown) {
     }
 
     if (LIST_ITEM.test(line)) {
-      // A list runs over blank lines while what follows is another item or indented under one.
+
       for (;;) {
         while (i < lines.length && !isBlank(lines[i])) i += 1;
         let next = i;
@@ -115,7 +101,6 @@ export function blocks(markdown) {
       continue;
     }
 
-    // A paragraph, up to a blank line or the next block. `===` / `---` under it makes it a heading.
     i += 1;
     while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines, i) && !/^ {0,3}=+\s*$/.test(lines[i])) i += 1;
     const under = i < lines.length ? lines[i].match(/^ {0,3}(=+|-+)\s*$/) : null;
@@ -127,14 +112,11 @@ export function blocks(markdown) {
   return out;
 }
 
-// Images a reply shows: a Markdown image (a path, file:// or web URL), or a local image file's
-// absolute or ~ path alone on its line, in backticks or not. A bare path inside a sentence stays text.
 const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp)$/i;
 const MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
 const BARE_IMAGE = /^\s*(`?)((?:~\/|\/)[^\s`]+)\1\s*$/;
 const imageRef = (match) => ({ type: "image", raw: match[0], alt: match[1], src: match[2].replace(/^<|>$/g, "") });
 
-// The images a line is made of only, else null.
 export function imageLine(line) {
   const bare = line.match(BARE_IMAGE);
   if (bare && IMAGE_FILE.test(bare[2])) return [{ type: "image", raw: line.trim(), alt: "", src: bare[2] }];
@@ -142,8 +124,6 @@ export function imageLine(line) {
   return refs.length && !line.replace(MD_IMAGE, "").trim() ? refs.map(imageRef) : null;
 }
 
-// A paragraph with its images as blocks of their own, in order: a line of images only becomes
-// them; an image inside a sentence is taken out of it and follows the text.
 function proseWithImages(lines) {
   const out = [];
   let text = [];
@@ -168,23 +148,18 @@ function proseWithImages(lines) {
   return out;
 }
 
-// Where an image reference points: { url } on the web, else { path } on the machine that wrote it
-// (file:// and ~ resolved against homeDir there).
 export function imageTarget(src, homeDir) {
   if (/^https?:\/\//i.test(src)) return { url: src };
   if (/^file:\/\//i.test(src)) return { path: decodeURIComponent(src.replace(/^file:\/\/(?:localhost)?/i, "")) };
   return { path: src.startsWith("~/") ? `${homeDir}${src.slice(1)}` : src };
 }
 
-// Every image a message shows, in lists, quotes and details too (not in code), once each.
 export function imageSources(markdown) {
   const inner = (block) => ({ list: block.items?.map((item) => item.text), quote: [block.text], details: [block.body] }[block.type] ?? []);
   const walk = (text) => blocks(text).flatMap((block) => (block.type === "image" ? [block.src] : inner(block).flatMap(walk)));
   return [...new Set(walk(markdown))];
 }
 
-// A list's lines as items. An item starts at a marker no deeper than the first one's; the lines
-// under it, less its indent, are its own Markdown (paragraphs, nested lists, fences).
 const ITEM = /^(\s*)([-*+]|(\d{1,9})[.)])(\s+)(.*)$/;
 const TASK = /^\[([ xX])\]\s+/;
 export function listItems(lines) {
@@ -209,8 +184,6 @@ export function listItems(lines) {
   return { items: items.map(({ lines: own, indent, ...item }) => ({ ...item, text: own.join("\n").trim() })), isLoose };
 }
 
-// T3's block margins in px (index.css "Chat markdown rendering"): [top, bottom]. Adjacent margins
-// collapse to the larger, and a message's first and last block have none.
 const MARGIN = { heading: [20, 8], details: [8, 8] };
 const DEFAULT_MARGIN = [10.4, 10.4];
 export function gapBefore(previous, block) {
@@ -218,13 +191,9 @@ export function gapBefore(previous, block) {
   return Math.max((MARGIN[previous.type] ?? DEFAULT_MARGIN)[1], (MARGIN[block.type] ?? DEFAULT_MARGIN)[0]);
 }
 
-// A table's column widths in px for a lane: each column as wide as its longest cell needs
-// (T3 caps a cell at 24rem), shrunk together when they don't fit, stretched to fill when they do,
-// but never below its longest word (up to WORD_CAP: a longer one may break): past the lane, the
-// table scrolls sideways.
-const CELL_CHAR = 7.4; // an average glyph at 14px
+const CELL_CHAR = 7.4;
 const CELL_PAD = 24;
-const WORD_CHAR = 9; // a wide glyph, as in a bold header: a word must never break
+const WORD_CHAR = 9;
 const WORD_CAP = 160;
 export function columnWidths(table, lane) {
   const plain = (cell) => cell.replace(/[`*_~]|\[([^\]]*)\]\([^)]*\)/g, "$1");
@@ -232,7 +201,7 @@ export function columnWidths(table, lane) {
   const columns = table.header.map((head, c) => [head, ...table.rows.map((row) => row[c] ?? "")]);
   const wanted = columns.map((cells) => Math.min(384, Math.max(40, Math.max(...cells.map((cell) => plain(cell).length)) * CELL_CHAR + CELL_PAD)));
   const least = columns.map((cells) => Math.min(WORD_CAP, Math.max(...cells.map(longestWord)) * WORD_CHAR + CELL_PAD));
-  // Shared in proportion; a column that would get less than its least gets that, the rest share what is left.
+
   const atLeast = new Set();
   for (;;) {
     const free = lane - [...atLeast].reduce((sum, c) => sum + least[c], 0);
@@ -244,7 +213,6 @@ export function columnWidths(table, lane) {
   }
 }
 
-// A fence's language as the code view names it (Herdr's Editor); null: drawn without colours.
 const LANGUAGES = { js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", javascript: "javascript",
   ts: "typescript", tsx: "tsx", typescript: "typescript", py: "python", python: "python", rb: "ruby", ruby: "ruby", rs: "rust", rust: "rust",
   go: "go", java: "java", kt: "kotlin", kotlin: "kotlin", swift: "swift", c: "c", h: "c", cpp: "cpp", "c++": "cpp", cs: "csharp", csharp: "csharp",
@@ -253,7 +221,5 @@ const LANGUAGES = { js: "javascript", jsx: "javascript", mjs: "javascript", cjs:
   dockerfile: "dockerfile", lua: "lua", php: "php" };
 export const codeLanguage = (lang) => LANGUAGES[lang] ?? null;
 
-// T3's code block (MarkdownCodeBlock.tsx): a header of 6px + a 24px action, then the code at
-// 13px (its default code size) and leading-snug (1.375), inside 0.8rem of padding.
 export const CODE = { head: 30, pad: 12.8, size: 13, line: 13 * 1.375 };
 export const codeBodyHeight = (text) => CODE.pad * 2 + Math.max(1, text.split("\n").length) * CODE.line;

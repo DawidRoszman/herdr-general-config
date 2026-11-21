@@ -1,19 +1,13 @@
-// Multirepo: props { view: "projects" } is the Projects tab (projects.js); otherwise this dialog.
-// Multirepo dialog: projects -> tasks -> repos, over the `mr` CLI (mr.py next to
-// this file). Every call runs this copy of mr.py with python3 (here, or streamed over
-// ssh), so the dialog never depends on what is installed on the machine; `i` installs
-// it there for terminals and agents.
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
-import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand, setShared } from "herdr";
-import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, stackOrder, CHANGED } from "./view.js";
+import { props, closeOverlay, theme, spaces, focused, panes, exec, hc, appHome, run, readTextFile, nextCommand, shared, setShared, checking } from "herdr";
+import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, stackOrder, sandboxPlace, taskName, CHANGED } from "./view.js";
+
+const START_TASK = `${appHome()}/scripts/start-task.mjs`;
 import { MR, mrOn, mrArgv, machinesWithThisMac, machineLabel, herdrDo, hcJson, reviewTab, openWorkspace, closeSpacesOn, workspaceOf } from "./remote.js";
 import { taskRow, repoRow, itemRow, TASK_ROW, REPO_ROW, ITEM_ROW } from "./rows.js";
 import { ProjectsView } from "./projects.js";
 
-
-// This view's key list, from help-keys.json in this mod's folder (the keybinds tab reads the same file).
 async function loadKeys(mod, viewId) {
   try {
     const views = JSON.parse(await readTextFile(`${appHome()}/mods/${mod}/help-keys.json`)).views;
@@ -23,7 +17,6 @@ async function loadKeys(mod, viewId) {
   }
 }
 
-// The "?" key list drawn over the view (a copy of prs/keyhelp.js: mods can't import across folders).
 const isHelpKey = (stroke) => stroke === "?" || stroke === "shift-/";
 function keyHelp(id, title, sections, t, keyWidth = 120) {
   return div().absolute().inset_0().flex().items_center().justify_center().bg(`${t.background}cc`).p(12)
@@ -39,8 +32,6 @@ function keyHelp(id, title, sections, t, keyWidth = 120) {
           .child(div().flex_1().min_w(0).text_color(t.foreground).child(what)))))));
 }
 
-// Copies mr.py to ~/.local/bin/mr and puts ~/.local/bin on PATH in the shells' rc files (once, marked).
-// An empty target is this Mac: the same commands run here instead of over ssh.
 const INSTALL_SCRIPT = `target="$1"; source="$2"
 on() { if [ -n "$target" ]; then ssh "$target" "$1"; else sh -c "$1"; fi; }
 on "mkdir -p ~/.local/bin && cat > ~/.local/bin/mr && chmod +x ~/.local/bin/mr" < "$source" || exit 1
@@ -58,14 +49,14 @@ export default class Multirepo extends View {
     cx.spawn(async (cx) => { this.keySections = await loadKeys("multirepo", "dialog"); cx.notify(); });
     this.handle.focus();
     this.listScroll = VirtualListScrollHandle.new();
-    this.level = "machines"; // machines | projects | tasks | repos | clone | pick (a new task's repos)
-    this.newBranch = null; // the branch of the task being made, while its repos are picked
-    this.picked = new Set(); // repos ticked for it
-    this.pickBranches = {}; // of those, the ones taking a branch of their own (named differently): name -> branch
-    this.branchFor = null; // the repo whose branch is being typed (input mode "branch")
-    this.addingTo = null; // the task repos are being added to (the picker's other use)
-    this.stackOn = null; // the task a new task is stacked on (its PRs target that task's branch)
-    this.pickFrom = "tasks"; // the level the picker goes back to
+    this.level = "machines";
+    this.newBranch = null;
+    this.picked = new Set();
+    this.pickBranches = {};
+    this.branchFor = null;
+    this.addingTo = null;
+    this.stackOn = null;
+    this.pickFrom = "tasks";
     this.machines = undefined;
     this.machine = null;
     this.projects = undefined;
@@ -77,12 +68,12 @@ export default class Multirepo extends View {
     this.cloneSource = null;
     this.at = 0;
     this.isBusy = false;
-    this.job = null; // { name, label, branch?, removed?, isOutputShown? } of a long mr command running as a local hc terminal
-    this.confirmRemove = null; // task root that x was pressed on once
+    this.job = null;
+    this.confirmRemove = null;
     this.error = "";
     this.notice = "";
     this.query = "";
-    this.inputMode = null; // null | "search" | "new" | "init" | "clone-root" | "branch"
+    this.inputMode = null;
     this.input = InputState.new({ value: "" });
     this.input.on("change", (_e, cx) => {
       if (this.inputMode !== "search") return;
@@ -90,25 +81,21 @@ export default class Multirepo extends View {
       this.moveTo(0);
       cx.notify();
     });
-    // Enter is taken here, not in key(), so one press never acts twice.
+
     this.input.on("submit", (_e, cx) => this.submitInput(cx));
     this.input.on("blur", (_e, cx) => {
       if (this.inputMode && this.inputMode !== "search") this.inputMode = null;
       else if (this.inputMode === "search") this.inputMode = "search-kept";
       cx.notify();
     });
-    cx.timer.every(1000, (cx) => { if (this.job) cx.spawn(async (cx) => { await this.pollJob(); cx.notify(); }); });
-    // Optional props { machine, project } plus one of (the Jira board's start work, the Projects tab):
-    //   newTask: branch text   the new-task box filled in
-    //   stackOn: task root     with newTask: the new task is stacked on that task
-    //   addTo: task root       the picker of repos to add to that task (addRepos: repo names that come ticked)
-    //   prTask: task root      create/update its PRs at once (progress shows here)
-    //   removeTask: task root  that task selected with its remove confirmation asked
+    if (checking()) return;
+    cx.timer.every(1000, (cx) => { if (this.job && !this.isPollingJob) cx.spawn(async (cx) => { await this.pollJob(); cx.notify(); }); });
+
     const given = props() ?? {};
     this.act(cx, async (cx) => {
       this.machines = await machinesWithThisMac();
       const space = spaces().find((s) => s.id === focused()?.space);
-      // machine null is this Mac, so only a missing prop falls back to the focused space's machine.
+
       const wanted = "machine" in given ? given.machine : space?.machine ?? null;
       const current = this.machines.find((m) => m.name === wanted);
       if (given.machine && !current) return `${given.machine} is not a Herdr machine.`;
@@ -135,8 +122,6 @@ export default class Multirepo extends View {
     });
   }
 
-  // ---------------------------------------------------------------- mr calls
-
   async mr(args) {
     return mrOn(this.machine.target, args);
   }
@@ -145,7 +130,6 @@ export default class Multirepo extends View {
     return JSON.parse(await this.mr(args));
   }
 
-  // Slow commands (fetch, push, clone, gh) run as a local hc terminal, polled until they finish.
   async startJob(label, args, machine = this.machine) {
     if (this.job) return "Another mr command is still running.";
     const name = `mr-job-${Date.now() % 100000}`;
@@ -155,7 +139,6 @@ export default class Multirepo extends View {
     return "";
   }
 
-  // Its output is the point (each repo's PR link), so it shows when done.
   async startPrJob(task) {
     const error = await this.startJob(`PRs for ${task.branch}`, ["pr", "--task", task.root]);
     if (!error) this.job.isOutputShown = true;
@@ -163,27 +146,33 @@ export default class Multirepo extends View {
   }
 
   async pollJob() {
-    const terminal = (await hcJson(["ls", "--json", "--all"])).terminals.find((t) => t.name === this.job?.name && !t.address.includes("/"));
-    if (!terminal || terminal.state !== "finished") return;
-    const { label, branch, removed, isOutputShown } = this.job;
-    this.job = null;
-    const output = (await hc(["read", terminal.address, "--lines", "40"])).stdout.trim().split("\n").filter(Boolean);
-    await hc(["rm", terminal.address]);
-    if (terminal.exit_code === 0) {
-      this.notice = [`${label}: done.`, ...(isOutputShown ? output.slice(-8) : []), branch ? "o opens its workspace." : ""].filter(Boolean).join(" · ");
-      this.error = "";
-      if (removed) closeSpacesOn(removed.machine, removed.folder);
-    } else {
-      // mr's CLI hint, said in this dialog's keys.
-      this.error = `${label} failed: ${output.slice(-4).join(" ").replace(/mr: /g, "").replace("or pass --force", "or shift-x removes it anyway")}`;
-      this.notice = "";
-    }
-    setShared(CHANGED, Date.now()); // the Projects tab reloads
-    await this.reload();
-    if (branch && this.level === "tasks") this.moveTo(Math.max(0, this.items().findIndex((t) => t.branch === branch)));
-  }
+    if (this.isPollingJob || !this.job) return;
+    this.isPollingJob = true;
+    try {
+      const terminal = (await hcJson(["ls", "--json", "--all"])).terminals.find((t) => t.name === this.job?.name && !t.address.includes("/"));
+      if (!terminal || terminal.state !== "finished") return;
+      const { label, branch, removed, isOutputShown } = this.job;
+      this.job = null;
+      const output = (await hc(["read", terminal.address, "--lines", "40"])).stdout.trim().split("\n").filter(Boolean);
+      await hc(["rm", terminal.address]);
+      if (terminal.exit_code === 0) {
+        this.notice = [`${label}: done.`, ...(isOutputShown ? output.slice(-8) : []), branch ? "o opens its workspace." : ""].filter(Boolean).join(" · ");
+        this.error = "";
+        if (removed) closeSpacesOn(removed.machine, removed.folder);
+      } else {
 
-  // ------------------------------------------------------------- navigation
+        this.error = `${label} failed: ${output.slice(-4).join(" ").replace(/mr: /g, "").replace("or pass --force", "or shift-x removes it anyway")}`;
+        this.notice = "";
+      }
+      setShared(CHANGED, Date.now());
+      await this.reload();
+      if (branch && this.level === "tasks") this.moveTo(Math.max(0, this.items().findIndex((t) => t.branch === branch)));
+    } catch (error) {
+      this.error = String(error.message ?? error);
+    } finally {
+      this.isPollingJob = false;
+    }
+  }
 
   async openMachine(machine) {
     this.machine = machine;
@@ -202,7 +191,7 @@ export default class Multirepo extends View {
     this.moveTo(0);
     const listed = await this.mrJson(["ls", "--json", "--project", project.root]);
     this.repoNames = listed.repos;
-    this.shorts = listed.shorts ?? {}; // mr's short names: acme-shop-backend -> backend
+    this.shorts = listed.shorts ?? {};
     this.tasks = stackOrder(listed.tasks);
   }
 
@@ -233,16 +222,17 @@ export default class Multirepo extends View {
     return this.shorts?.[name] ?? name;
   }
 
-  // The repo picker. A new task: after its branch, every repo of the project to tick (words typed
-  // after the branch come ticked). Adding to a task (task given): the repos it doesn't have yet.
   openPicker(branch, words, task = null) {
     const { picked, unknown, branches } = pickedRepos(words, this.repoNames ?? [], this.shorts ?? {});
     this.newBranch = branch;
     this.addingTo = task;
     this.pickFrom = this.level === "repos" ? "repos" : "tasks";
-    this.pickAt = this.at; // back lands on the task the picker was opened from
+    this.pickAt = this.at;
     this.picked = new Set(picked);
     this.pickBranches = branches;
+
+    this.sandbox = task ? null : sandboxPlace(shared("context"), this.machine?.name ?? null, this.project.root);
+    this.isSandbox = Boolean(this.sandbox?.isSandboxFirst);
     this.level = "pick";
     this.clearSearch();
     this.moveTo(0);
@@ -263,7 +253,6 @@ export default class Multirepo extends View {
     this.moveTo(this.pickAt ?? 0);
   }
 
-  // b in the picker: the branch this repo takes, when someone named it differently in that repo.
   askBranch(cx) {
     const repo = this.items()[this.at];
     if (!repo) return;
@@ -288,10 +277,21 @@ export default class Multirepo extends View {
       return;
     }
     const branch = this.newBranch;
-    // In the project's order, as mr lists them.
+
     const repos = repoArgs(this.pickable().filter((n) => this.picked.has(n)), this.pickBranches);
     const task = this.addingTo;
     const stackArgs = this.stackOn ? ["--on", this.stackOn.branch] : [];
+    if (!task && this.isSandbox) {
+      if (Object.keys(this.pickBranches).length) {
+        this.error = "A sandbox takes every repo on the new branch: clear their own branches (b), or start it on the machine (v).";
+        return;
+      }
+      const names = this.pickable().filter((n) => this.picked.has(n));
+      const sandbox = this.sandbox;
+      this.leavePicker();
+      this.notice = `Starting ${branch} in a sandbox on ${machineLabel(this.machine)}: minutes when its image is built first.`;
+      return this.act(cx, () => this.startInSandbox(branch, names, stackArgs, sandbox));
+    }
     this.leavePicker();
     if (task) {
       return this.act(cx, () => this.startJob(`Adding ${repos.map((n) => this.short(n)).join(", ")} to ${branch}`, ["add", ...repos, "--task", task.root]));
@@ -321,15 +321,23 @@ export default class Multirepo extends View {
     if (this.level === "projects") await this.openMachine(this.machine);
     else if (this.level === "tasks") await this.openProject(this.project);
     else if (this.level === "repos") {
-      // The task list too: an added repo shows in it, and back() finds the task there.
+
       const root = this.task.root;
       await this.openProject(this.project);
       const fresh = this.tasks.find((t) => t.root === root);
-      if (fresh) await this.openTask(fresh); // else the task was removed: stay on the list
+      if (fresh) await this.openTask(fresh);
     }
   }
 
-  // ---------------------------------------------------------------- actions
+  async startInSandbox(branch, repos, stackArgs, sandbox) {
+    const r = await exec(START_TASK, ["start", "--sandbox", "--machine", this.machine.name, "--branch", branch, "--repos", repos.join(","),
+      "--name", taskName(branch), ...stackArgs], { cwd: sandbox.coordinator });
+    this.notice = "";
+    if (r.code !== 0) return (r.stderr || r.stdout).trim() || `start-task.mjs failed (exit ${r.code})`;
+    run("space.select", { id: JSON.parse(r.stdout).space });
+    this.close();
+    return "";
+  }
 
   async openSpace(task) {
     await openWorkspace(task.root, this.machine.name);
@@ -380,14 +388,14 @@ export default class Multirepo extends View {
     this.inputMode = null;
     this.handle.focus();
     if (mode === "branch") {
-      this.setBranch(this.branchFor, text); // empty: back to the task's branch
+      this.setBranch(this.branchFor, text);
       this.branchFor = null;
       return cx.notify();
     }
     if (!text) return cx.notify();
     if (mode === "new") {
       const [branch, ...words] = text.split(/\s+/);
-      // A stacked task starts with its parent's repos ticked.
+
       this.openPicker(branch, words.length || !this.stackOn ? words : this.stackOn.repos);
       return cx.notify();
     } else if (mode === "init") {
@@ -435,8 +443,6 @@ export default class Multirepo extends View {
     this.listScroll.scroll_to_item(index);
   }
 
-  // ------------------------------------------------------------------- rows
-
   allItems() {
     return { machines: this.machines, projects: this.projects, tasks: this.tasks, repos: this.repos, clone: this.cloneSources, pick: this.pickable() }[this.level] ?? [];
   }
@@ -467,13 +473,12 @@ export default class Multirepo extends View {
     }
   }
 
-  // Vim keys and "/" search, like the other dialogs; letters type while an input is focused.
   key(e, cx) {
     const stroke = e.keystroke;
     const isTyping = this.inputMode && this.inputMode !== "search-kept";
     const count = this.items().length;
     const task = this.level === "repos" ? this.task : this.level === "tasks" ? this.items()[this.at] : null;
-    // "?" shows this view's keys; while they show, only ? and esc do anything.
+
     if (this.isShowingKeys || (isHelpKey(stroke) && !(isTyping))) {
       if (!this.isShowingKeys || isHelpKey(stroke) || stroke === "escape") this.isShowingKeys = !this.isShowingKeys;
       cx.stop_propagation();
@@ -481,7 +486,7 @@ export default class Multirepo extends View {
     }
     if (isTyping) {
       if (stroke === "escape") {
-        if (this.inputMode === "new") this.stackOn = null; // a stacked task given up
+        if (this.inputMode === "new") this.stackOn = null;
         if (this.inputMode !== "search") this.inputMode = null;
         this.handle.focus();
       }
@@ -500,6 +505,7 @@ export default class Multirepo extends View {
     }
     else if (this.level === "pick" && stroke === "enter") this.createPicked(cx);
     else if (this.level === "pick" && stroke === "b") this.askBranch(cx);
+    else if (this.level === "pick" && stroke === "v" && this.sandbox) this.isSandbox = !this.isSandbox;
     else if (this.level === "pick" && (stroke === "escape" || stroke === "h")) this.leavePicker();
     else if (stroke === "a" && task) this.openPicker(task.branch, [], task);
     else if (stroke === "escape") this.close();
@@ -524,13 +530,10 @@ export default class Multirepo extends View {
 
   focusInput(cx, mode, value = "") {
     this.startInput(mode, value);
-    // The box is only drawn while an input mode is on, so it can take focus after this frame.
+
     cx.timer.after(0, () => this.input.focus());
   }
 
-  // ----------------------------------------------------------------- render
-
-  // The remove confirmation as buttons too, for a removal started by a click (the Projects tab's Remove).
   confirmBar(t) {
     const task = (this.tasks ?? []).find((x) => x.root === this.confirmRemove);
     if (!task) return div();
@@ -547,7 +550,6 @@ export default class Multirepo extends View {
       .child(div().text_size(11).text_color(t.dim).child("x / shift-x · esc"));
   }
 
-  // What a row says (its words are also what search matches), and for plain items their icon.
   rowFor(item, t) {
     const repoNames = (names) => names.map((n) => this.short(n)).join(", ");
     switch (this.level) {
@@ -578,7 +580,7 @@ export default class Multirepo extends View {
     const t = theme();
     const items = this.items();
     const short = (n) => this.short(n);
-    // The Projects tab's rows (rows.js); a repo card sits in a frame that shows the selection.
+
     const rowView = (item, index) => {
       const isSelected = index === this.at;
       if (this.level === "tasks") return taskRow(item, { isSelected, isOpen: Boolean(workspaceOf(item.root, this.machine.name)), short, chipColor: t.background }, t);
@@ -597,7 +599,7 @@ export default class Multirepo extends View {
       clone: `Clone a project onto ${this.machine ? machineLabel(this.machine) : ""}`,
       tasks: `${this.project?.name} tasks`,
       repos: `${this.task?.branch}`,
-      pick: this.addingTo ? `Add repos to ${this.newBranch}` : `New task ${this.newBranch}${this.stackOn ? ` on ${this.stackOn.branch}` : ""}: its repos`,
+      pick: this.addingTo ? `Add repos to ${this.newBranch}` : `New task ${this.newBranch}${this.stackOn ? ` on ${this.stackOn.branch}` : ""}${this.sandbox ? (this.isSandbox ? ", in a sandbox" : `, on ${machineLabel(this.machine)} itself`) : ""}: its repos`,
     }[this.level];
     const subtitle = {
       tasks: "A task is one branch across picked repos, in one folder; the other repos are linked in.",
@@ -630,7 +632,7 @@ export default class Multirepo extends View {
               clone: "l clone · h back · / search",
               tasks: "l repos · o open workspace · v review PRs · n new task · s stack a task on it · a add repos · p PRs · x remove · h back · / search",
               repos: "l open PR · o open workspace · v review PRs · s stack a task on it · a add repos · p create/update PRs · x remove task · h back",
-              pick: `space/x tick · a all · b its own branch · ↵ ${this.addingTo ? "add" : "create"} (${this.picked.size}) · / search · h back`,
+              pick: `space/x tick · a all · b its own branch${this.sandbox ? ` · v ${this.isSandbox ? "on the machine" : "in a sandbox"}` : ""} · ↵ ${this.addingTo ? "add" : "create"} (${this.picked.size}) · / search · h back`,
             }[this.level];
     const isInputShown = Boolean(this.inputMode) || Boolean(this.query);
     const prompt = {
@@ -670,7 +672,7 @@ export default class Multirepo extends View {
             isLoading || items.length === 0
               ? div().p(10).text_color(isLoading ? t.muted : t.dim).child(isLoading ? "Loading…" : empty)
               : v_virtual_list("mr-list", items.length, rowHeight, (i) => String(i), (range) => items.slice(range.start, range.end).map((item, k) => rowView(item, range.start + k)))
-                  // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+
                   .on_item_click((key, cx) => this.pick(cx, Number(key)))
                   .track_scroll(this.listScroll)
                   .size_full(),

@@ -1,6 +1,3 @@
-// Agents in grouped or priority views; a parent reads with its sub-agents (tree.js).
-// A viewed done agent stays in Done until left.
-
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, spaces, focused, theme, layout, shared, setShared, setAgentOrder, settings, openOverlay, closeOverlay, props, nextCommand } from "herdr";
@@ -23,7 +20,7 @@ export default class Agents extends View {
 
   init(_props, cx) {
     if (props()?.sortMenu) {
-      // It takes the keyboard, as the shipped menu does. As T3's menus: nothing's lit until a key or the pointer arrives, and it fades in.
+
       this.at = -1;
       this.keys = cx.focus_handle();
       this.keys.focus();
@@ -31,20 +28,23 @@ export default class Agents extends View {
       return;
     }
     stopsInit(this, cx);
-    // pane.go onto this list (mod.json's "focusable"): the keyboard starts at the heading's button.
+
     cx.spawn(async (cx) => {
       for (;;) if (await nextCommand() === "focus") enter(this, cx, "ag-sort");
     });
     this.folded = JSON.parse(localStorage.getItem("folded") ?? "{}");
-    // Each agent's last state and when it changed (ms), kept across restarts.
+
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
-    cx.timer.every(1000, () => this.compute());
-    cx.timer.every(30000, (cx) => cx.notify()); // The rows' times move with nothing else changing.
-    // Older installs kept pins in this list's storage; move them over once, before the inbox writes any.
+    cx.timer.every(1000, () => {
+      const findLists = (n) => (n?.id === "sidebar-lists" ? n : (n?.children ?? []).map(findLists).find(Boolean));
+      const mode = findLists(layout());
+      if (!mode || mode.active !== "inbox") this.compute();
+    });
+    cx.timer.every(30000, (cx) => cx.notify());
+
     if (shared("agents.pins") == null && localStorage.getItem("pins")) setShared("agents.pins", JSON.parse(localStorage.getItem("pins")));
   }
 
-  // Shared with the inbox (t3-inbox): one set of pins.
   get pins() {
     return shared("agents.pins") ?? [];
   }
@@ -59,11 +59,9 @@ export default class Agents extends View {
     cx.notify();
   }
 
-  // Stamps agents whose state changed. Done and idle count as one: looking at a
-  // finished agent turns done into idle, and looking isn't the agent doing anything.
   track(list, now) {
     let dirty = false;
-    // As the tab has it: this list doesn't draw while the Inbox shows, so a frame's time would be when it came back.
+
     const changedAt = new Map(spaces().flatMap((s) => s.tabs ?? []).map((c) => [c.id, c.changed_at]));
     for (const a of list) {
       const s = a.status === "done" ? "idle" : a.status;
@@ -72,21 +70,19 @@ export default class Agents extends View {
       dirty = true;
     }
     if (!dirty) return;
-    // Gone and old: the list alone is empty right after a start.
+
     const listed = new Set(list.map((a) => a.address));
     for (const [k, c] of Object.entries(this.changed)) if (!listed.has(k) && now - c.at > 30 * 86400000) delete this.changed[k];
     localStorage.setItem("changed", JSON.stringify(this.changed));
   }
 
-  // Drops pins and fold choices of agents that ended. Only for machines the list has heard from:
-  // right after a start, or while a machine connects, its agents aren't listed yet.
   prune(all) {
     const machine = (addr) => (addr.includes("/") ? addr.split("/")[0] : "");
     const heard = new Set(all.map((k) => machine(k.address)));
     const live = new Set(all.filter((k) => k.state === "live").map((k) => k.address));
     const kept = this.pins.filter((p) => !heard.has(machine(p)) || live.has(p));
     if (kept.length !== this.pins.length) setShared("agents.pins", kept);
-    // Group headers (sp-…, sec-…, pinned) fold under the same store; only agents' entries end.
+
     const ended = Object.keys(this.folded).filter((k) => !/^(sp-|sec-|pinned$)/.test(k) && heard.has(machine(k)) && !live.has(k));
     for (const k of ended) delete this.folded[k];
     if (ended.length) localStorage.setItem("folded", JSON.stringify(this.folded));
@@ -96,12 +92,10 @@ export default class Agents extends View {
     return this.changed[a.address]?.at ?? 0;
   }
 
-  // Looking at a done agent makes it idle; it stays with Done until you leave
-  // it rather than drop away under you. Any other change moves it at once.
   hold(list) {
     const cur = list.find((a) => a.focused);
     const same = cur && cur.address === this.held?.address;
-    // Arriving, or any change but done turning idle, sets what it was.
+
     if (!same || cur.status !== "idle") this.held = cur ? { address: cur.address, rank: RANK[cur.status] ?? 0 } : null;
   }
 
@@ -158,17 +152,17 @@ export default class Agents extends View {
 
   compute() {
     const sort = sortOf();
-    // t3-context keeps the other context's agents out.
+
     const offAgents = new Set(shared("context")?.offAgents ?? []);
     let list = agents().filter((a) => !offAgents.has(a.address));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
-    // A mod pane has no agent of its own, and Herdr's is then the chosen one, else the first of all: it counts only in that tab, as in the inbox.
+
     const f = focused();
     const shown = f?.pane && !f.terminal && !list.some((a) => a.tab === f.tab && a.address === f.agent) ? null : f?.agent;
     const ps = panes();
     const now = Date.now();
-    // A sub-agent folded away from view lights its nearest listed ancestor, as T3's resolveSidebarRowThreadId does.
+
     const ancestor = (() => {
       const byAddress = new Map(all.map((k) => [k.address, k])), seen = new Set();
       let k = byAddress.get(shown);
@@ -181,7 +175,7 @@ export default class Agents extends View {
     const byPriority = sort.id === "priority";
     const under = subAgents(list, all);
     const kidsOf = new Map(list.map((a) => [a.address, under(a.address)]));
-    // As shown: its own word with its sub-agents'. Sorted, a viewed done agent keeps Done.
+
     const own = (a) => ownStatus(a.status, a.address, all);
     const shownStatus = (a) => notNews(all.find(k => k.address === a.address), own(a), kidsOf.get(a.address))
       && treeStatus(own(a), kidsOf.get(a.address)) !== "blocked" ? "idle" : treeStatus(own(a), kidsOf.get(a.address));
@@ -192,15 +186,14 @@ export default class Agents extends View {
     const pinned = this.pins.map((p) => list.find((a) => a.address === p)).filter(Boolean);
     const rest = list.filter((a) => !this.pins.includes(a.address));
     list = [...pinned, ...rest];
-    const groups = /** @type {any[]} */ (pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : []);
+    const groups =  (pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : []);
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
       else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", space: byPriority ? null : a.space, members: [a] });
     }
-    // Every top-level agent, in its group or not. A sub-agent with no pane can only open as a peek, a popup over the work. A folded group
-    // counts: Idle folds by default, and leaving a row there would take it off the walk, with no key back.
+
     const order = [...new Set(groups.flatMap(g => g.members.map(a => a.address)))];
     const view = order.includes(ancestor) ? ancestor : null;
     const find = (n) => n?.id === "sidebar-lists" ? n : (n?.children ?? []).map(find).find(Boolean);
@@ -224,14 +217,12 @@ export default class Agents extends View {
     const { sort, list } = data;
     const entries = agentEntries(this, t, data);
 
-    // The list's motion, as t3-inbox's and T3's (Sidebar.motion.ts). Folds and the sort play it too: T3 skips only a bottom shelf's
-    // opening (Sidebar.tsx), and this list starts at the top.
     planMotion(this, entries, cx);
-    // A row no longer drawn has no hover listener, so it never reports the pointer leaving it: forget it, or its card comes back with it.
+
     const gone = this.hovered;
     if (gone && !entries.some((e) => e.key === gone)) {
       this.hovered = this.hot = null;
-      /** @type {any} */ (this).detailsWait?.cancel();
+       (this).detailsWait?.cancel();
       if (this.details === gone) this.details = null;
       if (this.detailsOut === gone) this.detailsOut = null;
     }
@@ -264,8 +255,8 @@ export default class Agents extends View {
                 .on_hover(glow(this, "ag-sort"))
                 .on_mouse_down("left", (e) => { this.sortFrom = e.bounds; })
                 .on_click((_e, cx) => {
-                  this.hot = null; // The menu covers it, before the pointer can report leaving it.
-                  // Hung from the button, right edges together, as T3's menus. No press (the keyboard), the app's default.
+                  this.hot = null;
+
                   const b = this.sortFrom, z = Number(settings()?.zoom) || 1;
                   this.sortFrom = null;
                   openOverlay({ mod: "t3-agents", kind: "popup", width: SORT_WIDTH, height: 140, ...(b ? { at: { x: b.x + b.width - SORT_WIDTH * z, y: b.y + b.height + 4 * z } } : {}), props: { sortMenu: true } });
@@ -278,7 +269,7 @@ export default class Agents extends View {
         el.child(div().px(16).py(24).text_center().text_size(12).line_height("16px").text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(8).pb(8).overflow_y_scroll()
-        // The rows in one box that scrolls, so the leaving ones placed in it scroll with them.
+
         .child(v_flex().id("ag-content").relative().w_full().flex_none().gap(STACK).children(leavingRows(this)).children(rows))));
   }
 }

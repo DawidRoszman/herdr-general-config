@@ -23,7 +23,7 @@ assert.ok(isCoveredByProject("/home/u/.herdr/projects/Shop/feat-x/backend", []))
 assert.ok(!isCoveredByProject("/home/u/git/ShopOther", ["/home/u/git/Shop"]));
 assert.equal(machineLabel(null), "this Mac");
 assert.equal(reviewKey(null, "/p", "feat/x"), "|/p|x");
-// A PR's review opens in its project's space: on its branch first, then the project's root, never another machine's.
+
 const placeSpaces = [
   { id: "shop", machine: "devbox", folder: "/home/u/git/Shop", branch: "develop" },
   { id: "webapp", machine: "buildbox", folder: "/home/u/webapp", branch: "develop" },
@@ -35,7 +35,7 @@ assert.equal(projectSpace(placeSpaces, { machine: "buildbox", root: "/home/u/web
 assert.equal(projectSpace(placeSpaces, { machine: "buildbox", root: "/home/u/webapp", name: "webapp", branch: "feat/x" }).id, "webapp-wt");
 assert.equal(projectSpace(placeSpaces, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-1" }).id, "task");
 assert.equal(projectSpace(placeSpaces, { machine: null, root: "/Users/me/x", name: "x", branch: "b" }), null);
-// A plain repo's worktree can be anywhere (beside the repo, here): git's list says where, and its space wins.
+
 const porcelain = "worktree /h/webapp/webapp\nHEAD 1\nbranch refs/heads/develop\n\nworktree /h/webapp/webapp.dep\nHEAD 2\nbranch refs/heads/dependabot/x\n";
 assert.equal(worktreeOf(porcelain, "dependabot/x"), "/h/webapp/webapp.dep");
 assert.equal(worktreeOf(porcelain, "nope"), null);
@@ -45,7 +45,7 @@ assert.equal(spaceAt([{ id: "a", machine: null, folder: "/x/repo.wt-other" }], n
 const besides = [{ id: "main", machine: "buildbox", folder: "/h/webapp/webapp", branch: "develop" }, { id: "dep", machine: "buildbox", folder: "/h/webapp/webapp.dep", branch: null }];
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "dependabot/x", checkout: "/h/webapp/webapp.dep" }).id, "dep");
 assert.equal(projectSpace(besides, { machine: "buildbox", root: "/h/webapp/webapp", name: "webapp", branch: "develop", checkout: "/h/webapp/webapp" }).id, "main");
-// A project on two machines: its PR's copy comes from where you work on it.
+
 const copies = [
   { machine: "devbox", root: "/home/u/git/Shop", project: "Shop", branch: "feat/SHOP-1" },
   { machine: null, root: "/Users/me/Shop", project: "Shop", branch: "feat/SHOP-1" },
@@ -54,22 +54,23 @@ const onMac = [{ machine: null, folder: "/Users/me/.herdr/projects/Shop/feat-SHO
 assert.equal(preferredCopy(copies, onMac, "devbox").machine, null, "a space on the branch wins over focus");
 assert.equal(preferredCopy(copies, [{ machine: null, folder: "/Users/me/Shop", branch: "develop" }], "devbox").machine, "devbox", "else the focused machine");
 assert.equal(preferredCopy(copies, [], "elsewhere").machine, "devbox", "else the first by name");
-// The focused space's place, as here.js reads it.
+
 assert.deepEqual(parsePlace('task\n{"project": "/h/git/Shop", "branch": "feat/SHOP-1"}\n'), { root: "/h/git/Shop", branch: "feat/SHOP-1", isRepo: false, name: "Shop" });
 assert.deepEqual(parsePlace("repo\n/h/webapp\nfeat/x\n"), { root: "/h/webapp", branch: "feat/x", isRepo: true, name: "webapp" });
+assert.deepEqual(parsePlace('task\n{"project": "/home/dev/work", "branch": "feat/SHOP-2", "host": {"machine": "box", "project": "/h/git/Shop"}}\n'),
+  { root: "/h/git/Shop", branch: "feat/SHOP-2", isRepo: false, name: "Shop", machine: "box" });
 assert.equal(parsePlace(""), null);
-// Task spaces have no branch (their folder isn't a repo): the task folder named after the branch decides.
+
 const taskSpaces = [
   { id: "shop-110", machine: "devbox", folder: "/home/u/.herdr/projects/Shop/feat-SHOP-110-calendar", branch: null },
   { id: "shop-135", machine: "devbox", folder: "/home/u/.herdr/projects/Shop/feat-SHOP-135-contact", branch: null },
 ];
 assert.equal(projectSpace(taskSpaces, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-135-contact" }).id, "shop-135");
 assert.equal(projectSpace(taskSpaces, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-110-calendar" }).id, "shop-110");
-// A branch with no space of its own: the project's space (by name when it has no folder), never another task's.
+
 assert.equal(projectSpace(taskSpaces, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-999" }), null);
 assert.equal(projectSpace([...taskSpaces, { id: "project", machine: "devbox", name: "Shop", folder: "" }], { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-999" }).id, "project");
-// A task whose branch was renamed after it was made: its folder keeps the old name, so only its
-// .mr-task.json (the checkout openReview and mr prs' task give) finds its space, not the project's.
+
 const renamed = [...taskSpaces, { id: "project", machine: "devbox", name: "Shop", folder: "/home/u/git/Shop" }];
 assert.equal(projectSpace(renamed, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-135-renamed" }).id, "project");
 assert.equal(projectSpace(renamed, { machine: "devbox", root: "/home/u/git/Shop", name: "Shop", branch: "feat/SHOP-135-renamed", checkout: "/home/u/.herdr/projects/Shop/feat-SHOP-135-contact" }).id, "shop-135");
@@ -77,7 +78,6 @@ assert.equal(preferredCopy([{ machine: null, root: "/Users/me/Shop", project: "S
   { machine: "devbox", root: "/home/u/git/Shop", project: "Shop", branch: "feat/SHOP-135-renamed", task: "/home/u/.herdr/projects/Shop/feat-SHOP-135-contact" }], taskSpaces, null).machine, "devbox");
 assert.notEqual(reviewKey("devbox", "/p", "feat/x"), reviewKey(null, "/p", "feat/x"));
 
-// Grouping: the branch with a review request from me first, merged work last.
 const portal = pr({ slug: "o/portal", short: "portal", number: 79, isReviewRequestedFromMe: true });
 const groups = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
   pr({ number: 90, branch: "feat/SHOP-9-old", state: "MERGED", updatedAt: "2026-11-07T09:00:00Z" }),
@@ -85,7 +85,7 @@ const groups = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
 ] }]);
 assert.deepEqual(groups.map((g) => g.branch), ["feat/SHOP-110-x", "feat/SHOP-2-y", "feat/SHOP-9-old"]);
 assert.deepEqual(groups[0].prs.map((p) => p.short), ["backend", "portal"]);
-// feat/X and test/X are one topic: one group, its main branch the most used, and one review tab key.
+
 const topic = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
   pr({ slug: "o/e2e", short: "e2e-tests", number: 24, branch: "test/SHOP-110-x" }), pr(), portal,
 ] }]);
@@ -94,13 +94,13 @@ assert.equal(topic[0].branch, "feat/SHOP-110-x");
 assert.deepEqual(topic[0].branches, ["feat/SHOP-110-x", "test/SHOP-110-x"]);
 assert.equal(reviewKey("m", "/p", "test/SHOP-110-x"), reviewKey("m", "/p", "feat/SHOP-110-x"));
 assert.deepEqual(reviewTab("m", "/p", "feat/SHOP-110-x", false, topic[0].branches).props.branches, ["feat/SHOP-110-x", "test/SHOP-110-x"]);
-// A repo on a branch named differently in the task (mr prs says its topic) joins the task's group.
+
 const odd = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
   pr({ slug: "o/helper", short: "helper", number: 31, branch: "helpers-for-search", topic: "feat/SHOP-110-x" }), pr(),
 ] }]);
 assert.equal(odd.length, 1);
 assert.deepEqual(odd[0].branches, ["feat/SHOP-110-x", "helpers-for-search"]);
-// A stack's branches stay together, bottom first, at the stack's latest update.
+
 const stackedGroups = groupByBranch([{ machine: "m", project: "P", root: "/p", prs: [
   pr({ number: 3, branch: "top", updatedAt: "2026-11-01T00:00:00Z", stack: { number: 5, size: 2, position: 2 } }),
   pr({ number: 4, branch: "loose", updatedAt: "2026-11-03T00:00:00Z" }),
@@ -117,7 +117,6 @@ assert.equal(reviewSummary([pr({ reviewDecision: "APPROVED" })]), "approved");
 assert.equal(reviewSummary([pr({ state: "MERGED" })]), "merged");
 assert.equal(commentCount([pr({ comments: 2, inlineComments: 3 }), pr({ comments: 1 })]), 6);
 
-// Changes between refreshes become notifications; the first refresh is only a baseline.
 assert.deepEqual(prChanges(null, [pr()]), []);
 const titles = (before, after) => prChanges(before, after).map((c) => c.title);
 assert.deepEqual(titles([pr()], [pr({ checks: "SUCCESS" })]), ["Checks passed on backend #107"]);
@@ -191,7 +190,7 @@ assert.deepEqual(only({ project: "Q", status: "all" }), [3]);
 assert.equal(cycleFilter(["any", "a", "b"], "b", 1), "any");
 assert.equal(cycleFilter(["any", "a", "b"], "any", -1), "b");
 assert.equal(cycleFilter(["any", "a", "b"], "gone", 1), "a");
-// Sidebar sections.
+
 const g = (over) => ({ key: over.key ?? "k", machine: "m", root: "/p", project: "P", branch: "b", isOpen: true, isReviewRequestedFromMe: false, updatedAt: "2026-11-07T00:00:00Z", prs: [pr({ viewer: "me", author: "bob" })], ...over });
 assert.equal(sectionOf(g({ isReviewRequestedFromMe: true })), "review");
 assert.equal(sectionOf(g({ prs: [pr({ viewer: "me", author: "me" })] })), "mine");
@@ -211,7 +210,7 @@ assert.deepEqual(prStateIcon(pr({ isDraft: true })), { icon: "pull-request-draft
 assert.equal(checksIcon("failed").icon, "x-circle");
 assert.equal(checksIcon("none"), null);
 assert.equal(age("2026-11-07T00:00:00Z", Date.parse("2026-11-07T05:00:00Z")), "5h");
-// Review status strip.
+
 const reviewed = { ...full, state: "OPEN", isDraft: false, author: { login: "bob" }, reviewDecision: "REVIEW_REQUIRED", mergeStateStatus: "BLOCKED",
   reviewRequests: [{ login: "me" }], latestReviews: [{ author: { login: "carol" }, state: "APPROVED" }] };
 assert.deepEqual(checksStatus(reviewed), { icon: "x-circle", color: "blocked", text: "1 of 3 checks failing" });
@@ -234,7 +233,7 @@ assert.equal(hasSameHeads(headed("b"), headed("b")), true);
 assert.equal(hasSameHeads(headed("b"), headed("c")), false);
 assert.deepEqual(prActions(reviewed, "me"), { canReview: true, hasApproved: false, canComment: true, canMerge: true, canToggleDraft: false, isPrimaryApprove: true, isPrimaryMerge: false });
 assert.equal(prActions(reviewed, "carol").hasApproved, true);
-assert.equal(prActions({ ...reviewed, reviewRequests: [{ login: "carol" }] }, "carol").hasApproved, false); // asked again
+assert.equal(prActions({ ...reviewed, reviewRequests: [{ login: "carol" }] }, "carol").hasApproved, false);
 assert.equal(prActions(reviewed, "bob").canToggleDraft, true);
 assert.equal(prActions(reviewed, "bob").canReview, false);
 assert.equal(prActions({ ...reviewed, state: "MERGED" }, "me").canMerge, false);
@@ -269,7 +268,6 @@ assert.equal(optimisticPr(before, { action: "ready" }, "me").isDraft, false);
 assert.deepEqual(optimisticPr(before, { reviewers: ["bob"] }, "me").reviewRequests, [{ name: "core" }, { login: "bob" }]);
 assert.equal(before.state, "OPEN", "the PR given is left as it was");
 
-// Stacks: neighbors, and what a merge takes with it.
 const entry = (position, state = "OPEN") => ({ position, number: 10 + position, state, headRefName: `b${position}` });
 const middle = { state: "OPEN", stack: { number: 1, size: 4, position: 3, entries: [entry(1, "MERGED"), entry(2), entry(3), entry(4)] } };
 assert.equal(stackNeighbor(middle, -1).headRefName, "b2");
@@ -281,7 +279,6 @@ assert.deepEqual(mergedWith({}), []);
 const stackMerged = optimisticPr(middle, { action: "merge-stack" }, "me");
 assert.deepEqual([stackMerged.state, ...stackMerged.stack.entries.map((e) => e.state)], ["MERGED", "MERGED", "MERGED", "MERGED", "OPEN"]);
 
-// A review thread for Claude: the comment that started it and its replies.
 const inline = [
   { author: "ann", body: "Rename this", path: "src/a.ts", line: 4, url: "u1", isReply: false },
   { author: "bob", body: "Why?\nIt reads fine", path: "src/a.ts", line: 4, url: "u2", isReply: true },
@@ -301,7 +298,6 @@ assert.ok(watchPrompt([threadPr, { url: "x" }]).startsWith("Watch these PRs: htt
 
 console.log("model.js ok");
 
-// Line comments on the Files tab's diff.
 {
   const rows = parseDiff([
     "diff --git a/a.js b/a.js", "@@ -10,3 +10,3 @@", " same", "-old", "+new", "\\ No newline at end of file", "@@ -40,1 +40,2 @@", " keep", "+added",
@@ -313,16 +309,16 @@ console.log("model.js ok");
   assert.deepEqual(selectedRange(rows, 3, 1), { start: 1, end: 3 });
   assert.deepEqual(selectedRange(rows, 1, 7), { start: 1, end: 3 }, "stops at the hunk's edge and skips the note row");
   const commitId = "abc123";
-  // One line, new side.
+
   assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 3, end: 3 } }),
     { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 11 });
-  // One line, old side.
+
   assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 2, end: 2 } }),
     { body: "b", commit_id: commitId, path: "a.js", side: "LEFT", line: 11 });
-  // A range across both sides: from the deleted line to the added one.
+
   assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 2, end: 3 } }),
     { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 11, start_side: "LEFT", start_line: 11 });
-  // A range on the new side only.
+
   assert.deepEqual(lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 6, end: 7 } }),
     { body: "b", commit_id: commitId, path: "a.js", side: "RIGHT", line: 41, start_side: "RIGHT", start_line: 40 });
   assert.throws(() => lineCommentRequest({ body: "b", commitId, path: "a.js", rows, range: { start: 0, end: 1 } }), /take no comment/);
@@ -341,7 +337,6 @@ console.log("model.js ok");
 }
 console.log("line comments ok");
 
-// Thread cards: line ranges and body heights.
 {
   const { lineRange, markdownLines } = await import("./model.js");
   assert.equal(lineRange({ side: "RIGHT", line: 24 }), "+24");

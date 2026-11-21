@@ -1,11 +1,6 @@
-// Pure state of a chat: Claude Code's own transcript (~/.claude*/projects/<folder>/<session>.jsonl)
-// folded into what the view draws, and the permission menu read off its terminal's screen.
-// Checked by `node model.test.mjs`.
-
-const OUTPUT_LIMIT = 6000; // characters of a tool's output kept for the view
+const OUTPUT_LIMIT = 6000;
 const INPUT_LIMIT = 4000;
 
-// Slash commands offered while typing (the TUI runs any; these are the common ones).
 export const COMMANDS = [
   ["/model", "switch the model"], ["/compact", "summarize the conversation to free context"], ["/clear", "start over in this session"],
   ["/context", "what fills the context"], ["/cost", "tokens and cost so far"], ["/review", "review a pull request"],
@@ -15,10 +10,10 @@ export const COMMANDS = [
 
 export function emptyChat() {
   return {
-    items: new Map(), // id -> item, in transcript order (Map keeps insertion order)
+    items: new Map(),
     model: null,
-    mode: null, // Claude Code's permission mode as the transcript last noted it
-    tokens: 0, // the context the last reply was made with (input and cached tokens)
+    mode: null,
+    tokens: 0,
     title: "",
   };
 }
@@ -28,11 +23,10 @@ const asText = (value) => (typeof value === "string" ? value : JSON.stringify(va
 
 function trimInput(input) {
   if (!input || typeof input !== "object") return { value: trim(asText(input), INPUT_LIMIT) };
-  // A proposed plan is shown whole (its card), so it is not cut.
+
   return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === "string" && k !== "plan" ? trim(v, INPUT_LIMIT) : v]));
 }
 
-// One line saying what a tool call does: the command, the file, the pattern.
 export function toolTitle(input) {
   for (const key of ["command", "file_path", "path", "notebook_path", "pattern", "url", "query", "description", "prompt"]) {
     const value = input?.[key];
@@ -41,7 +35,6 @@ export function toolTitle(input) {
   return "";
 }
 
-// A user entry's text as the person wrote it; slash commands and their output come wrapped in tags.
 function userText(content) {
   if (typeof content === "string") return content;
   return (content ?? []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
@@ -53,14 +46,18 @@ const images = (content, key) => (Array.isArray(content) ? content : [])
 
 const tag = (text, name) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim();
 
-// Folds transcript entries in. Sub-agents' own steps (isSidechain) and Claude Code's bookkeeping
-// (meta entries, api records, summaries) are left out.
 export function applyTranscript(chat, entries) {
   for (const e of entries) {
-    // Claude Code notes its permission mode as it changes.
+
     if (e.type === "permission-mode" && e.permissionMode) chat.mode = e.permissionMode === "bypassPermissions" ? "bypass" : e.permissionMode;
-    if (e.isSidechain || e.isMeta || !e.message) continue;
     const at = Date.parse(e.timestamp) / 1000 || 0;
+
+    const queued = e.attachment?.type === "queued_command" && e.attachment.commandMode === "prompt" ? e.attachment.prompt : null;
+    if (typeof queued === "string" && !e.isSidechain) {
+      applyUserText(chat, e, queued, [], at);
+      continue;
+    }
+    if (e.isSidechain || e.isMeta || !e.message) continue;
     if (e.type === "assistant") {
       if (e.message.model && e.message.model !== "<synthetic>") chat.model = e.message.model;
       const usage = e.message.usage;
@@ -82,7 +79,6 @@ export function applyTranscript(chat, entries) {
   return chat;
 }
 
-// A message another agent sent with `hc send` comes wrapped in <hc from="...">; shown as its text.
 const HC_WRAP = /^<hc\b[^>]*>([\s\S]*)<\/hc>\s*$/;
 
 function applyUserText(chat, e, wrapped, pictures, at) {
@@ -106,7 +102,7 @@ function applyUserText(chat, e, wrapped, pictures, at) {
 
 function applyToolUse(chat, block, at) {
   if (block.name === "TodoWrite" && Array.isArray(block.input?.todos)) {
-    chat.items.delete("plan"); // the newest plan goes to the bottom
+    chat.items.delete("plan");
     chat.items.set("plan", { kind: "plan", id: "plan", entries: block.input.todos.map((t) => ({ text: t.content, status: t.status })), at });
   }
   chat.items.set(`tool-${block.id}`, { kind: "tool", id: `tool-${block.id}`, name: block.name, title: toolTitle(block.input), input: trimInput(block.input), status: "running", at });
@@ -120,40 +116,30 @@ function applyToolResult(chat, result, at) {
   chat.items.set(item.id, { ...item, status: result.is_error ? "error" : "done", endedAt: at, output: trim(output, OUTPUT_LIMIT), images: images(content, result.tool_use_id) });
 }
 
-// What the list shows: empty thinking (Claude Code keeps only its signature) left out.
 export function visibleItems(chat) {
   return [...chat.items.values()].filter((item) => !(item.kind === "thinking" && !item.text?.trim()));
 }
 
-// Lines of a transcript chunk read from a byte offset: whole lines only, and how many bytes they
-// took (the rest is a line still being written). byteLength: the host's UTF-8 length.
 export function transcriptLines(chunk, byteLength) {
   const end = chunk.lastIndexOf("\n") + 1;
   const whole = chunk.slice(0, end);
   const entries = [];
   for (const line of whole.split("\n")) {
     if (!line.trim()) continue;
-    try { entries.push(JSON.parse(line)); } catch { /* a line Claude Code never finished: skipped */ }
+    try { entries.push(JSON.parse(line)); } catch {  }
   }
   return { entries, bytes: byteLength(whole) };
 }
 
-// The chat's state from its terminal's agent status (null: no live terminal).
 export function chatState(status) {
   if (!status) return "stopped";
   return { working: "working", blocked: "waiting", done: "idle", idle: "idle" }[status] ?? "starting";
 }
 
-// Claude Code's menu at the bottom of its screen (a permission, a question, a plan, trusting a
-// folder): { question, options: [{ key, label, keys }] }, or null when there is none. key: what the
-// person presses in the chat; keys: what the terminal gets. Numbered options are their digit; an
-// unnumbered chooser (❯ marks the choice) is moved to the option and confirmed with Enter.
 const OPTION = /^[\s│|]*(?:❯|>)?\s*(\d+)\.\s+(.+?)[\s│|]*$/;
 const CHOOSER = /^[\s│|]*❯\s+\S/;
 const clean = (l) => l.replace(/^[\s│|╭╰─]+|[\s│|╮╯─]+$/g, "");
-// What stands over the options: the question (what follows the last rule line above them, as
-// one line) and its detail (the preview before that rule: a diff, a command), as the screen has it.
-// Without a rule, the last lines are the question.
+
 const RULE = /^[\s│|]*[╌─━]{6,}[\s│|]*$/;
 function asked(lines, end) {
   const from = Math.max(0, end - 40);
@@ -167,15 +153,12 @@ function asked(lines, end) {
   };
 }
 
-// Lines a narrow terminal cut at its width, joined again: a line as wide as the widest is taken
-// to go on in the next (less its indent and repeated diff mark). Claude Code's hidden pane can
-// be a few dozen columns wide.
 export function unwrapped(lines) {
   const width = Math.max(0, ...lines.map((l) => l.length));
   const out = [];
   let isCut = false;
   for (const line of lines) {
-    // A numbered line (a diff preview's) always starts anew.
+
     if (isCut && out.length && !/^\s*\d+\s/.test(line)) out[out.length - 1] += line.replace(/^\s*[+-]?/, "");
     else out.push(line);
     isCut = width > 20 && line.length >= width;
@@ -183,21 +166,16 @@ export function unwrapped(lines) {
   return out;
 }
 
-// A numbered menu. A long option wraps onto lines of its own under it: they belong to its label.
-const WRAPS = 16; // lines an option may wrap onto (a long path on a narrow terminal)
-// A question's multi-select ends in a step, "Next" or "Submit": a row of its own, not an option's words.
+const WRAPS = 16;
+
 const STEP = /^[\s❯]*(Next|Submit)$/;
 const isStep = (line) => STEP.test(line);
 const isMore = (line) => /^\s{4,}\S/.test(line) && !OPTION.test(line) && !/^\s*(Esc|Enter) to /.test(line) && !isStep(line);
-// Claude Code's input box (❯ between rule lines; the top one may hold a name) is on screen: it
-// asks nothing. A menu takes the box's place, so what looks like options above it is the
-// conversation (a numbered list in a reply, an echoed message: ❯ too, with a rule under it when a
-// question follows).
+
 const hasPromptBox = (lines) => lines.some((line, i) => /^\s*❯/.test(line) && RULE.test(lines[i + 1] ?? "") && /^\s*[╌─━]{3,}/.test(lines[i - 1] ?? ""));
-// A question (AskUserQuestion) has its questions as tabs over it: ← ☐ Color ☐ Size ✔ Submit →, or
-// one question its header alone: ☐ Color.
+
 const QUESTION_TABS = /^\s*(?:←.*→|[☐☒]\s+[^☐☒✔→]+)\s*$/;
-// Its "Type something." is answered with what the person writes (the chat's box, see ChatView.submit).
+
 export const isTypedOption = (option) => option.kind === "typed";
 
 export function screenMenu(screen) {
@@ -205,8 +183,7 @@ export function screenMenu(screen) {
   if (hasPromptBox(lines.filter((line) => line.trim()))) return null;
   const last = lines.findLastIndex((l) => OPTION.test(l));
   if (last < 0) return chooserMenu(lines);
-  // Up to option 1 (or as far as options and their wrapped lines reach). A question's last
-  // option ("Chat about this") stands under a rule line of its own.
+
   let first = last;
   while (lines[first].match(OPTION)[1] !== "1") {
     let up = first - 1;
@@ -217,7 +194,7 @@ export function screenMenu(screen) {
   let end = last + 1;
   while (end < lines.length && end - last <= WRAPS && isMore(lines[end])) end += 1;
   const options = [];
-  let cursor = 0; // the row ❯ marks
+  let cursor = 0;
   for (const line of lines.slice(first, end)) {
     const m = line.match(OPTION);
     if ((m || isStep(line)) && /^[\s│|]*❯/.test(line)) cursor = options.length;
@@ -227,23 +204,17 @@ export function screenMenu(screen) {
   }
   const tabs = lines.slice(0, first).findLastIndex((l) => QUESTION_TABS.test(l));
   if (tabs >= 0) return questionMenu(lines.slice(tabs, first), options, cursor);
-  // Elsewhere an option's lines under it are its label, wrapped.
+
   return { ...asked(lines, first), options: options.map(({ more, ...o }) => ({ ...o, label: [o.label, ...more].join(" ") })) };
 }
 
-// A question (AskUserQuestion), from its lines from the tabs to its options, as the chat draws it:
-// { isQuestion, question, steps, current, review, options, cursor }. steps: its questions (by
-// header) and Submit, when it asks more than one; current: the step shown (the first unanswered:
-// the screen's text doesn't mark it), or -1. review: the answers on the Submit step. Options:
-// { key, label, description, keys, kind: "answer" | "typed" | "chat" | "step", isChecked (null
-// unless a multi-select), isRecommended, isCursor }.
 function questionMenu(head, options, cursor) {
   const steps = [...head[0].matchAll(/([☐☒✔])\s+(.+?)(?=\s+[☐☒✔→]|\s*$)/g)].map(([, mark, label]) => ({ label: label.trim(), isDone: mark === "☒", isSubmit: mark === "✔" }));
   const words = head.slice(1).map(clean).filter(Boolean);
   const isReview = words[0] === "Review your answers";
   const review = [];
   for (const [i, word] of words.entries()) if (isReview && word.startsWith("●") && words[i + 1]?.startsWith("→")) review.push({ question: word.slice(1).trim(), answer: words[i + 1].slice(1).trim().replace(/\s*\(Recommended\)$/, "") });
-  // A multi-select's digits only tick; its step is gone to with the cursor and taken with Enter.
+
   const moves = (to) => Array(Math.abs(to - cursor)).fill(to > cursor ? "down" : "up");
   const shown = options.map((option, i) => {
     const box = option.label.match(/^\[(.)\]\s*/);
@@ -260,11 +231,6 @@ function questionMenu(head, options, cursor) {
   };
 }
 
-// The step a question shows, as its screen doesn't mark it (a multi-select is ticked answered as
-// soon as one box is): its questions come in their steps' order, so the one shown is where its
-// text first came. seen: the questions' texts so far, anew with a new question (nothing answered).
-// Sets menu.current; returns the texts now. A chat that comes in mid-question (opened, restarted)
-// hasn't seen the steps before: they are taken to be those the screen ticks.
 export function placeQuestion(menu, seen) {
   if (!menu?.steps?.length || menu.review.length) return seen;
   const fresh = menu.steps.every((step) => !step.isDone);
@@ -274,18 +240,12 @@ export function placeQuestion(menu, seen) {
   return next;
 }
 
-// The keys that put a question's cursor in its "Type something" field, for the text to follow;
-// after keys: what takes it. A single answer's digit goes to its field and its text's Enter
-// answers. A multi-select's digit only ticks, so the cursor is moved there, and the field is
-// ticked with an Enter of its own (the text's Enter leaves it unticked).
 export function typedAnswer(menu, option) {
   if (option.isChecked === null) return { keys: option.keys, after: [] };
   const at = menu.options.indexOf(option), from = menu.cursor ?? 0;
   return { keys: Array(Math.abs(at - from)).fill(at > from ? "down" : "up"), after: ["enter"] };
 }
 
-// The chooser's options: the lines touching the ❯ line (a blank line ends them on each side).
-// One line alone is the input prompt (❯ Try "..."), not a choice.
 function chooserMenu(lines) {
   const chosen = lines.findLastIndex((l) => CHOOSER.test(l));
   if (chosen < 0) return null;
@@ -302,13 +262,10 @@ function chooserMenu(lines) {
   return { ...asked(lines, first), options };
 }
 
-// A row's height, estimated from its text: the conversation is a virtual list (the only list that
-// can be scrolled from code), which needs every row's height up front. Generous rather than exact:
-// a short slot clips a row, a long one leaves a little air. width: the row's text width in px.
 const LINE = 20;
-const CHAR = 6.6; // average glyph width at 13px
+const CHAR = 6.6;
 export function estimateRowHeight(row, { isOpen = false, width = 920 } = {}) {
-  const pad = 10; // the frame's bottom padding
+  const pad = 10;
   switch (row.kind) {
     case "user": {
       const bubble = Math.min(640, width) - 24;
@@ -339,12 +296,10 @@ export function markdownHeight(text, width) {
   return Math.ceil(height * 1.12);
 }
 
-// What the person wrote, as markdown that shows it as typed: tags escaped, single line breaks kept.
 export function typedMarkdown(text) {
   return (text ?? "").replace(/</g, "\\<").replace(/\n/g, "  \n");
 }
 
-// ```html fences in a reply, drawn as a rendered preview under the text.
 export function htmlBlocks(text) {
   return [...(text ?? "").matchAll(/```html\s*\n([\s\S]*?)```/g)].map((m) => m[1].trim()).filter(Boolean);
 }
@@ -353,7 +308,6 @@ export function stateLabel(state) {
   return { starting: "Starting…", idle: "Ready", working: "Working…", waiting: "Needs you", stopped: "Stopped" }[state] ?? state;
 }
 
-// The tool call's input as a fenced block, leaving out what the title already says.
 export function toolDetail(item) {
   const input = Object.fromEntries(Object.entries(item.input ?? {}).filter(([, v]) => v !== item.title));
   const parts = [];
@@ -364,14 +318,11 @@ export function toolDetail(item) {
 
 const SUGGESTIONS = 8;
 
-// "/rev" -> the slash commands starting with it.
 export function commandMatches(commands, text) {
   if (!text.startsWith("/") || text.includes(" ")) return [];
   return commands.filter((c) => c.id.startsWith(text)).slice(0, SUGGESTIONS);
 }
 
-// "@mod/ch" -> the files matching it best: a name starting with it, then containing it, then the path containing it,
-// then the letters in order (fuzzy). Shorter paths first within a rank.
 export function fileMatches(files, query) {
   const q = query.toLowerCase();
   const rank = (path) => {
@@ -385,14 +336,22 @@ export function fileMatches(files, query) {
     for (const ch of lower) if (ch === q[at] && ++at === q.length) return 3;
     return -1;
   };
-  return files.map((path) => ({ path, rank: rank(path) })).filter((f) => f.rank >= 0)
-    .sort((a, b) => a.rank - b.rank || a.path.length - b.path.length).slice(0, SUGGESTIONS).map((f) => f.path);
+
+  const order = (a, b) => a.rank - b.rank || a.path.length - b.path.length;
+  const best = [];
+  for (const path of files) {
+    const match = { path, rank: rank(path) };
+    if (match.rank < 0 || (best.length === SUGGESTIONS && order(match, best[SUGGESTIONS - 1]) >= 0)) continue;
+    let at = best.length;
+    while (at > 0 && order(match, best[at - 1]) < 0) at--;
+    best.splice(at, 0, match);
+    if (best.length > SUGGESTIONS) best.pop();
+  }
+  return best.map((f) => f.path);
 }
 
-// What to offer for the draft: its slash command when it is one, else files for an @word being typed at the end.
-// Each item: { insert (replaces the token), label, detail }.
 export function suggestionsFor(draft, commands, files) {
-  // A command while it is being typed: once a space follows it (a taken one has one), it is written.
+
   const head = draft.trimStart();
   if (head.startsWith("/") && !/\s/.test(head)) {
     return { token: draft, items: commandMatches(commands, head).map((c) => ({ insert: `${c.id} `, label: c.id, detail: c.detail ?? "" })) };
@@ -403,17 +362,11 @@ export function suggestionsFor(draft, commands, files) {
   return { token: at[1], items: fileMatches(files, query).map((path) => ({ insert: `@${path} `, label: path.slice(path.lastIndexOf("/") + 1), detail: path })) };
 }
 
-// The draft with its last token replaced by the chosen suggestion, and where the caret goes:
-// right after what was put in (its trailing space included), as a UTF-16 offset (the box's unit).
 export function accepted(draft, token, insert) {
   const start = draft.length - token.length;
   return { text: draft.slice(0, start) + insert, caret: start + insert.length };
 }
 
-// What Up, Down or Tab does in the box (keys the box would otherwise take for itself, see
-// ChatView.composerKey): "suggest" moves or takes the / and @ menu's highlight; "question" moves
-// Claude Code's cursor over a question's rows (the box empty); "history" brings back what was sent
-// before; "box" leaves the key to the box (the caret, Tab's focus).
 export function composerKeyRoute(key, { hasSuggestions, isQuestion, isEmpty, recalls }) {
   if (hasSuggestions) return "suggest";
   if (key === "tab") return "box";
@@ -421,17 +374,13 @@ export function composerKeyRoute(key, { hasSuggestions, isQuestion, isEmpty, rec
   return recalls ? "history" : "box";
 }
 
-// A file the chat draws as a picture (what image() and imageSize read), by its name.
+export const isLoopbackUrl = (url) => /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d{1,5})?(?:[/?#]|$)/i.test(url);
 export const isImagePath = (path) => /\.(png|jpe?g|gif|webp)$/i.test(path);
 
-// The tab name for a chat titled so (its first message). The tab's icon says it is a chat.
 export function chatTabName(title) {
   return (title || "new").slice(0, 30);
 }
 
-// The name a chat's tab gets from its title, or null to leave it: only a name the chat's makers
-// gave (none, "claude" from New chat and new workspaces) or the one t3-chat gave before
-// ("Chat: <title>") is replaced; a name the person gave stays. tab: the tab's TabInfo.
 export function chatTabRename(tab, title) {
   if (!tab || !title) return null;
   const name = chatTabName(title);
@@ -439,18 +388,13 @@ export function chatTabRename(tab, title) {
   return isChats && tab.name !== name ? name : null;
 }
 
-// The conversation as T3's timeline lays it out (MessagesTimeline): the person's messages, the
-// reply's text, and between them the work (tool calls and thinking) folded into one group per run
-// of work, "Worked for 51s". After a finished turn's last text comes its meta row (how long it
-// took, copy). The todo list is not part of the timeline. isWorking: Claude's turn is running, so
-// the last group is live and the turn has no meta yet.
 export function timeline(chat, { isWorking = false } = {}) {
   const out = [];
   let group = null;
   let texts = [];
   let turnStart = 0;
   let lastAt = 0;
-  let edits = []; // the turn's file-changing tool calls
+  let edits = [];
   const closeGroup = () => {
     if (!group) return;
     out.push({ ...group, endedAt: lastAt });
@@ -465,7 +409,7 @@ export function timeline(chat, { isWorking = false } = {}) {
   };
   for (const item of visibleItems(chat)) {
     if (item.kind === "plan" || (item.kind === "tool" && item.name === "TodoWrite")) continue;
-    // A plan Claude proposes (ExitPlanMode) is a card of its own, as T3's ProposedPlanCard.
+
     if (item.kind === "tool" && item.name === "ExitPlanMode" && typeof item.input?.plan === "string") {
       closeGroup();
       out.push({ kind: "proposed-plan", id: `plan-${item.id}`, text: item.input.plan });
@@ -495,7 +439,6 @@ export function timeline(chat, { isWorking = false } = {}) {
   return out;
 }
 
-// T3's working timer: seconds under a minute, then minutes and seconds, then hours and minutes.
 export function formatElapsed(seconds) {
   const s = Math.max(0, Math.floor(seconds));
   if (s < 60) return `${s}s`;
@@ -503,14 +446,13 @@ export function formatElapsed(seconds) {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-// A work entry's line: an icon, what was done, and to what.
 const basename = (path) => path.slice(path.lastIndexOf("/") + 1);
 export function entryLabel(item) {
   if (item.kind === "thinking") return { icon: "lightbulb", heading: "Thought", detail: item.text.trim().split("\n")[0] };
   const input = item.input ?? {};
   const file = input.file_path ?? input.path ?? input.notebook_path ?? "";
   switch (item.name) {
-    // A leading `cd <folder> &&` is the same in every command run there: the line shows what follows.
+
     case "Bash": return { icon: "terminal", heading: "Ran", detail: item.title.replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*&&\s*(?=\S)/, "") };
     case "Read": return { icon: "file-text", heading: "Read", detail: basename(file) };
     case "Write": return { icon: "square-pen", heading: "Wrote", detail: basename(file) };
@@ -523,16 +465,13 @@ export function entryLabel(item) {
   }
 }
 
-// The lines of old and new as a unified diff: [{ type: " " | "+" | "-", text }], by longest common
-// subsequence. ponytail: O(lines²) time and memory; past LIMIT lines a side, everything old is
-// removed and everything new added. Use Myers' diff if big edits need real diffs.
 const DIFF_LIMIT = 600;
 export function lineDiff(oldText, newText) {
   const a = oldText === "" ? [] : oldText.split("\n");
   const b = newText === "" ? [] : newText.split("\n");
   const mark = (type, lines) => lines.map((text) => ({ type, text }));
   if (a.length > DIFF_LIMIT || b.length > DIFF_LIMIT) return [...mark("-", a), ...mark("+", b)];
-  // common[i][j]: the longest common subsequence of a[i..] and b[j..].
+
   const common = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
   for (let i = a.length - 1; i >= 0; i -= 1) for (let j = b.length - 1; j >= 0; j -= 1) {
     common[i][j] = a[i] === b[j] ? common[i + 1][j + 1] + 1 : Math.max(common[i + 1][j], common[i][j + 1]);
@@ -548,9 +487,6 @@ export function lineDiff(oldText, newText) {
   return out;
 }
 
-// What a file-changing tool call changed: { path, lines, additions, deletions }, or null for any
-// other tool. A write is all additions (the transcript doesn't keep what was there before).
-// The transcript's strings are kept up to INPUT_LIMIT characters, so a long edit's diff is cut.
 export function editDiff(item) {
   const input = item.input ?? {};
   const path = input.file_path ?? input.notebook_path;
@@ -567,8 +503,6 @@ export function editDiff(item) {
   return { path, lines, additions: lines.filter((l) => l.type === "+").length, deletions: lines.filter((l) => l.type === "-").length };
 }
 
-// The files a turn's edits touched, in the order first touched, with their line counts summed
-// (T3's ChangedFilesTree).
 export function changedFiles(edits) {
   const files = new Map();
   for (const item of edits) {
@@ -580,27 +514,21 @@ export function changedFiles(edits) {
   return [...files.values()];
 }
 
-// A path as shown in the chat: under the chat's folder it is relative to it.
 export function shortPath(path, folder) {
   return folder && path.startsWith(`${folder}/`) ? path.slice(folder.length + 1) : path;
 }
 
-// "claude-opus-5-5" -> "Opus 5.5", "claude-sonnet-4-5-20250929" -> "Sonnet 4.5"; else as given.
 export function modelLabel(model) {
   const m = (model ?? "").match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{6,})?(\[.*\])?$/);
   if (!m) return model ?? "";
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
 }
 
-// The messages the person sent, for ArrowUp in an empty box (T3's prompt history): the entry
-// `step` from `at` (-1: the box itself), kept inside the list. Returns { at, text }.
 export function historyStep(sent, at, step) {
   const next = Math.max(-1, Math.min(sent.length - 1, at + step));
   return { at: next, text: next < 0 ? "" : sent[sent.length - 1 - next] };
 }
 
-// What Claude Code's screen says of its mode and effort (its footer lines):
-// { mode: "default" | "acceptEdits" | "plan" | "auto" | "bypass", effort: "high" | ... | null }.
 export function screenStatus(screen) {
   const foot = screen.split("\n").filter((line) => line.trim()).slice(-8).join("\n");
   const mode = /plan mode on/.test(foot) ? "plan" : /accept edits on/.test(foot) ? "acceptEdits" : /auto mode on/.test(foot) ? "auto"
@@ -608,31 +536,23 @@ export function screenStatus(screen) {
   return { mode, effort: foot.match(/[●◐◑◒◓◔◕○]\s*(low|medium|high|max|xhigh)\s*·/)?.[1] ?? null };
 }
 
-// Claude Code's modes under T3's names (runtimeModeConfig.ts), and plan mode.
 export const MODES = { default: "Supervised", acceptEdits: "Auto-accept edits", plan: "Plan", auto: "Auto", bypass: "Full access" };
 
-// What the model control offers: Claude Code's model aliases (`/model <alias>`) and efforts (`/effort <level>`).
 export const MODEL_CHOICES = ["default", "opus", "sonnet", "haiku"];
 export const EFFORT_CHOICES = ["low", "medium", "high", "max"];
 
-// 84213 -> "84k", 1200000 -> "1.2M" (T3's compact token count).
 export function compactTokens(n) {
   if (n < 1000) return String(n);
   if (n < 1e6) return `${Math.round(n / 1000)}k`;
   return `${(n / 1e6).toFixed(1)}M`;
 }
 
-// The todo list (TodoWrite) in a line: how many are done, and the step in hand.
 export function todoSummary(entries) {
   const done = entries.filter((e) => e.status === "completed").length;
   const current = entries.find((e) => e.status === "in_progress") ?? entries.find((e) => e.status !== "completed");
   return { done, total: entries.length, current: current?.text ?? "" };
 }
 
-// The tool call Claude waits on while it asks for permission: the last one still running, if the
-// prompt on screen is about it (its command, or its file's name, is in the prompt). Claude Code
-// writes a tool call to the transcript late, so the running one may be another, earlier call:
-// then null, and the screen's own preview is shown.
 export function pendingTool(chat, menu = null) {
   const tool = [...chat.items.values()].findLast((item) => item.kind === "tool" && item.status === "running" && item.name !== "TodoWrite") ?? null;
   if (!tool || !menu) return tool;
@@ -643,15 +563,11 @@ export function pendingTool(chat, menu = null) {
   return needle && prompt.includes(needle) ? tool : null;
 }
 
-// The plan file Claude Code names under a plan's approval ("ctrl+g to edit in … · ~/…/plans/x.md"),
-// or null. The path may be wrapped over lines on a narrow terminal.
 export function screenPlanPath(screen) {
   const tail = screen.split("\n").filter((line) => line.trim()).slice(-6).map((line) => line.trim()).join("");
   return tail.match(/(~?\/[\w.\/-]*\/plans\/[\w.-]+\.md)/)?.[1] ?? null;
 }
 
-// An image file's pixel size from its first bytes (PNG, GIF, JPEG, WebP), so it can be drawn at a
-// size known before it loads; null for anything else. bytes: indexable (a Buffer, a Uint8Array).
 export function imageSize(bytes) {
   const at = (i) => bytes[i] ?? 0;
   const be16 = (i) => (at(i) << 8) | at(i + 1);
@@ -661,7 +577,7 @@ export function imageSize(bytes) {
   if (ascii(1, 3) === "PNG") return { width: (be16(16) << 16) + be16(18), height: (be16(20) << 16) + be16(22) };
   if (ascii(0, 4) === "GIF8") return { width: le16(6), height: le16(8) };
   if (at(0) === 0xff && at(1) === 0xd8) {
-    // JPEG: the first start-of-frame segment (C0-CF, less C4 C8 CC) holds the size.
+
     for (let i = 2; i + 9 < bytes.length;) {
       if (at(i) !== 0xff) return null;
       const marker = at(i + 1);
@@ -680,9 +596,6 @@ export function imageSize(bytes) {
   return null;
 }
 
-// A picture's size scaled down, its shape kept, to fit maxWidth x maxHeight (never up).
-// The size that covers width x height whole, keeping the picture's shape (CSS object-fit: cover):
-// drawn centred in a box of that size that clips the rest.
 export function coverSize({ width, height }, boxWidth, boxHeight) {
   const scale = Math.max(boxWidth / width, boxHeight / height);
   return { width: Math.round(width * scale), height: Math.round(height * scale) };

@@ -1,5 +1,3 @@
-"""Self-check for profiles.py: python3 test_profiles.py"""
-
 import json
 import sys
 import tempfile
@@ -7,7 +5,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import profiles  # noqa: E402
+import profiles
 
 HOME_DIR = str(Path.home())
 BASE = {
@@ -17,8 +15,15 @@ BASE = {
         "work": {
             "label": "Work", "badge": "Acme", "color": "ansi3",
             "machines": ["work-box"], "folders": ["~/work"],
-            "coordinator": {"folder": "coordinators/work"},
-            "agents": {"reviewer": "codex", "forbidden": ["opencode"]},
+            "projects": {
+                "shop": {
+                    "label": "Shop", "jira": ["SHOP"],
+                    "places": [{"machine": "work-box", "root": "/srv/shop/"}, {"root": "~/work/shop"}],
+                    "coordinator": {"folder": "coordinators/work"},
+                },
+                "blog": {"label": "Blog"},
+            },
+            "agents": {"reviewer": "codex", "machines": {"local": ["claude"], "work-box": ["claude", "codex"]}},
             "accounts": {
                 "claude": {"configDir": "~/.claude-acme"},
                 "github": {"user": "jane-acme"},
@@ -27,13 +32,12 @@ BASE = {
         },
         "personal": {
             "label": "Personal", "machines": ["home-box", "laptop"], "folders": ["~/personal", "~/work/side"],
-            "agents": {"forbidden": ["codex"]},
+            "agents": {"machines": {"home-box": ["claude", "opencode"]}},
             "accounts": {"claude": {"configDir": None}},
         },
         "client": {"label": "Client", "accounts": {"claude": {"configDir": "~/.claude-client"}}},
     },
 }
-
 
 def home_with(raw) -> Path:
     home = Path(tempfile.mkdtemp())
@@ -46,11 +50,9 @@ def home_with(raw) -> Path:
     (home / "profiles.json").write_text(raw if isinstance(raw, str) else json.dumps(raw))
     return home
 
-
 def load(raw=BASE) -> profiles.Config:
     home = home_with(raw)
     return profiles.load(home, home / "templates")
-
 
 def errors_of(change) -> str:
     raw = json.loads(json.dumps(BASE))
@@ -61,31 +63,42 @@ def errors_of(change) -> str:
         return "\n".join(error.errors)
     return ""
 
-
 def which(config, machine=None, folder=None, env=None):
     found = profiles.match(config, {"machine": machine, "folder": folder, "env": env})
     return found["profile"], found["by"]
 
-
 config = load()
 assert list(config.profiles) == ["work", "personal", "client"], "the file's order is the switch's"
 assert config.profiles["personal"]["badge"] == "Personal", "badge defaults to the label"
-assert config.profiles["work"]["coordinator"]["folder"].endswith("/coordinators/work")
+shop = config.profiles["work"]["projects"]["shop"]
+assert shop["coordinator"]["folder"].endswith("/coordinators/work") and shop["jira"] == ["SHOP"]
+assert shop["places"] == [{"machine": "work-box", "root": "/srv/shop"}, {"machine": None, "root": f"{HOME_DIR}/work/shop"}], "a place here is absolute"
+assert config.profiles["work"]["projects"]["blog"] == {"label": "Blog", "jira": [], "places": [], "coordinator": None}
 assert config.profiles["client"] == {"label": "Client", "badge": "Client", "color": None, "machines": [], "folders": [],
-                                     "coordinator": None, "agents": {"reviewer": None, "reviewerTemplate": None, "forbidden": []},
+                                     "projects": {}, "agents": {"reviewer": None, "reviewerTemplate": None, "machines": {}},
                                      "accounts": {"claude": {"configDir": "~/.claude-client"}}}
-# The reviewer is an agent; hc starts it through the template that runs it (one named reviewer... first).
-assert config.profiles["work"]["agents"] == {"reviewer": "codex", "reviewerTemplate": "reviewer", "forbidden": ["opencode"]}
+assert config.profiles["work"]["agents"] == {"reviewer": "codex", "reviewerTemplate": "reviewer", "machines": {"local": ["claude"], "work-box": ["claude", "codex"]}}
+assert profiles.known_agents(config) == {"claude", "codex", "opencode"}
+
+held = profiles.build({"profiles": {"a": {"label": "A", "machines": ["box"], "agents": {"machines": {"local": [], "box": ["claude"], "// x": "note"}}}}}, Path("."))
+assert held.profiles["a"]["agents"]["machines"] == {"local": [], "box": ["claude"]}
+for machines, error in (
+        (["box"], 'profiles.a.agents.machines: must be an object of machine (or "local") -> agent programs allowed there'),
+        ({"box": "claude"}, "profiles.a.agents.machines.box: must be a list of texts"),
+        ({"other": ["claude"]}, "profiles.a.agents.machines.other: not this profile's machine (its machines: local, box)")):
+    try:
+        profiles.build({"profiles": {"a": {"label": "A", "machines": ["box"], "agents": {"machines": machines}}}}, Path("."))
+        raise AssertionError(f"accepted {machines}")
+    except profiles.InvalidProfiles as invalid:
+        assert error in invalid.errors, invalid.errors
 assert profiles.template_running(home_with(BASE) / "templates", "claude") == "fixer", "no reviewer... template: the one that runs it"
 assert profiles.template_running(home_with(BASE) / "templates", "aider") is None
 assert config.providers["linear"]["fields"] == {"team": False, "key": True}
 assert config.providers["github"]["fields"] == {"user": False}
 
-# No file: no profiles, and nothing matches.
 empty = profiles.load(Path(tempfile.mkdtemp()))
 assert empty.profiles == {} and which(empty, "work-box", "~/work") == (None, None)
 
-# Which profile: the process's own word, then its machine, then its folder, then its Claude account.
 work_env = {"CLAUDE_CONFIG_DIR": f"{HOME_DIR}/.claude-acme"}
 assert which(config, "work-box", "~/personal", {"HERDR_PROFILE": "client", **work_env}) == ("client", "env")
 assert which(config, "work-box", "~/personal", {"HERDR_PROFILE": "gone", "CLAUDE_CONFIG_DIR": None}) == ("work", "machine")
@@ -100,10 +113,9 @@ assert which(config, None, "/tmp/x", {"CLAUDE_CONFIG_DIR": "~/.claude"}) == ("pe
 assert which(config, None, "/tmp/x", {"CLAUDE_CONFIG_DIR": "~/.claude-other"}) == (None, None)
 assert which(config, None, "/tmp/x", None) == (None, None), "an unknown environment says nothing"
 assert which(config, "shared-box", "~/work", work_env) == ("work", "account"), "declared folders are this machine's"
-assert profiles.current(config, {"CLAUDE_CONFIG_DIR": f"{HOME_DIR}/.claude-acme"}, "/tmp") == {"profile": "work", "by": "account"}
+assert profiles.current(config, {"CLAUDE_CONFIG_DIR": f"{HOME_DIR}/.claude-acme"}, "/tmp") == {"profile": "work", "by": "account", "project": None}
 assert profiles.current(config, {"HERDR_PROFILE": "client"}, "/tmp")["profile"] == "client"
 
-# Two profiles on one Claude account: the account can't tell them apart, a folder can.
 shared = json.loads(json.dumps(BASE))
 shared["profiles"]["client"]["accounts"]["claude"]["configDir"] = None
 assert which(load(shared), None, "/tmp/x", {"CLAUDE_CONFIG_DIR": None}) == (None, None)
@@ -111,7 +123,6 @@ assert which(load(shared), None, "~/personal", {"CLAUDE_CONFIG_DIR": None}) == (
 del shared["profiles"]["personal"]["folders"]
 assert any("share the Claude account ~/.claude" in warning for warning in load(shared).warnings)
 
-# The environment: {field} filled in, a null field unsets, secrets resolved by their reference.
 asked = []
 def resolve(reference, where):
     asked.append((reference, where))
@@ -122,15 +133,12 @@ assert profiles.profile_env(config, "work", resolve) == {
     "LINEAR_API_KEY": "secret", "LINEAR_TEAM": "ENG", **GIT_UNSET}
 assert asked[0][0] == {"command": ["gh", "auth", "token", "--user", "jane-acme"]} and "accounts.github (GH_TOKEN)" in asked[0][1]
 assert asked[1][0] == {"command": ["printf", "lin-secret"]}
-# A provider the profile has no account of: its variables are unset, so a process started as this
-# profile keeps no token or identity of the profile it was started from.
 assert profiles.profile_env(config, "personal", resolve) == {
     "HERDR_PROFILE": "personal", "CLAUDE_CONFIG_DIR": None, "GH_TOKEN": None, "LINEAR_API_KEY": None, "LINEAR_TEAM": None, **GIT_UNSET}
 assert profiles.profile_env(load({"profiles": {"bare": {"label": "Bare"}}}), "bare", resolve)["CLAUDE_CONFIG_DIR"] is None
 assert profiles.account(config, "work", "linear") == {"team": "ENG", "key": "lin-secret"}, "a command reference runs"
 assert profiles.account(config, "personal", "linear") is None
 
-# The same environment as .envrc lines: secrets stay references, a null field unsets, ~ is $HOME.
 assert profiles.envrc(config, "work")[1:] == [
     "export HERDR_PROFILE=work",
     'export CLAUDE_CONFIG_DIR="$HOME/.claude-acme"',
@@ -172,8 +180,7 @@ try:
 except profiles.ProfileError as error:
     assert "No profile nobody" in str(error) and "work, personal, client" in str(error)
 
-# An {"env"} reference: the variable of this environment or of ~/.profile, exported there or not.
-import os  # noqa: E402
+import os
 real_home, os.environ["HOME"] = os.environ["HOME"], tempfile.mkdtemp()
 try:
     Path(os.environ["HOME"], ".profile").write_text("BARE_TOKEN=bare-secret\nexport EXPORTED_TOKEN='exported secret'\n")
@@ -191,7 +198,6 @@ finally:
 assert not profiles.is_secret_reference({"env": "X; rm -rf ~"}), "a variable's name, nothing else"
 assert not profiles.is_secret_reference({"env": "A", "command": ["b"]}) and not profiles.is_secret_reference("plain")
 
-# Every mistake is named with where it is.
 def set_in(*path_and_value):
     *path, value = path_and_value
     def change(raw):
@@ -204,7 +210,16 @@ def set_in(*path_and_value):
 assert errors_of(lambda raw: None) == ""
 assert "profiles.personal.machines: work-box is also in profile work" in errors_of(set_in("profiles", "personal", "machines", ["work-box"]))
 assert "profiles.personal.folders: ~/work/ is also in profile work" in errors_of(set_in("profiles", "personal", "folders", ["~/work/"]))
-assert "profiles.work.coordinator.folder" in errors_of(set_in("profiles", "work", "coordinator", {"folder": "coordinators/none"}))
+assert "profiles.work.projects.shop.coordinator.folder" in errors_of(set_in("profiles", "work", "projects", "shop", "coordinator", {"folder": "coordinators/none"}))
+assert "profiles.work.coordinator: a coordinator is a project's now" in errors_of(set_in("profiles", "work", "coordinator", {"folder": "coordinators/work"}))
+assert "profiles.work.projects.Shop 2: a name is" in errors_of(set_in("profiles", "work", "projects", "Shop 2", {"label": "x"}))
+assert "profiles.work.projects.blog.label: needed" in errors_of(set_in("profiles", "work", "projects", "blog", {}))
+assert "profiles.work.projects.blog.home: unknown key" in errors_of(set_in("profiles", "work", "projects", "blog", "home", "x"))
+assert "profiles.work.projects.blog.places[0]: a place is" in errors_of(set_in("profiles", "work", "projects", "blog", "places", [{"machine": "work-box"}]))
+assert "profiles.work.projects.blog.jira: SHOP is also in profiles.work.projects.shop" in errors_of(set_in("profiles", "work", "projects", "blog", "jira", ["SHOP"]))
+assert "profiles.personal.projects.x.places: /srv/shop is also in profiles.work.projects.shop" in errors_of(
+    set_in("profiles", "personal", "projects", {"x": {"label": "X", "places": [{"machine": "work-box", "root": "/srv/shop"}]}}))
+assert "coordinator.folder" in errors_of(set_in("profiles", "work", "projects", "blog", "coordinator", {"folder": "coordinators/work"})), "one coordinator folder, one project"
 assert "profiles.work.label: needed" in errors_of(set_in("profiles", "work", "label", ""))
 assert "profiles.work.colour: unknown key" in errors_of(set_in("profiles", "work", "colour", "red"))
 assert "profiles.Work Stuff: a name is" in errors_of(set_in("profiles", "Work Stuff", {"label": "x"}))
@@ -212,7 +227,7 @@ assert "profiles.work.accounts.gitlab: no such provider" in errors_of(set_in("pr
 assert "profiles.work.accounts.github.login: github has no such field" in errors_of(set_in("profiles", "work", "accounts", "github", {"login": "x"}))
 assert "never as its value" in errors_of(set_in("profiles", "work", "accounts", "linear", "key", "lin-secret"))
 assert "must be a text or null" in errors_of(set_in("profiles", "work", "accounts", "linear", "team", {"env": "TEAM"}))
-assert "profiles.work.agents.reviewer: codex is a program this profile forbids" in errors_of(set_in("profiles", "work", "agents", "forbidden", ["codex"]))
+assert "profiles.work.agents.forbidden: unknown key" in errors_of(set_in("profiles", "work", "agents", "forbidden", ["codex"]))
 assert "reviewer is an hc template's name; give the agent it runs: codex" in errors_of(set_in("profiles", "work", "agents", "reviewer", "reviewer"))
 assert "must be an agent's program" in errors_of(set_in("profiles", "work", "agents", "reviewer", ["codex"]))
 assert "must be an agent's program" in errors_of(set_in("profiles", "work", "agents", "reviewer", ""))
@@ -224,13 +239,15 @@ assert "label" in both and "machines: must be a list" in both, "every error at o
 unstartable = load({"profiles": {"a": {"label": "A", "agents": {"reviewer": "aider"}}}})
 assert any("runs aider, so hc can't start it as a reviewer" in warning for warning in unstartable.warnings)
 assert unstartable.profiles["a"]["agents"]["reviewerTemplate"] is None
+nowhere = load({"profiles": {"a": {"label": "A", "agents": {"reviewer": "codex", "machines": {"local": ["claude"]}}}}})
+assert any("no machine of this profile allows codex" in warning for warning in nowhere.warnings)
+assert not any("allows codex" in warning for warning in config.warnings), "work's reviewer runs on work-box"
 try:
     load("{ not json")
     raise AssertionError("invalid JSON must raise")
 except profiles.InvalidProfiles as error:
     assert "not JSON" in error.errors[0]
 
-# Writes: one change to a freshly read file, validated whole, and nothing written when it is invalid.
 home = home_with(BASE)
 tpl = home / "templates"
 before = (home / "profiles.json").read_text()
@@ -240,12 +257,13 @@ assert list(after["profiles"]) == ["work", "personal", "client"], "a replaced pr
 assert after["profiles"]["client"] == {"label": "Client Co", "color": "ansi5", "machines": ["client-box"]}
 assert after["// a comment"] == "ignored" and "linear" in after["providers"], "the rest of the file is kept"
 assert (home / "profiles.json.bak").read_text() == before
-profiles.put(home, "side", {"label": "Side", "coordinator": {"folder": "coordinators/side"}}, tpl)
+SIDE_PROJECT = {"gig": {"label": "Gig", "coordinator": {"folder": "coordinators/side"}}}
+profiles.put(home, "side", {"label": "Side", "projects": SIDE_PROJECT}, tpl)
 assert list(profiles.load(home, tpl).profiles) == ["work", "personal", "client", "side"], "a new profile goes last"
-assert "coordinator" in (home / "coordinators/side/CLAUDE.md").read_text().lower(), "a new coordinator gets its folder"
+assert "coordinator" in (home / "coordinators/side/CLAUDE.md").read_text().lower(), "a project's new coordinator gets its folder"
 (home / "coordinators/side/CLAUDE.md").write_text("mine")
 profiles.put(home, "side", {"// note": "kept", "label": "Side"}, tpl)
-profiles.put(home, "side", {"label": "Side 2", "coordinator": {"folder": "coordinators/side"}}, tpl)
+profiles.put(home, "side", {"label": "Side 2", "projects": SIDE_PROJECT}, tpl)
 assert (home / "coordinators/side/CLAUDE.md").read_text() == "mine", "a folder that exists is left as it is"
 assert json.loads((home / "profiles.json").read_text())["profiles"]["side"]["// note"] == "kept", "a profile's own comments stay"
 
@@ -271,11 +289,11 @@ assert (home / "coordinators/side").is_dir()
 profiles.remove(home, "side", tpl)
 assert (home / "coordinators/side/CLAUDE.md").read_text() == "mine", "removing a profile leaves its coordinator's folder"
 
-# assign: a machine or a folder moves in one write, and is never in two profiles.
 home = home_with(BASE)
 profiles.assign(home, "machine", "work-box", "personal", tpl)
 moved_to = profiles.load(home, tpl).profiles
 assert moved_to["personal"]["machines"] == ["home-box", "laptop", "work-box"] and moved_to["work"]["machines"] == []
+assert moved_to["work"]["agents"]["machines"] == {"local": ["claude"]}, "the machine's agent rule leaves with it"
 assert "machines" not in json.loads((home / "profiles.json").read_text())["profiles"]["work"], "an emptied list is not written"
 profiles.assign(home, "machine", "work-box", "-", tpl)
 assert all("work-box" not in profile["machines"] for profile in profiles.load(home, tpl).profiles.values()), "-: a shared machine"
@@ -297,8 +315,7 @@ for bad in (lambda: profiles.assign(home, "machine", "x", "nobody", tpl), lambda
     except profiles.ProfileError:
         assert (home / "profiles.json").read_text() == unchanged
 
-# Writers at the same time: each change is made to the file as the last one left it, so all are kept.
-import subprocess  # noqa: E402
+import subprocess
 crowded = home_with({"profiles": {"first": {"label": "First"}}})
 writers = [subprocess.Popen([sys.executable, str(HERE / "profiles.py"), "put", f"p{n}", json.dumps({"label": f"P{n}"})],
                             env={**os.environ, "HERDR_APP_HOME": str(crowded)}, stderr=subprocess.PIPE) for n in range(12)]
@@ -311,7 +328,12 @@ fresh = Path(tempfile.mkdtemp())
 profiles.put(fresh, "only", {"label": "Only"}, tpl)
 assert list(profiles.load(fresh, tpl).profiles) == ["only"] and not (fresh / "profiles.json.bak").exists(), "the first profile makes the file"
 
-# The shipped example is valid as it is (its coordinator folder aside, checked in its own home).
+at = lambda folder: profiles.current(config, environ={}, folder=folder)
+assert at(f"{HOME_DIR}/work/shop/api")["project"] == "shop" and at(f"{HOME_DIR}/work/shop/api")["profile"] == "work"
+assert at(f"{HOME_DIR}/work/shopping")["project"] is None, "a folder beside a place is not in it"
+assert at(f"{HOME_DIR}/elsewhere")["project"] is None
+assert profiles.project_at(config.profiles["work"], shop["coordinator"]["folder"]) == "shop", "its coordinator's folder is the project's"
+
 example = json.loads((HERE.parent.parent / "profiles.example.json").read_text())
 example_home = home_with(example)
 (example_home / "coordinators/example").mkdir()

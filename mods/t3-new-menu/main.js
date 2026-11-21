@@ -1,4 +1,3 @@
-// New: pick the space and open a terminal tab there (⌘Enter: a chat tab, the t3-chat mod), or start a new space, on a machine picked as T3 picks an environment.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, machines, panes, run, closeOverlay, props, window, keys, home, shared, setShared } from "herdr";
@@ -22,9 +21,8 @@ function shortcut(name) {
   }).join(" ");
 }
 
-// As T3's command item: 6 + a 20px title + a 16px line + 6.
 const ROW = 48;
-// The list's share of T3's 420 once its border, search, top inset and heading, bottom inset and footer are in; the popup hugs its content.
+
 const LIST_MAX = 420 - 2 - 48 - 8 - 28 - 8 - 41;
 const STATE = { ready: "Connected", loading: "Loading…", unavailable: "Unavailable" };
 
@@ -32,12 +30,12 @@ export default class NewMenu extends View {
   init() {
     this.at = 0;
     this.filter = "";
-    this.picking = Boolean(props()?.pick); // choosing the machine for a new space; the sidebar's New space opens here
+    this.picking = Boolean(props()?.pick);
     const field = (placeholder) => {
       const input = InputState.new({ placeholder });
       input.on("change", (_e, cx) => { this.filter = input.value(); this.at = 0; cx.notify(); });
-      // ⌘Enter (the submit's `secondary`): a chat instead of a terminal.
-      input.on("submit", (e) => { this.choose(this.items()[this.at], { chat: Boolean(e?.secondary) && !this.picking }); });
+
+      input.on("submit", (e) => { this.choose(this.items()[this.at], { chat: Boolean(e?.secondary) && !this.picking && shared("t3-chat.enabled") !== false }); });
       return input;
     };
     this.spaceInput = field("Search spaces…");
@@ -45,14 +43,13 @@ export default class NewMenu extends View {
     (this.picking ? this.machineInput : this.spaceInput).focus();
   }
 
-  // For the buttons that open this: see justClosed in focus.js. New space's and New tab's apart, as each opens the other's step.
   close() { setShared(this.picking ? "t3-new-menu.pickClosed" : "t3-new-menu.closed", Date.now()); }
 
-  // The active space's machine first, as ⌘N would use it.
   machineRows() {
-    const here = spaces().find(s => s.active)?.machine ?? null;
-    // t3-context's switch hides the other profiles' machines and spaces here too.
+    const rawHere = spaces().find(s => s.active)?.machine ?? null;
+
     const offMachines = new Set(shared("context")?.offMachines ?? []);
+    const here = rawHere && !offMachines.has(rawHere) ? rawHere : null;
     const others = [...machines().map(k => k.name), ...spaces().map(s => s.machine)].filter((m) => m && !offMachines.has(m)).sort();
     return [...new Set([here, null, ...others])].map(m => {
       const layout = m ? machines().find(k => k.name === m)?.layout ?? "unavailable" : "ready";
@@ -60,7 +57,6 @@ export default class NewMenu extends View {
     });
   }
 
-  // The current space first, then its machine's, so a machine's spaces stay together.
   items() {
     const q = this.filter.toLowerCase();
     if (this.picking) return this.machineRows().filter(m => m.name.toLowerCase().includes(q));
@@ -72,7 +68,6 @@ export default class NewMenu extends View {
       .map(s => ({ key: `space:${s.id}`, space: s }));
   }
 
-  // chat: a chat with Claude Code (the t3-chat mod) instead of a terminal.
   choose(item, { chat = false } = {}) {
     if (!item || item.off) return;
     closeOverlay(props().overlay);
@@ -90,7 +85,6 @@ export default class NewMenu extends View {
     cx.notify();
   }
 
-  // As T3's Add project: a machine to pick only when there is more than one.
   newSpace(cx) {
     const rows = this.machineRows();
     if (rows.length > 1) this.showMachines(true, cx);
@@ -100,7 +94,7 @@ export default class NewMenu extends View {
   row(item, i, ps) {
     const t = theme(), on = this.at === i, s = item.space, h = home();
     const short = (p) => (p && h && p.startsWith(h) ? "~" + p.slice(h.length) : p ?? "");
-    // A home path means nothing on another machine, and its empty folder is its home.
+
     const sub = s ? (s.machine ? placeOf(s, ps) || "~" : short(placeOf(s, ps))) : item.sub;
     return h_flex().id(item.key).w_full().h(ROW).px(8).py(6).gap(8).rounded(4).items_center().flex_none()
       .role("button").accessibility_label(s ? s.name : item.name)
@@ -108,32 +102,33 @@ export default class NewMenu extends View {
       .when(Boolean(item.off), el => el.opacity(0.64))
       .on_hover((over, cx) => { if (over && this.at !== i) { this.at = i; cx.notify(); } })
       .on_click(() => this.choose(item))
-      // As T3's CommandPaletteTitleIcon: level with the title, not the row.
+
       .child(h_flex().w(16).h(20).pt(2).self_start().flex_none().items_center().justify_center()
         .child(s ? projectMark(s, 16, t, ps) : svg(`mods/t3-new-menu/icons/${item.machine ? "server" : "monitor"}.svg`).size(16).text_color(t.muted)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().truncate().text_color(t.foreground).child(s ? s.name : item.name))
         .child(h_flex().min_w(0).gap(4).items_center().text_size(12).line_height("16px").text_color(t.dim)
-          // As T3 marks a remote thread: a server icon, then the name.
+
           .when(Boolean(s?.machine), el => el
             .child(svg("mods/t3-new-menu/icons/server.svg").size(12).flex_none().text_color(t.muted))
             .child(div().flex_none().text_color(t.muted).child(`${s.machine} ·`)))
           .child(div().min_w(0).truncate().child(sub))))
-      .when(Boolean(s) && i < 9, el => el.child(div().flex_none().text_size(12).font_medium().text_color(t.muted).child(`⌘${i + 1}`)));
+      .when(Boolean(s) && i < 9, el => el.child(div().flex_none().text_size(12).font_medium().text_color(t.muted).child(`${window()?.platform === "macos" ? "⌘" : "Ctrl+"}${i + 1}`)));
   }
 
   render() {
     const t = theme(), ps = panes(), items = this.items();
+    this.at = Math.min(this.at, Math.max(0, items.length - 1));
     const key = (label) => div().flex().flex_none().min_w(20).h(20).px(4).items_center().justify_center().rounded(4).bg(t.foreground + "14").text_size(12).text_color(t.foreground).child(label);
     const hint = (label, what) => h_flex().gap(4).items_center().children(label.split(" ").map(key)).child(what);
-    // ⌘N doesn't ask: it only names what this button does when there's nothing to ask.
+
     const newKey = this.machineRows().length > 1 ? "" : shortcut("space.new");
-    // T3's CommandFooterAction: no fill of its own, its words brighten.
+
     const footButton = (id, label) => h_flex().id(id).gap(4).px(8).rounded(8).items_center().flex_none().text_size(12).line_height("16px")
       .role("button").accessibility_label(label).hover(s => s.text_color(t.foreground));
     return v_flex().id("new-menu").size_full().min_h(0).rounded(16).border(1).border_color(t.border).bg(t.popover).shadow_2xl().text_size(14).line_height("20px")
       .on_key_down((e, cx) => {
-        if (e.key === "escape") return closeOverlay(props().overlay);
+        if (e.key === "escape") { cx.stop_propagation(); return closeOverlay(props().overlay); }
         const to = step(e, this.at, items.length);
         if (to >= 0) this.at = to;
         else if (!this.picking && /^[1-9]$/.test(e.key) && e.modifiers.platform) { cx.stop_propagation(); return this.choose(items[Number(e.key) - 1]); }
@@ -153,7 +148,7 @@ export default class NewMenu extends View {
         .child(h_flex().gap(12).items_center()
           .child(hint("↑ ↓", "Navigate"))
           .child(hint("Enter", this.picking ? "New space" : "New tab"))
-          .when(!this.picking, el => el.child(hint("⌘Enter", "New chat")))
+          .when(!this.picking && shared("t3-chat.enabled") !== false, el => el.child(hint("⌘Enter", "New chat")))
           .child(hint("Esc", "Close")))
         .when(this.picking, el => el.child(footButton("new-back", "Back to spaces").on_click((_e, cx) => this.showMachines(false, cx)).child("← Spaces")))
         .when(!this.picking, el => el.child(footButton("space-new", "New space").on_click((_e, cx) => this.newSpace(cx))

@@ -1,13 +1,8 @@
-// Keybinds (a tab): every shortcut in keys.json, then each view's own keys from the
-// help-keys.json files the views themselves read for their "?" panel.
-// Opened from the command palette ("Keybinds") or keys.json.
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
 import { theme, keys, run, panes, spaces, appHome, readTextFile, settings } from "herdr";
 import { keyRows, filterRows } from "./rows.js";
 
-// The mods whose views carry a help-keys.json, in the order they are listed.
 const VIEW_MODS = ["multirepo", "prs", "changes-multi", "jira", "blueprint"];
 const ROW_HEIGHT = 28;
 
@@ -27,12 +22,12 @@ export default class Keybinds extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.handle.focus();
-    this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
+    this.ownTab = null;
     cx.timer.every(400, (cx) => this.claimKeyboard(cx));
     this.scroll = VirtualListScrollHandle.new();
     this.views = undefined;
     this.at = 0;
-    // The "/" filter: esc leaves the box and keeps the filter; esc again clears it; then the tab closes.
+
     this.query = "";
     this.isTyping = false;
     this.input = InputState.new({ value: "" });
@@ -46,15 +41,12 @@ export default class Keybinds extends View {
     cx.spawn(async (cx) => { this.views = await loadViews(); this.at = this.firstKey(); cx.notify(); });
   }
 
-  // The tab this pane is in: the shown one at its first layout (a pane is laid out only while
-  // its tab shows; at init, focused() can still name the tab that was shown before).
   learnTab(cx) {
     if (this.ownTab) return;
     this.ownTab = spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id ?? null;
     this.onOwnTab?.(cx);
   }
 
-  // Same as the PR review tab: take the keyboard when this pane becomes the focused one.
   claimKeyboard(cx) {
     const isPaneFocused = panes().some((p) => p.mod === "keybinds" && p.tab === this.ownTab && p.focused);
     const isNewlyFocused = isPaneFocused && !this.wasPaneFocused;
@@ -77,7 +69,6 @@ export default class Keybinds extends View {
     this.scroll.scroll_to_item(index);
   }
 
-  // j/k step over key rows; titles are skipped.
   move(step) {
     const rows = this.rows();
     for (let i = this.at + step; i >= 0 && i < rows.length; i += step) {
@@ -143,7 +134,7 @@ export default class Keybinds extends View {
             ? div().p(8).text_color(t.dim).child(`Nothing matches "${this.query}".`)
             : v_virtual_list("keybinds-list", rows.length, ROW_HEIGHT, (i) => rows[i].id,
               (range) => rows.slice(range.start, range.end).map((row, k) => this.row(row, range.start + k === this.at, t)))
-                // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+
                 .on_item_click((id, cx) => {
                   const index = this.rows().findIndex((r) => r.id === id);
                   if (this.rows()[index]?.kind === "key") this.moveTo(index);

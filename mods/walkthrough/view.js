@@ -1,6 +1,3 @@
-// The walkthrough: a change read in the order it makes sense, one step at a
-// time, with the code each step talks about under it.
-
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, VirtualListScrollHandle } from "gpui-base";
 import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, nextCommand, settings, shared, setShared, watchFolder } from "herdr";
@@ -22,9 +19,9 @@ import { AUTO, DEFAULT_AUTO, autoOf, startTurns, loadTurns, turnLabel, turnItems
 import { announceReady, announceFailed } from "./announce.js";
 
 const PREFS = "walkthrough.prefs";
-// Lines drawn on one page; a step past this says how many it leaves out.
+
 const MAX_PAGE_LINES = 2500;
-// The walkthrough's summary is cut past this until "Show more".
+
 const SUMMARY_CHARS = 150;
 const NOTE_LABEL = { choice: "Decision", upkeep: "Upkeep", gap: "Limitation", divergence: "Divergence", untested: "Untested" };
 const NOTE_ABOUT = {
@@ -35,14 +32,12 @@ const NOTE_ABOUT = {
   untested: "The change's main promise has no test",
 };
 
-/** Where the shown space is now: its focused pane's folder, else where it was made. */
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
   return { space, folder: pane?.cwd || f?.cwd || space?.folder || null, terminal: f?.terminal ?? null };
 }
 
-/** A token's colour, from the theme's own palette so it follows light and dark. */
 function syntaxColor(t, kind) {
   switch (kind) {
     case "keyword": return t.ansi5;
@@ -57,9 +52,9 @@ function syntaxColor(t, kind) {
 
 const scopeName = (scope) => (scope === "staged" ? "staged" : scope === "working" ? "unstaged" : scope);
 
-const prefs = () => /** @type {any} */ (shared(PREFS)) ?? {};
+const prefs = () =>  (shared(PREFS)) ?? {};
 const savePrefs = (change) => setShared(PREFS, { ...prefs(), ...change });
-// Task choices are kept per repository and source; past this many the oldest go.
+
 const MAX_TASK_CHOICES = 100;
 const COVERAGE_MARK = { seen: "✓", partly: "◐", absent: "○" };
 const COVERAGE_ABOUT = {
@@ -74,64 +69,64 @@ export class Walkthrough {
     const here = location();
     this.folder = p.folder ?? here.folder;
     this.space = here.space;
-    // A review tab's pull requests, read from GitHub alone: { key, name, branch, prs: [{ number, title, body, head, base, prefix, diff }] }.
+
     this.pullRequestSet = p.pullRequests ?? null;
     this.remote = !this.pullRequestSet && Boolean(here.space?.machine);
-    this.from = here.terminal; // the terminal it was opened over: comments go to its agent first
+    this.from = here.terminal;
     this.inDialog = Boolean(p.overlay);
-    this.tab = (p.pane && panes().find((x) => x.pane === p.pane)?.tab) || focused()?.tab || null; // a pane watches this tab's agents
+    this.tab = (p.pane && panes().find((x) => x.pane === p.pane)?.tab) || focused()?.tab || null;
     const saved = prefs();
     this.scope = this.pullRequestSet ? "prs" : SCOPES.some((s) => s.key === p.scope) ? p.scope : SCOPES.some((s) => s.key === saved.scope) ? saved.scope : "uncommitted";
     this.model = MODELS.some((m) => m.key === saved.model) ? saved.model : DEFAULT_MODEL;
-    this.language = saved.language ?? null; // null until the system's is read
-    this.repo = undefined; // undefined: looking, null: not in git
+    this.language = saved.language ?? null;
+    this.repo = undefined;
     this.base = null;
     this.bases = [];
     this.commit = null;
     this.commits = [];
     this.pr = null;
-    this.prs = null; // null until listed
+    this.prs = null;
     this.prError = null;
-    this.turn = null; // Last turn: the one shown (lib/turns.js), picked by hand when turnPinned
+    this.turn = null;
     this.turns = [];
     this.turnPinned = false;
-    this.summaryOpen = false; // the sidebar's summary, shown whole
+    this.summaryOpen = false;
     this.auto = AUTO.some((a) => a.key === saved.autoGenerate) ? saved.autoGenerate : DEFAULT_AUTO;
-    this.autoTried = new Set(); // turns already considered for a walkthrough without a click
+    this.autoTried = new Set();
     this.autoWanted = null;
-    this.statuses = new Map(); // this tab's agents' last status
-    this.background = []; // walkthroughs written without a click, followed to their end: { job }
+    this.statuses = new Map();
+    this.background = [];
     this.confirmPost = false;
     this.posting = false;
     this.claude = undefined;
     this.diff = null;
     this.cacheKey = null;
-    this.shown = null; // { entry, exact }
+    this.shown = null;
     this.view = null;
-    this.task = null; // the task the shown source is matched against (lib/task.js), or null
-    this.taskView = null; // the shown walkthrough's requests over the diff (overlayAsks), null when it has none
-    this.commitTexts = new Map(); // commit messages read, by hash
-    this.promptMemo = null; // { since, at, list }: prompts read from transcripts, briefly kept
+    this.task = null;
+    this.taskView = null;
+    this.commitTexts = new Map();
+    this.promptMemo = null;
     this.editingTask = false;
     this.showTaskText = false;
     this.job = null;
-    this.jobSeq = 0; // bumped whenever this view starts, ends or drops a job
+    this.jobSeq = 0;
     this.starting = false;
     this.polls = 0;
     this.deadSince = null;
     this.loading = false;
     this.error = null;
     this.genError = null;
-    this.step = 0; // index into view.steps; steps.length is the "Not covered" page
-    this.read = {}; // the repository's read hunks, { "<path>:<digest>": ms }
-    this.readChanged = new Set(); // keys marked or unmarked here and not yet written
-    this.unreadOnly = false; // the contents and ← → skip read steps
+    this.step = 0;
+    this.read = {};
+    this.readChanged = new Set();
+    this.unreadOnly = false;
     this.openFiles = new Set();
     this.comments = [];
-    this.target = null; // { sk, scope, path, line, kind, code }: the line a comment is being written on
+    this.target = null;
     this.agentTo = null;
-    this.picking = null; // "base" | "commit" | "pr" | "model" | "language" | "agent"
-    this.menuIndex = 0; // the highlighted row of the open picker, moved by ↑ ↓ and chosen by Enter
+    this.picking = null;
+    this.menuIndex = 0;
     this.menuScroll = VirtualListScrollHandle.new();
     this.sent = null;
     this.seq = 0;
@@ -139,7 +134,7 @@ export class Walkthrough {
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.input = InputState.new({ placeholder: "Comment on this line, then Enter" });
-    this.typing = false; // false, or the input typed in: "comment" or "task"
+    this.typing = false;
     this.input.on("focus", (_e, cx) => { this.typing = "comment"; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.input.on("submit", (_e, cx) => { this.saveComment(); cx.notify(); });
@@ -171,10 +166,10 @@ export class Walkthrough {
       await startTurns(this, cx);
       await this.reload(cx);
       this.watch(cx);
-      await autoGenerate(this, cx, this.turn); // the turn the tab shows: this terminal's newest, else the newest
+      await autoGenerate(this, cx, this.turn);
     });
     cx.timer.every(1000, (cx) => this.tick(cx));
-    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task (write your own).
+
     cx.spawn(async (cx) => {
       for (;;) {
         const name = String(await nextCommand()).replace(/^walkthrough\./, "").split(":")[0];
@@ -190,10 +185,6 @@ export class Walkthrough {
     });
   }
 
-  /**
-   * A review's pull requests have no checkout here: their place is a name of
-   * their own, so the cache, read marks and task choices are kept per review.
-   */
   async startPullRequestSet(cx) {
     const { key, name, branch } = this.pullRequestSet;
     const [claude, locale] = await Promise.all([claudeVersion(), this.language ? null : systemLocale()]);
@@ -205,7 +196,6 @@ export class Walkthrough {
     await this.reload(cx);
   }
 
-  /** The source the toolbar describes, or null while one still has to be picked. */
   source() {
     if (this.scope === "prs") return { kind: "prs", key: this.pullRequestSet.key, prs: this.pullRequestSet.prs };
     if (this.scope === "branch") return this.base ? { kind: "branch", base: this.base, head: this.head ?? this.repo?.branch ?? "HEAD" } : null;
@@ -215,7 +205,6 @@ export class Walkthrough {
     return { kind: this.scope };
   }
 
-  /** The task choice made for a source (by its key): found, the reader's own, or off. */
   taskChoiceFor(sk) {
     return taskChoice(this.repo && sk ? prefs().tasks?.[placeKey(this.repo.top, sk)] : null);
   }
@@ -224,18 +213,13 @@ export class Walkthrough {
     const place = placeKey(this.repo.top, sk);
     const tasks = { ...(prefs().tasks ?? {}) };
     delete tasks[place];
-    // Your own words are kept while Found or Off is tried; only an empty text leaves nothing to keep.
+
     if (choice.mode !== "auto" || choice.text) tasks[place] = choice;
     const keys = Object.keys(tasks);
     for (const k of keys.slice(0, Math.max(0, keys.length - MAX_TASK_CHOICES))) delete tasks[k];
     savePrefs({ tasks });
   }
 
-  /**
-   * The task a source is matched against, or null. Reading it never fails the
-   * walkthrough: a task that can't be read is no task, and the walkthrough is
-   * written as it always was.
-   */
   async taskFor(source) {
     const repo = this.repo;
     if (!repo || !source) return null;
@@ -248,7 +232,7 @@ export class Walkthrough {
         case "prs": return resolveTask({ source });
         case "commit":
           if (!this.commitTexts.has(source.hash)) {
-            // null: git couldn't read it this time; it is asked again on the next read, not remembered as no message.
+
             const message = await commitMessage(exec, repo.top, source.hash);
             if (message === null) return null;
             if (this.commitTexts.size >= 200) this.commitTexts.clear();
@@ -265,11 +249,6 @@ export class Walkthrough {
     }
   }
 
-  /**
-   * What people typed into agents in this repository since `since`: Claude
-   * Code's transcripts, else the turns the hooks recorded. A save re-reads the
-   * diff, so the transcripts are read at most every few seconds.
-   */
   async promptsSince(since) {
     const m = this.promptMemo;
     if (m && m.since === since && Date.now() - m.at < 5000) return m.list;
@@ -279,12 +258,10 @@ export class Walkthrough {
     return list;
   }
 
-  /** The first page: the task's, when the shown walkthrough was matched against one. */
   firstPage() {
     return this.taskView ? -1 : 0;
   }
 
-  /** Re-reads the diff and what to show for it. A newer reload wins over an older one still running. */
   async reload(cx) {
     const repo = this.repo;
     if (!repo) return;
@@ -293,7 +270,7 @@ export class Walkthrough {
     this.dirty = false;
     cx.notify();
     try {
-      // The terminal may have checked out another branch since the last read.
+
       if (!this.pullRequestSet) {
         const head = await currentHead(exec, repo.top);
         const detached = head === "HEAD" || head.startsWith("HEAD@");
@@ -306,30 +283,28 @@ export class Walkthrough {
         this.diff = null; this.shown = null; this.view = null; this.task = null; this.taskView = null;
         if (jobSeq === this.jobSeq) this.job = null;
       } else {
-        // The task is read beside the diff, not after it: a save re-reads both.
+
         const [diff, preferences, task] = await Promise.all([readDiff(repo, source), readPreferences(), this.taskFor(source)]);
         const key = keyFor(repo, diff, this.model, this.language, preferences, task);
         const [shown, job, read] = await Promise.all([findShown(repo, diff, key), jobOf(repo, diff.sk), loadRead(repo.top)]);
         if (seq !== this.seq) return;
-        // Another window on this repository may have marked hunks; marks made here and not yet written stay.
+
         this.read = mergeRead(read, this.read, this.readChanged);
-        // The size of exactly the prompt Generate would send, so the intro and the check agree.
+
         this.promptSize = promptChars(preparePrompt(diff, { language: this.language, previous: this.previousFor(shown), preferences, task }));
         this.task = task;
         const before = this.shown?.entry?.key + String(this.shown?.entry?.generatedAt);
-        // A comment box belongs to a line of the diff it was opened on.
-        // So does the task editor: what it holds is another source's task.
+
         if (this.diff?.sk !== diff.sk) { this.target = null; if (this.editingTask) this.closeTaskEditor(); }
         this.diff = diff;
         this.cacheKey = key;
         this.shown = shown;
-        // A job this view started or ended while reading is newer than what the read found.
+
         if (jobSeq === this.jobSeq && !this.starting) this.job = job;
-        // With nothing changed there is nothing to walk through: the last walkthrough shown here isn't offered (nor its footer, nor Copy).
+
         this.view = shown && diff.files.length ? overlay(shown.entry.walkthrough, diff.files) : null;
         this.taskView = this.view ? overlayAsks(shown.entry.walkthrough.asks, this.view) : null;
-        // Another walkthrough is another reading path: it opens on its first step not yet read,
-        // or on its task while none of it is read.
+
         if (before !== shown?.entry?.key + String(shown?.entry?.generatedAt)) {
           const first = this.view?.steps.findIndex((st) => !isRead(st, this.read)) ?? -1;
           this.step = this.taskView && !this.view.steps.some((st) => isRead(st, this.read)) ? -1 : Math.max(0, first);
@@ -346,10 +321,6 @@ export class Walkthrough {
     cx.notify();
   }
 
-  /**
-   * After a checkout, the bases on offer are those of the new branch: never the
-   * branch itself, and the remembered or detected one when it still fits.
-   */
   async rebase(repo, branch) {
     const [base, bases] = await Promise.all([defaultBase(exec, repo.top, branch), baseChoices(exec, repo.top, branch)]);
     const remembered = prefs().bases?.[repo.top];
@@ -357,31 +328,32 @@ export class Walkthrough {
     if (!this.base || !bases.includes(this.base)) this.base = remembered && bases.includes(remembered) ? remembered : base;
   }
 
-  /** Edits in the repository mark the diff dirty; the next tick re-reads it. */
   watch(cx) {
     const { top, gitDir } = this.repo ?? {};
     if (!top) return;
     const loop = (folder) => cx.spawn(async (cx) => {
-      for (;;) {
-        const changed = await watchFolder(folder);
-        // A commit, a pull request or a finished turn doesn't change with the working tree.
-        if (this.scope !== "commit" && this.scope !== "pr" && !(this.scope === "turn" && !(this.turn && isOpen(this.turn))) && !this.dirty && await matters(top, changed, gitDir)) this.dirty = true;
-      }
+      try {
+        for (;;) {
+          const changed = await watchFolder(folder);
+
+          if (this.scope !== "commit" && this.scope !== "pr" && !(this.scope === "turn" && !(this.turn && isOpen(this.turn))) && !this.dirty && await matters(top, changed, gitDir)) this.dirty = true;
+        }
+      } catch {  }
     });
     loop(top);
-    // A linked worktree's index and HEAD live outside it.
+
     if (gitDir && !gitDir.startsWith(`${top}/`)) loop(gitDir);
   }
 
   async tick(cx) {
-    // A note on what Copy, Send or Post did fades: soon when it worked, later when it didn't.
+
     if (this.sent && Date.now() - this.sentAt >= (/^(✓ )?(Sent|Copied|Posted)\b/.test(this.sent) ? 1000 : 10_000)) { this.sent = null; cx.notify(); }
     if (this.ticking || !this.repo) return;
     this.ticking = true;
     try {
-      // Marks are written at most once a second, together.
+
       await this.flushRead();
-      // Every second only the answer is looked for; whether the run is alive, every fifth.
+
       const check = this.job && !this.job.done && (++this.polls % 5 === 0 || this.deadSince);
       const done = this.job && !this.job.done ? await finished(this.job) : null;
       if (done) this.job = done;
@@ -390,7 +362,7 @@ export class Walkthrough {
         if (job) job.pid = this.job.pid;
         if (!job) this.setJob(null);
         else if (job.done) this.job = job;
-        else if (Date.now() > job.meta.deadline + 10_000) { // run.sh stops it at the deadline; this is for a run.sh that died
+        else if (Date.now() > job.meta.deadline + 10_000) {
           this.setJob(null);
           await cancelJob(job);
           this.genError = "The model took too long and was stopped. Try a narrower scope, or another model.";
@@ -399,7 +371,7 @@ export class Walkthrough {
           this.job.pid = job.pid;
           this.deadSince = null;
         } else if (!this.deadSince) {
-          // claude has just exited and run.sh is about to write its code: give it a moment.
+
           this.deadSince = Date.now();
         } else if (Date.now() - this.deadSince > 3000) {
           this.deadSince = null;
@@ -413,13 +385,13 @@ export class Walkthrough {
           }
         }
       }
-      if (this.job && !this.job.done) cx.notify(); // the elapsed time
+      if (this.job && !this.job.done) cx.notify();
       if (this.job?.done) {
         const job = this.job;
         this.setJob(null);
         let lost = false;
         try {
-          // null: another window took the answer; it is stored in a moment, and a later read finds it.
+
           lost = (await finishJob(job)) === null;
           if (!lost) announceReady(job.meta);
           this.genError = null;
@@ -441,7 +413,7 @@ export class Walkthrough {
     this.readChanged = new Set();
     try {
       const written = await saveRead(this.repo.top, this.read, keys);
-      // Marks made while it was written are laid over what was written.
+
       this.read = mergeRead(written, this.read, this.readChanged);
     } catch {
       for (const k of keys) this.readChanged.add(k);
@@ -455,17 +427,13 @@ export class Walkthrough {
 
   async generate(cx) {
     const repo = this.repo, diff = this.diff, source = this.source();
-    // Keys and buttons alike: never on a diff still being read, with nothing to read, or twice.
+
     if (!this.canGenerate() || this.starting || !source) return;
     this.starting = true;
     try { await this.start(cx, repo, diff, source); } finally { this.starting = false; }
     cx.notify();
   }
 
-  /**
-   * The walkthrough handed on for revision: only one of older code, by the same
-   * model in the same language. Another model or language writes its own reading.
-   */
   previousFor(shown) {
     const e = shown?.entry;
     return shown && !shown.exact && e.model === this.model && e.language === this.language ? e.walkthrough : null;
@@ -475,7 +443,7 @@ export class Walkthrough {
     this.genError = null;
     const previous = this.previousFor(this.shown);
     const model = this.model, language = this.language;
-    // The task the last read found, beside the diff it found it with.
+
     const task = this.task;
     const preferences = await readPreferences();
     const prompt = preparePrompt(diff, { language, previous, preferences, task });
@@ -484,9 +452,9 @@ export class Walkthrough {
       return;
     }
     try {
-      // The key of exactly what is sent, not of whatever the last read saw.
+
       const key = keyFor(repo, diff, model, language, preferences, task);
-      // The hunks of what is shown now: whatever of them was read and is gone has changed since.
+
       const before = (this.shown?.entry.walkthrough.parts ?? []).flatMap((p) => p.steps.flatMap((st) => st.hunkIds));
       this.setJob(await startJob(repo, diff, { key, model, language, prompt, source, before, task }));
     } catch (err) {
@@ -502,42 +470,33 @@ export class Walkthrough {
     cx.notify();
   }
 
-  /** -1 is the task's page (when there is one), steps.length Not covered. */
   go(index) {
     const steps = this.view?.steps ?? [];
     this.step = Math.max(this.firstPage(), Math.min(steps.length, index));
     this.target = null;
   }
 
-  /**
-   * One step on or back. Moving on from a step marks it read; with unread only
-   * on, read steps are passed over (on past the last is Not covered, back
-   * before the first is the task's page, or stays put).
-   */
   move(dir) {
     const steps = this.view?.steps ?? [];
     const here = steps[this.step];
-    // Only the code still there: an outdated step's missing hunks were never on screen.
+
     if (dir > 0 && here) this.setRead({ hunkIds: here.found.map((f) => f.hunk.id) }, true);
     let i = this.step + dir;
     if (this.unreadOnly) while (i >= 0 && i < steps.length && isRead(steps[i], this.read)) i += dir;
     if (i >= this.firstPage()) this.go(i);
   }
 
-  /** Marks a step's hunks (or any `{ hunkIds }`) read or unread, to be written on the next tick. */
   setRead(step, on) {
     this.read = on ? markStep(step, this.read) : unmarkStep(step, this.read);
     for (const id of step.hunkIds) this.readChanged.add(readKey(id));
   }
 
-  /** x: the shown step read or unread again. An outdated step can't be read until it is regenerated. */
   toggleRead() {
     const s = this.view?.steps[this.step];
     if (!s || s.outdated) return;
     this.setRead(s, !isRead(s, this.read));
   }
 
-  /** The steps read before whose code has changed since. */
   changedSteps() {
     if (!this.view || !this.diff) return [];
     return changedSince(this.view.steps, this.read, {
@@ -551,18 +510,17 @@ export class Walkthrough {
     this.scope = key;
     this.picking = null;
     this.genError = null;
-    this.loading = true; // until the read the change starts has finished
+    this.loading = true;
     this.confirmPost = false;
     savePrefs({ scope: key });
     cx.spawn(async (cx) => {
-      // Listed again each time the tab is picked: pull requests open, close and move on GitHub.
+
       if (key === "pr") { cx.notify(); await this.loadPullRequests(); }
       if (key === "turn") await loadTurns(this);
       await this.reload(cx);
     });
   }
 
-  /** The open pull requests; the one picked stays picked, else the current branch's is. */
   async loadPullRequests() {
     if (!this.repo) return;
     try {
@@ -576,7 +534,6 @@ export class Walkthrough {
     this.pr = kept ?? this.prs.find((p) => p.current) ?? null;
   }
 
-  /** The task picker: found or off applies at once; your own opens the editor, filled with what is there now. */
   chooseTask(mode, cx) {
     const sk = this.diff?.sk ?? (this.source() ? sourceKey(this.source()) : null);
     if (!this.repo || !sk) return;
@@ -594,7 +551,6 @@ export class Walkthrough {
     cx.spawn(async (cx) => this.reload(cx));
   }
 
-  /** The editor's text becomes the task; an empty one goes back to the task found. */
   saveTaskText(cx) {
     const sk = this.diff?.sk;
     if (!this.repo || !sk) return;
@@ -611,7 +567,6 @@ export class Walkthrough {
     this.handle.focus();
   }
 
-  /** The task picker's face. */
   taskFace() {
     const mode = this.taskChoiceFor(this.diff?.sk).mode;
     if (mode === "off") return "nothing (off)";
@@ -634,19 +589,16 @@ export class Walkthrough {
     cx.spawn(async (cx) => this.reload(cx));
   }
 
-  /** The agents a comment can go to: the one it was opened over first, then this space's, most recent first. */
   agentChoices() {
     const all = agents().filter((a) => !this.space || a.space === this.space.id).sort((a, b) => b.seq - a.seq);
     const from = all.find((a) => a.address === this.from);
     return from ? [from, ...all.filter((a) => a !== from)] : all;
   }
 
-  /** Comments belong to the source they were made on; another scope or commit keeps its own. */
   ownComments() {
     return this.comments.filter((c) => c.sk === this.diff?.sk);
   }
 
-  /** The spot a diff line is: comments and the comment box are matched to it. */
   spot(file, number, side) {
     return { sk: this.diff?.sk, scope: file.scope, path: file.path, line: number, kind: side };
   }
@@ -680,7 +632,6 @@ export class Walkthrough {
     cx.notify();
   }
 
-  /** The walkthrough shown, as Markdown on the clipboard: for a pull request, a review or a chat. */
   async copy(cx) {
     const text = this.markdown();
     if (!text) return;
@@ -693,17 +644,11 @@ export class Walkthrough {
     cx.notify();
   }
 
-  /** Shows a note in the footer until tick clears it. */
   flash(text) {
     this.sent = text;
     this.sentAt = Date.now();
   }
 
-  /**
-   * The walkthrough shown, as Markdown; null when there is none. Posted to a
-   * pull request, its task is left out unless it was that pull request's own
-   * description: a prompt to an agent or the reader's own words stay theirs.
-   */
   markdown({ forPost = false } = {}) {
     const e = this.shown?.entry;
     if (!e || !this.view || !this.diff?.files.length) return null;
@@ -711,7 +656,6 @@ export class Walkthrough {
     return toMarkdown(this.view, e.walkthrough, { what: this.diff?.what, model: modelOf(e.model).name, language: languageOf(e.language).name, cost: e.cost }, task, e.task?.label ?? "");
   }
 
-  /** The walkthrough as a comment on the pull request it is of. Asked first: everyone on the pull request sees it. */
   async post(cx) {
     const text = this.markdown({ forPost: true }), pr = this.pr;
     if (!text || !pr || this.scope !== "pr" || this.posting) return;
@@ -729,7 +673,7 @@ export class Walkthrough {
   }
 
   onKey(e, cx) {
-    // While typing, keys are the text's; only Esc in the task editor leaves it (a comment box keeps its own).
+
     if (this.typing) {
       if (e.key === "escape" && this.typing === "task" && this.editingTask) { this.closeTaskEditor(); cx.notify(); }
       return;
@@ -751,8 +695,6 @@ export class Walkthrough {
     cx.notify();
   }
 
-  // ——— drawing ———
-
   render() {
     const t = theme();
     const inDialog = Boolean(props()?.overlay);
@@ -765,7 +707,7 @@ export class Walkthrough {
       .child(div().flex_1().min_h(0).relative()
         .child(this.body(t))
         .when(Boolean(this.picking), (el) => el
-          // While a picker is open the page under it holds still: a click beside it closes it, the wheel does nothing.
+
           .child(div().id("backdrop").absolute().inset_0().on_click((_e, cx) => { this.picking = null; cx.notify(); })
             .on_scroll_wheel((_e, cx) => cx.stop_propagation()))
           .child(this.popup(t))))
@@ -796,7 +738,7 @@ export class Walkthrough {
       ? button(t, "cancel", "Cancel", (_e, cx) => cx.spawn(async (cx) => this.cancel(cx)), { small: true })
       : button(t, "generate", this.shown?.exact ? "Regenerate" : "Generate", (_e, cx) => cx.spawn(async (cx) => this.generate(cx)),
         { kind: this.shown?.exact ? "outline" : "solid", small: true, disabled: !this.canGenerate(), tooltip: this.claude === null ? "claude isn't installed" : null });
-    // Above: what to read, and the one action. Below: which one of it (left), and how it is written (right).
+
     const top = h_flex().min_h(42).flex_none().px(14).py(7).gap(8).items_center().flex_wrap().border_b(1).border_color(t.border)
       .when(!this.pullRequestSet, (el) => el.child(tabs))
       .child(div().flex_1())
@@ -830,7 +772,6 @@ export class Walkthrough {
     return Boolean(this.claude && this.repo && this.diff && this.diff.hunkCount > 0 && !this.job && !this.loading);
   }
 
-  /** The open picker's rows and where it sits: { items, width, side }. */
   menuOf(kind) {
     switch (kind) {
       case "base": return { side: "left", width: 280, items: this.bases.map((b) => ({ label: b, value: b, selected: b === this.base })) };
@@ -859,7 +800,6 @@ export class Walkthrough {
     }
   }
 
-  /** Opens a picker (or closes it, when it is the open one) with its chosen row highlighted and in view. */
   togglePicker(kind) {
     if (this.picking === kind) { this.picking = null; return; }
     this.picking = kind;
@@ -868,7 +808,6 @@ export class Walkthrough {
     this.handle.focus();
   }
 
-  /** ↑ ↓ move the highlight, Enter chooses it. Returns false for keys a picker doesn't use. */
   menuKey(key, cx) {
     const { items } = this.menuOf(this.picking);
     if (key === "down" || key === "up") {
@@ -894,7 +833,7 @@ export class Walkthrough {
   }
 
   body(t) {
-    // An empty state: an icon (none while something is only being read), what is going on, why, and what to do instead.
+
     const center = (title, text = "", { icon = null, color = null, actions = [] } = {}) => v_flex().size_full().items_center().justify_center().gap(8).p(24)
       .when(Boolean(icon), (e) => e.child(div().mb(6).size(44).rounded(12).border_1().border_color(t.border).bg(t.raised).flex().items_center().justify_center()
         .text_size(19).text_color(color ?? t.muted).child(icon)))
@@ -930,7 +869,7 @@ export class Walkthrough {
       });
     }
     if (!this.view) return this.job ? this.progress(t) : this.intro(t);
-    // A narrow pane gives the page the room; the footer still moves between steps.
+
     return h_flex().size_full().items_start()
       .when((this.width ?? 1000) >= 720, (e) => e.child(this.contents(t)))
       .child(v_flex().flex_1().min_w(0).h_full()
@@ -938,7 +877,6 @@ export class Walkthrough {
         .child(this.step < 0 ? this.taskPage(t) : this.step < this.view.steps.length ? this.page(t, this.view.steps[this.step]) : this.tail(t)));
   }
 
-  /** The reader's own task, written under the toolbar. */
   taskEditor(t) {
     const length = this.taskText.value().length;
     return v_flex().id("task-editor").flex_none().px(14).py(10).gap(8).border_b(1).border_color(t.border).bg(t.raised)
@@ -951,10 +889,6 @@ export class Walkthrough {
         .child(div().text_size(11).text_color(length > MAX_TASK_CHARS ? t.ansi1 : t.dim).child(`${length.toLocaleString("en")} / ${MAX_TASK_CHARS.toLocaleString("en")}`)));
   }
 
-  /**
-   * The task's page: each request, where in the walkthrough it is carried out
-   * or that this diff doesn't show it, then the steps no request points at.
-   */
   taskPage(t) {
     const tv = this.taskView, e = this.shown.entry, task = e.task;
     const toStep = (s, id) => div().id(id).flex_none().px(7).h(20).flex().items_center().rounded(5).border_1().border_color(t.border).bg(t.raised)
@@ -981,7 +915,7 @@ export class Walkthrough {
         .when(Boolean(text), (el) => el.child(button(t, "task-text", this.showTaskText ? "Hide the task" : "Show the task", (_e, cx) => { this.showTaskText = !this.showTaskText; cx.notify(); }, { kind: "ghost", small: true }))))
       .child(div().text_size(17).font_semibold().child("What the task asks for"))
       .child(div().max_w(820).text_size(12.5).line_height(1.5).text_color(t.muted).child("Each request in the task, and the steps that carry it out. It says where a request shows up in this diff, not whether it is done well; a request not in this diff may be done elsewhere."))
-      // A walkthrough of the prompts stays shown as more are sent; it says so rather than going stale.
+
       .when(task?.from === "prompts" && this.task?.from === "prompts" && taskKey(task) !== taskKey(this.task), (el) => el.child(
         div().max_w(820).text_size(12).text_color(t.dim).child(`Matched against the prompts as they were when it was written; ${this.task.label.replace(/ since .*$/, "")} now. Regenerate to match against them too.`)))
       .when(this.showTaskText && Boolean(text), (el) => el.child(v_flex().w_full().max_w(820).p(10).gap(2).rounded(8).border_1().border_color(t.border).bg(t.raised).text_size(12).text_color(t.muted)
@@ -995,7 +929,6 @@ export class Walkthrough {
         .child(h_flex().gap(6).flex_wrap().children(tv.outside.map((s) => toStep(s, `task-out-${s.id}`)))));
   }
 
-  /** Before the first walkthrough: what would be read, and what it would cost. */
   intro(t) {
     const d = this.diff;
     const size = this.promptSize ?? d.text.length;
@@ -1030,14 +963,12 @@ export class Walkthrough {
             .child(div().text_size(11.5).text_color(t.ansi1).child(deleted ? `−${deleted}` : ""))))));
   }
 
-  /** A message in a tinted box with a coloured edge; `t.muted` makes it a quiet, grey one. */
   notice(t, color, text) {
     const quiet = color === t.muted;
     return div().w_full().pl(11).pr(10).py(7).rounded(7).border_l(3).border_color(quiet ? t.border : color).bg(quiet ? t.raised : color + "14")
       .text_size(12).line_height(1.5).text_color(quiet ? t.muted : t.foreground).child(text);
   }
 
-  /** A generation running with nothing to show yet. */
   progress(t) {
     const j = this.job.meta;
     const row = (state, label, extra = "") => h_flex().gap(10).items_center()
@@ -1055,8 +986,7 @@ export class Walkthrough {
 
   banners(t) {
     const out = [];
-    // One shape for every banner: a coloured edge and tint, an icon, what happened, then (dimmer) the detail.
-    // `color` null: a quiet, grey one.
+
     const bar = (id, color, icon, text, action, detail = "") => h_flex().id(id).flex_none().mx(16).mt(10).pl(10).pr(8).py(6).gap(10).items_center().rounded(8)
       .border_l(3).border_color(color ?? t.border).bg(color ? color + "14" : t.raised)
       .child(div().flex_none().size(18).rounded(9).flex().items_center().justify_center().text_size(10.5).font_semibold()
@@ -1075,7 +1005,7 @@ export class Walkthrough {
       const n = changed.length;
       out.push(bar("b-changed", t.accent, "↻", `${n === 1 ? "1 step" : `${n} steps`} changed since you last read ${n === 1 ? "it" : "them"}.`,
         button(t, "b-changed-go", "Go →", (_e, cx) => {
-          // Each press goes on to the next one, then round to the first.
+
           this.go((changed.find((st) => st.position - 1 > this.step) ?? changed[0]).position - 1);
           cx.notify();
         }, { small: true })));
@@ -1087,8 +1017,7 @@ export class Walkthrough {
         out.push(bar("b-other", null, "i", `Showing the ${languageOf(e.language).name} walkthrough by ${modelOf(e.model).name}. There's none in ${languageOf(this.language).name} by ${modelOf(this.model).name} for this code yet.`, regen("Generate")));
       } else {
         const n = this.view.outdated, fresh = this.view.uncovered.reduce((s, u) => s + u.hunks.length, 0);
-        // Same code, other key: it was written for another task, under other preferences, or by an older version of this mod.
-        // Prompts to agents count as one kind of task: a walkthrough of them stays exact as more are sent.
+
         const taskChanged = taskCacheKey(e.task) !== taskCacheKey(this.task);
         const why = !taskChanged ? "This code hasn't changed, but your preferences or this mod's prompt have since this walkthrough was written."
           : !e.task ? "This walkthrough was written without a task. Regenerate to match the change against it."
@@ -1103,13 +1032,12 @@ export class Walkthrough {
     return out;
   }
 
-  /** The table of contents: every step by part (or only those not read), read ones ticked, outdated and changed ones flagged. */
   contents(t) {
     const v = this.view, w = this.shown.entry.walkthrough;
     const uncovered = v.uncovered.length;
     const fresh = v.uncovered.reduce((n, u) => n + u.hunks.filter((h) => !hunkRead(h.id, this.read)).length, 0);
     const changed = new Set(this.changedSteps().map((s) => s.id));
-    // The step on screen stays listed, read or not, so the list never loses its place.
+
     const listed = (s) => !this.unreadOnly || s.position - 1 === this.step || !isRead(s, this.read);
     const parts = v.parts.map((part) => ({ part, steps: part.steps.filter(listed) })).filter((p) => p.steps.length);
     const stepRow = (s, i) => h_flex().id(`toc-${s.id}`).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
@@ -1123,14 +1051,14 @@ export class Walkthrough {
         .when(!s.outdated && (!isRead(s, this.read) || i === this.step), (e) => e.bg(changed.has(s.id) ? t.accent + "29" : t.raised)
           .text_color(changed.has(s.id) ? t.accent : t.muted).child(String(s.position))))
       .when(changed.has(s.id), (e) => e.tooltip("Changed since you last read it"))
-      // A step read and left behind fades; one to skim is quieter than one to read.
+
       .child(div().flex_1().min_w(0).truncate().text_size(12.5)
         .when(isRead(s, this.read) && i !== this.step, (e) => e.text_color(t.dim))
         .when(!(isRead(s, this.read) && i !== this.step) && s.weight === "skim", (e) => e.text_color(t.muted)).child(s.title))
       .when(s.weight === "key", (e) => e.child(div().flex_none().px(4).h(15).flex().items_center().rounded(4).border_1().border_color(t.accent + "55")
         .text_size(9.5).font_semibold().text_color(t.accent).tooltip("Key change: the rest depends on it").child("KEY")));
     const total = v.steps.length, done = v.steps.filter((s) => isRead(s, this.read)).length;
-    // The summary is cut to its first few lines until asked for; the steps stay in view.
+
     const long = (w.summary ?? "").length > SUMMARY_CHARS;
     return v_flex().id("contents").w(248).flex_none().h_full().overflow_y_scrollbar().border_r(1).border_color(t.border).p(10).gap(2)
       .child(div().px(8).pt(2).text_size(13.5).font_semibold().child(w.title))
@@ -1208,14 +1136,13 @@ export class Walkthrough {
       .child(div().max_w(820).text_size(13.5).line_height(1.6).child(s.text))
       .when(s.notes.length > 0, (e) => e.child(v_flex().w_full().max_w(820).gap(6).children(s.notes.map((n) =>
         h_flex().w_full().gap(8).items_start().child(chip(t, NOTE_LABEL[n.kind], t.blocked, t.blocked + "12").tooltip(NOTE_ABOUT[n.kind])).child(div().flex_1().min_w(0).pt(1).text_size(12.5).line_height(1.5).text_color(t.muted).child(n.text))))))
-      // The banner above and the Outdated chip say it already; this says how much.
+
       .when(s.outdated, (e) => e.child(h_flex().gap(6).items_center().flex_wrap().text_size(12)
         .child(div().font_semibold().text_color(t.blocked).child(s.found.length ? `${s.missing} of ${s.missing + s.found.length} hunks` : "Every hunk"))
         .child(div().text_color(t.muted).child(s.found.length ? "changed or gone · what's left is below" : "this step described changed or is gone · regenerate to read the code as it is now"))))
       .when(s.found.length > 0, (e) => e.child(this.code(t, s.found)));
   }
 
-  /** Everything no step covers, file by file, each with the model's one-line note. */
   tail(t) {
     const v = this.view;
     return v_flex().id(`tail-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
@@ -1248,7 +1175,6 @@ export class Walkthrough {
       }));
   }
 
-  /** Hunks as code, consecutive ones of a file under one header. Click a line to comment on it. */
   code(t, found, headers = true) {
     const font = settings().font_family ?? "JetBrains Mono";
     const rows = [];
@@ -1259,12 +1185,12 @@ export class Walkthrough {
       if (scopes.has(file.path) && scopes.get(file.path) !== file.scope) twice.add(file.path);
       scopes.set(file.path, file.scope);
     }
-    // The line-number column is as wide as the largest number here needs.
+
     const numbers = numberDigits(found.map((f) => f.hunk)) * 7 + 8;
     const totals = new Map(fileTotals(found).map((f) => [f.path, f]));
     let previous = null;
     for (const { hunk, file } of found) {
-      // Past the cap nothing more is drawn, headers included; the lines left are counted.
+
       if (lines >= MAX_PAGE_LINES) { cut += hunk.lines.length; continue; }
       const name = `${file.scope}:${file.path}`;
       const opened = headers && name !== last;
@@ -1277,11 +1203,11 @@ export class Walkthrough {
           .when(Boolean(sum?.added), (e) => e.child(div().text_size(11.5).text_color(t.ansi2).child(`+${sum.added}`)))
           .when(Boolean(sum?.deleted), (e) => e.child(div().text_size(11.5).text_color(t.ansi1).child(`−${sum.deleted}`))));
       }
-      // Where the hunk is, in words, instead of git's @@ line: lines skipped since the last one of its file, its line, its function.
+
       const label = hunkLabel(hunk, name === last ? previous : null);
       last = name;
       previous = hunk;
-      // Without headers (Not covered), a hunk not read yet says so.
+
       const fresh = !headers && !hunkRead(hunk.id, this.read);
       rows.push(h_flex().h(22).px(10).gap(8).items_center().when(rows.length > 0 && !opened, (e) => e.border_t(1).border_color(t.border))
         .bg(fresh ? t.accent + "1f" : t.hover).text_size(11).text_color(fresh ? t.accent : t.dim).tooltip(hunk.header)
@@ -1308,7 +1234,7 @@ export class Walkthrough {
     const side = kind === "-" ? "-" : "+";
     const spot = this.spot(file, number, side);
     const selected = this.target && sameSpot(this.target, spot);
-    // An added or removed line has a coloured edge as well as its tint, so the change reads at a glance.
+
     return h_flex().id(`l-${file.scope}:${file.path}-${side}${number}`).h(20).w_full().gap(8).font_family(font).text_size(11.5).cursor_pointer()
       .border_l(2).border_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : "#00000000")
       .when(kind === "+", (e) => e.bg(t.ansi2 + "14")).when(kind === "-", (e) => e.bg(t.ansi1 + "14"))

@@ -1,42 +1,25 @@
-// Herdr's status bar (cloned from workspace-status) plus the accounts the shown space works as:
-// the Claude Code account and the gh user a terminal in its focused folder gets, direnv included.
-// They come from accounts.py next to this file (`account <folder>`), run on the space's machine.
-// It also works out which Claude account every Claude agent in a terminal really runs as (from
-// its process's CLAUDE_CONFIG_DIR: a work or a personal config) and publishes it in shared
-// "accounts.agents" ({ address: account }) for the pane headers and the Agents list. With props
-// { publish: true } it does only that and draws nothing: a layout without this bar (Herdr T3) still
-// gets the chips.
-// On the right: the shown space's machine's cpu, ram and temperatures (system.js), and the bell:
-// how many notifications are unread; a click opens their history (the notifications mod). Agent
-// alerts go in that history from here (props { bell: false } leaves the bell out, not the logging): an agent turning blocked while not on screen.
-// Beside them: the Claude (of the shown context's account) and Codex 5-hour and weekly limits (usage.js).
-
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, focused, theme, run, window, keys, exec, hc, appHome, readTextFile, shared, setShared, props } from "herdr";
-import { logAgentAlerts, toggleHistory, unreadCount } from "./notifylog.js";
+import { spaces, agents, panes, focused, theme, run, window, keys, exec, hc, appHome, readTextFile, shared, setShared, props, checking } from "herdr";
+import { toggleHistory, unreadCount } from "./notifylog.js";
 import { System, bytes, pct, level, heat } from "./system.js";
 import { USAGE_SHARED_KEY, shouldRefresh, parseClaudeAccounts, claudeAccountFor, claudeAccountsOfProfiles, fetchClaudeUsage, fetchCodexUsage, usageColor, percentText, windowLine, asOf } from "./usage.js";
 
 const ACCOUNTS = `${appHome()}/mods/status-accounts/accounts.py`;
 const CONFIG = `${appHome()}/mods/status-accounts/config.json`;
 
-// Usage figures, one cache for every copy of the bar: "claude:<context>" | "codex" -> { at, value, error, claimedAt, retryAt }.
 const usageCache = () => shared(USAGE_SHARED_KEY) ?? {};
 const setUsage = (key, entry) => setShared(USAGE_SHARED_KEY, { ...usageCache(), [key]: entry });
-const STALE_MS = 2 * 60000; // looked up again after this, so a changed .envrc shows
+const STALE_MS = 2 * 60000;
 const PALETTE_ACTIONS = ["app.palette", "mod.open:command-palette"];
 const PERSONAL = "personal";
 const AGENT_ACCOUNTS = "accounts.agents";
-const RECHECK_MS = 15000; // an agent's process is looked at again after this (a restart has a new pid)
+const RECHECK_MS = 15000;
 
-// Python 3 on a machine: here on Windows the py launcher (its python3 can be the Store's stub);
-// python3 elsewhere, and on other machines, whose platform this can't see.
 function python(machine) {
   return !machine && window()?.platform === "windows" ? ["py", "-3"] : ["python3"];
 }
 
-// The script's source as `python3 -c`: nothing to install on the machine, always this version.
 async function bridge(args, machine) {
   const source = await readTextFile(ACCOUNTS);
   const [command, ...pythonArgs] = python(machine);
@@ -45,7 +28,6 @@ async function bridge(args, machine) {
   return JSON.parse(r.stdout);
 }
 
-// The shown space's machine, its focused (else first) terminal and that terminal's folder.
 function currentPlace() {
   const space = spaces().find((s) => s.id === focused()?.space) ?? spaces().find((s) => s.active);
   if (!space) return null;
@@ -55,20 +37,15 @@ function currentPlace() {
   return pane ? { machine: space.machine ?? null, folder: pane.cwd, terminal: pane.terminal } : null;
 }
 
-// "~" for home, else the folder's last name: the bar says which folder the accounts are for.
 function shortFolder(folder) {
   const name = folder.split("/").filter(Boolean).pop() ?? folder;
   return /^\/(Users|home)\/[^/]+\/?$/.test(folder) ? "~" : name;
 }
 
-// A work account by its organization, a personal one as "personal".
 const accountName = (account) => (account.kind === "work" ? account.org || account.email : PERSONAL);
 
-// The profile (t3-context's shared "context") of that name, for a chip's badge and colour; null when unknown.
 const profileNamed = (name) => (name && shared("context")?.profiles?.[name]) || null;
 
-// A Claude account chip in its profile's badge and colour, as the pane headers' and the agents list's chips.
-// Without profiles: amber for work and blue for personal.
 function claudeChip(t, account, profile, label, tooltip) {
   const color = profile ? t[profile.color] ?? t.dim : account.kind === "work" ? t.ansi3 : account.kind === PERSONAL ? t.ansi4 : t.dim;
   return div().id("account-claude").px(7).h(18).flex().items_center().rounded(9).bg(`${color}26`).text_color(color).font_semibold()
@@ -77,17 +54,18 @@ function claudeChip(t, account, profile, label, tooltip) {
 
 export default class StatusAccounts extends View {
   init(_props, cx) {
-    this.agentChecks = new Map(); // address -> { at, pid, account }
-    cx.timer.every(5000, (cx) => this.lookUpAgents(cx));
+    this.agentChecks = new Map();
     this.isPublishOnly = Boolean(props()?.publish);
-    this.hasBell = props()?.bell !== false; // { bell: false }: the layout's navbar has one (Herdr T3)
-    if (this.isPublishOnly) return;
-    this.accounts = new Map(); // "machine|folder" -> { at, value | error }
-    cx.timer.every(1500, (cx) => this.lookUp(cx));
+    this.hasBell = props()?.bell !== false;
+    this.accounts = new Map();
     this.sys = new System();
-    this.sys.start(cx);
-    this.configAccounts = null; // context -> Claude config dir, from config.json (usage.js); null until read
+    this.configAccounts = null;
     this.claudeConfigError = null;
+    if (checking()) return;
+    cx.timer.every(5000, (cx) => this.lookUpAgents(cx));
+    if (this.isPublishOnly) return;
+    cx.timer.every(1500, (cx) => this.lookUp(cx));
+    this.sys.start(cx);
     cx.spawn(async (cx) => {
       try {
         this.configAccounts = parseClaudeAccounts(await readTextFile(CONFIG));
@@ -98,15 +76,13 @@ export default class StatusAccounts extends View {
       cx.notify();
     });
     cx.timer.every(5000, (cx) => this.refreshUsage(cx));
-    this.agentStatuses = null; // address -> status at the last look; null before the first
-    cx.timer.every(1500, () => { this.agentStatuses = logAgentAlerts(agents(), this.agentStatuses); });
   }
 
   bell(t) {
     const unread = unreadCount();
     return h_flex().id("bell").gap(4).items_center().cursor_pointer().hover((s) => s.text_color(t.foreground))
       .tooltip(unread ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications")
-      // Above the press: at the pointer, from the bottom status bar, it would be below the window.
+
       .on_mouse_down("left", (e) => { this.bellPress = { at: Date.now(), x: e.position.x, y: e.position.y }; })
       .on_click(() => toggleHistory(this.bellPress, { above: true }))
       .child(svg("mods/notifications/icons/bell.svg").size(13).text_color(unread ? t.accent : t.muted))
@@ -131,7 +107,6 @@ export default class StatusAccounts extends View {
     });
   }
 
-  // Claude agents in terminals: the program table calls them "claude"; the agents list has the rest.
   claudeTerminals() {
     const fromPanes = panes().filter((p) => p.terminal && p.program?.key === "claude").map((p) => p.terminal);
     const fromAgents = agents().filter((a) => a.program?.key === "claude" || /claude/i.test(a.app ?? "")).map((a) => a.address);
@@ -142,30 +117,31 @@ export default class StatusAccounts extends View {
     if (this.isCheckingAgents) return;
     this.isCheckingAgents = true;
     cx.spawn(async () => {
-      const addresses = this.claudeTerminals();
-      for (const address of addresses) {
-        const known = this.agentChecks.get(address);
-        if (known && Date.now() - known.at < RECHECK_MS) continue;
-        try {
-          const r = await hc(["get", address, "--json"]);
-          const pid = r.code === 0 ? JSON.parse(r.stdout).foreground?.pid : null;
-          if (!pid) continue;
-          const machine = address.includes("/") ? address.split("/")[0] : null;
-          const account = known?.pid === pid ? known.account : await bridge(["process-account", String(pid)], machine);
-          this.agentChecks.set(address, { at: Date.now(), pid, account });
-        } catch (error) {
-          this.agentChecks.set(address, { at: Date.now(), pid: null, account: { error: String(error.message ?? error) } });
+      try {
+        const addresses = this.claudeTerminals();
+        for (const address of addresses) {
+          const known = this.agentChecks.get(address);
+          if (known && Date.now() - known.at < RECHECK_MS) continue;
+          try {
+            const r = await hc(["get", address, "--json"]);
+            const pid = r.code === 0 ? JSON.parse(r.stdout).foreground?.pid : null;
+            if (!pid) continue;
+            const machine = address.includes("/") ? address.split("/")[0] : null;
+            const account = known?.pid === pid ? known.account : await bridge(["process-account", String(pid)], machine);
+            this.agentChecks.set(address, { at: Date.now(), pid, account });
+          } catch (error) {
+            this.agentChecks.set(address, { at: Date.now(), pid: null, account: { error: String(error.message ?? error) } });
+          }
         }
+        for (const address of this.agentChecks.keys()) if (!addresses.includes(address)) this.agentChecks.delete(address);
+        const published = Object.fromEntries([...this.agentChecks].map(([address, check]) => [address, check.account]));
+        if (JSON.stringify(published) !== JSON.stringify(shared(AGENT_ACCOUNTS) ?? {})) setShared(AGENT_ACCOUNTS, published);
+      } finally {
+        this.isCheckingAgents = false;
       }
-      for (const address of this.agentChecks.keys()) if (!addresses.includes(address)) this.agentChecks.delete(address);
-      const published = Object.fromEntries([...this.agentChecks].map(([address, check]) => [address, check.account]));
-      if (JSON.stringify(published) !== JSON.stringify(shared(AGENT_ACCOUNTS) ?? {})) setShared(AGENT_ACCOUNTS, published);
-      this.isCheckingAgents = false;
     });
   }
 
-  // The palette key as actually bound, not a hardcoded one; without a
-  // binding the hint stays useful ("commands") instead of lying.
   hint(t) {
     const mac = window()?.platform === "macos";
     const mod = { cmd: mac ? "⌘" : "Ctrl+", ctrl: mac ? "⌃" : "Ctrl+", shift: mac ? "⇧" : "Shift+", alt: mac ? "⌥" : "Alt+", option: mac ? "⌥" : "Alt+" };
@@ -175,8 +151,6 @@ export default class StatusAccounts extends View {
     return key ? `${key}  commands` : "commands";
   }
 
-  // The Claude account of the shown terminal: the agent's own when it runs one (lookUpAgents,
-  // from its process), else the one a new terminal in its folder gets. gh is always the folder's.
   accountChips(t) {
     const place = currentPlace();
     if (!place) return [];
@@ -200,12 +174,10 @@ export default class StatusAccounts extends View {
     return chips;
   }
 
-  // profile -> Claude config dir: the profiles' (t3-context's shared "context"), else config.json's.
   claudeAccounts() {
     return claudeAccountsOfProfiles(shared("context")?.profiles) ?? this.configAccounts;
   }
 
-  // The shown profile (T3's switch), else the account of the shown folder.
   usageContext() {
     const context = shared("context")?.current;
     if (context) return context;
@@ -213,16 +185,32 @@ export default class StatusAccounts extends View {
     return place && this.accounts.get(`${place.machine}|${place.folder}`)?.value?.claude.kind;
   }
 
-  // Codex's limits matter where Codex may run: not in a profile (the switch's) that forbids it.
-  isCodexShown() {
-    const context = shared("context");
-    return !(context?.profiles?.[context.current]?.agents?.forbidden ?? []).includes("codex");
+  shownAgent() {
+    const terminal = currentPlace()?.terminal;
+    if (!terminal) return null;
+    const pane = panes().find((p) => p.terminal === terminal);
+    const agent = agents().find((a) => a.address === terminal);
+    const names = [pane?.program?.key, agent?.program?.key, agent?.app].filter(Boolean).join(" ");
+    if (/claude/i.test(names)) return "claude";
+    if (/codex/i.test(names)) return "codex";
+    return agent ? agent.program?.name ?? agent.app ?? "agent" : null;
   }
 
-  // Each source at most once per REFRESH_MS across all copies of the bar (shouldRefresh). Never awaited by render.
+  usageClaudeAccount() {
+    const terminal = currentPlace()?.terminal;
+    const own = terminal && (shared(AGENT_ACCOUNTS) ?? {})[terminal];
+    const accounts = this.claudeAccounts();
+    if (own?.email) {
+      const name = shared("context")?.byAgent?.[terminal] ?? own.profile;
+      const known = accounts && Object.entries(accounts).find(([n, dir]) => n === name || (dir ?? null) === (own.configDir ?? null));
+      return known ? { name: known[0], configDir: known[1] } : { name: own.configDir ?? "default", configDir: own.configDir ?? null };
+    }
+    return accounts && claudeAccountFor(this.usageContext(), accounts);
+  }
+
   refreshUsage(cx) {
-    const accounts = this.claudeAccounts(), account = accounts && claudeAccountFor(this.usageContext(), accounts);
-    const sources = this.isCodexShown() ? [["codex", () => fetchCodexUsage({ exec })]] : [];
+    const shown = this.shownAgent(), account = shown === "claude" && this.usageClaudeAccount();
+    const sources = shown === "codex" ? [["codex", () => fetchCodexUsage({ exec })]] : [];
     if (account) sources.push([`claude:${account.name}`, () => fetchClaudeUsage(account.configDir, { exec, fetch })]);
     for (const [key, load] of sources) {
       const known = usageCache()[key];
@@ -232,7 +220,7 @@ export default class StatusAccounts extends View {
         try {
           setUsage(key, { at: Date.now(), value: await load() });
         } catch (error) {
-          // A failed refresh keeps the last figures; a 429 waits as long as it asks.
+
           setUsage(key, { at: Date.now(), value: known?.value, error: String(error.message ?? error), retryAt: error.retryAt ?? null });
         }
         cx.notify();
@@ -240,7 +228,6 @@ export default class StatusAccounts extends View {
     }
   }
 
-  // "Claude 5h 42% · wk 61%": each figure coloured by its level; reset times and failures in the tooltip.
   usageChip(t, id, name, entry, about) {
     const value = entry?.value;
     const figure = (label, w) => h_flex().gap(3).child(div().text_color(t.dim).child(label))
@@ -255,20 +242,22 @@ export default class StatusAccounts extends View {
   }
 
   usageChips(t) {
+    const shown = this.shownAgent();
+    if (!shown) return [];
+    if (shown === "codex") return [this.usageChip(t, "usage-codex", "Codex", usageCache().codex, "Codex, from its last turn's log in ~/.codex/sessions")];
+    if (shown !== "claude") {
+      return [div().id("usage-other").text_color(t.dim).tooltip(`No usage source for ${shown}: only Claude Code and Codex report their limits.`).child(`${shown}: no usage data`)];
+    }
     const context = this.usageContext();
-    const accounts = this.claudeAccounts(), account = accounts && claudeAccountFor(context, accounts);
+    const accounts = this.claudeAccounts(), account = this.usageClaudeAccount();
     const claude = account ? usageCache()[`claude:${account.name}`]
       : this.claudeConfigError ? { error: this.claudeConfigError }
       : accounts ? { error: `No Claude account for ${context ?? "the shown folder"} in profiles.json or config.json` }
       : null;
     const about = account ? `Claude ${account.name} account (${account.configDir ?? "~/.claude"}), from Claude Code's usage endpoint` : "Claude";
-    return [
-      this.usageChip(t, "usage-claude", "Claude", claude, about),
-      ...(this.isCodexShown() ? [this.usageChip(t, "usage-codex", "Codex", usageCache().codex, "Codex, from its last turn's log in ~/.codex/sessions")] : []),
-    ];
+    return [this.usageChip(t, "usage-claude", "Claude", claude, about)];
   }
 
-  // cpu, ram and temperatures of the shown space's machine; a reading it can't get stays out.
   machineStats(t) {
     const s = this.sys;
     if (s.error) return [div().id("stats-error").text_color(t.blocked).tooltip(s.error).child("stats: unreachable")];
@@ -293,7 +282,7 @@ export default class StatusAccounts extends View {
     if (this.isPublishOnly) return div();
     const t = theme();
     const space = spaces().find(s => s.active);
-    // The shown profile's agents only (t3-context's switch), as the sidebar lists them.
+
     const offAgents = new Set(shared("context")?.offAgents ?? []);
     const list = agents().filter((a) => !offAgents.has(a.address));
     const needs = list.filter(a => a.status === "blocked").length;

@@ -1,6 +1,3 @@
-// Atlassian Document Format (Jira's rich text) to markdown for TextView. Checked by `node board.test.mjs`.
-// Unknown nodes keep their text, so nothing written in Jira is silently dropped.
-
 function marked(text, marks = []) {
   return marks.reduce((out, mark) => {
     if (mark.type === "strong") return `**${out}**`;
@@ -58,6 +55,6 @@ function block(node, indent = "") {
 
 export function adfToMarkdown(doc) {
   if (!doc) return "";
-  if (typeof doc === "string") return doc; // older API versions answer plain text
+  if (typeof doc === "string") return doc;
   return block(doc).trim();
 }

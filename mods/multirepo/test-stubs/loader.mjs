@@ -1,4 +1,3 @@
-// Node loader for dialog.test.mjs: the app's modules answered by the stubs beside this file.
 const STUBS = { "gpui-kit": "./ui.mjs", "gpui-base": "./ui.mjs", herdr: "./herdr.mjs" };
 
 export async function resolve(specifier, context, next) {

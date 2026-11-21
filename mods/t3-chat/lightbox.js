@@ -1,9 +1,3 @@
-// A chat's images, one at a time, as large as the window allows (never past one image pixel per
-// device pixel, so never blurred by scaling up): an overlay the chat opens (ChatView.openImage) with
-// props { items: [{ id, path, width, height, open, name }], at }. Esc, a click beside the image
-// or × closes it; ← → (and the side buttons) step through the images; "Open in viewer" hands the
-// image to the system (or the browser, for a web image).
-
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, settings, closeOverlay } from "herdr";
@@ -11,16 +5,16 @@ import { resampled, deviceScale } from "./host.js";
 import { fitSize } from "./model.js";
 import { sans } from "./render-md.js";
 
-const BAR = 56; // the name and buttons under the image
-const MARGIN = 48; // around the image, room for the side buttons
+const BAR = 56;
+const MARGIN = 48;
 
 export class Lightbox {
   constructor(props, cx) {
     this.items = props.items ?? [];
     this.at = Math.max(0, Math.min(this.items.length - 1, props.at ?? 0));
     this.overlay = props.overlay;
-    this.size = null; // the overlay's size in px, once laid out
-    this.sharp = new Map(); // "id@pixels" -> a copy resampled for that size (host.resampled)
+    this.size = null;
+    this.sharp = new Map();
     this.handle = cx.focus_handle();
     cx.timer.after(0, () => this.handle.focus());
   }
@@ -37,14 +31,12 @@ export class Lightbox {
     if (this.items.length > 1) this.at = (this.at + by + this.items.length) % this.items.length;
   }
 
-  // The shown image's size: fitted in the room left, at most its own pixels on this screen.
   shownSize(item) {
     const perPixel = (settings().zoom ?? 1) * deviceScale();
     const room = { width: (this.size?.width ?? 1200) - 2 * MARGIN, height: (this.size?.height ?? 800) - BAR - 2 * MARGIN };
     return fitSize(item, Math.min(room.width, item.width / perPixel), Math.min(room.height, item.height / perPixel));
   }
 
-  // A copy resampled to the shown size, made in the background; the original shows until it is.
   sharpPath(item, cx) {
     const shown = this.shownSize(item);
     const pixels = Math.ceil(Math.max(shown.width, shown.height) * (settings().zoom ?? 1) * deviceScale());
@@ -70,7 +62,6 @@ export class Lightbox {
     cx.notify();
   }
 
-  // A round button over the dark backdrop; its press stops there, so the backdrop doesn't close.
   button(id, icon, onClick) {
     return div().id(id).size(36).flex_none().rounded(18).bg("#ffffff1f").hover((s) => s.bg("#ffffff33")).cursor_pointer()
       .flex().items_center().justify_center()

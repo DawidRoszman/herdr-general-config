@@ -48,7 +48,7 @@ let pointer = { x: 50, y: 10 };
 const env = {
   View: class {}, div: element, svg: element, image: (src) => { images.push(src); return element(); }, h_flex: element, v_flex: element, Popup: { new: (id, trigger) => element().id(id).child(trigger) }, keys: () => [],
   theme: () => ({}), props: () => props, panes: () => [pane, shell, review], shared: (k) => sharedValues[k] ?? null, home: () => "/home/me",
-  // Answers at once, so a mod.json title shows on the next render.
+
   appHome: () => "/app", readTextFile: (path) => ({ then: (f) => { f(path === "/app/mods/review-pane/mod.json" ? '{"title":"Review"}' : null); return { catch() {} }; } }),
   terminals: () => terms, agents: () => [], spaces: () => [{ tabs: [tab] }], layout: () => sidebar,
   run: (name, args) => calls.push([name, args]), setShared: (k, v) => { sharedValues[k] = v; },
@@ -57,7 +57,7 @@ const env = {
 const ticks = [];
 const tick = () => ticks.filter((w) => !w.gone).forEach((w) => w.fn(cx));
 const cx = { notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() {}, is_focused: () => false }), timer: { every(_ms, fn) { const w = { fn, cancel() { w.gone = true; } }; ticks.push(w); return w; } } };
-// name.js, tree.js, tip.js, focus.js and account.js are inlined as the mod's own copies are.
+
 function load(...files) {
   const src = files.map((f) => fs.readFileSync(f, "utf8")).join("\n")
     .replace(/^import .*;\r?\n/gm, "").replace(/export (function|const) /g, "$1 ").replace("export default class", "globalThis.Mod = class");
@@ -82,8 +82,6 @@ find(header.render(), "ph-x-p2").handlers.click({}, cx);
 assert.equal(header.hot, null, "the dialog covers it and the pointer may not move, so its label goes with the click");
 assert.deepEqual(take(), [["t3-tabs.close-pane:p2", null]], "the tab bar asks first");
 
-// Names: Pi session, else (agents only) a named tab, else a telling title, else the program.
-// The terminal's address leads, then its name.
 assert.equal(texts(header.render())[0], "t2");
 const named = () => texts(header.render())[1];
 terms[0].labels["pi.session"] = "Fix login";
@@ -108,13 +106,13 @@ pane.title = "✳ Review PR";
 assert.equal(named(), "Review PR");
 pane.title = "pi";
 assert.equal(named(), "Pi");
-// An agent goes by what it works on: its branch, else the multirepo task its folder is in.
+
 pane.branch = "feat/SHOP-1-x";
 assert.equal(named(), "feat/SHOP-1-x");
 delete pane.branch; pane.cwd = "/home/me/.herdr/projects/Shop/feat-SHOP-2-y/backend";
 assert.equal(named(), "feat-SHOP-2-y");
 pane.cwd = "/home/me/project";
-// The Claude account its agent runs as, as status-accounts publishes it.
+
 sharedValues["accounts.agents"] = { t2: { email: "me@acme.io", kind: "work", org: "acme", configDir: "~/.claude-acme" } };
 assert.ok(texts(header.render()).includes("acme"), "the account chip");
 delete sharedValues["accounts.agents"];
@@ -126,7 +124,7 @@ tab.named = true; props = { pane: "p3" };
 assert.equal(named(), "zsh");
 shell.title = "t3";
 assert.equal(named(), "zsh");
-// A mod pane: the title its mod gives itself, else its tab's name if someone gave it, else its mod.json's title, never the mod's id.
+
 props = { pane: "p4" };
 assert.equal(texts(header.render())[0], "Release", "a named tab names its mod pane");
 tab.named = false;
@@ -135,11 +133,11 @@ assert.equal(texts(header.render())[0], "Review", "else the mod's title, not its
 tab.named = true;
 sharedValues["review-pane.titles"] = { a: "review · other", b: "review · fix" };
 assert.equal(texts(header.render())[0], "review · fix");
-// Its icon, the one its mod gives.
+
 sharedValues["review-pane.program"] = { icon: "mods/review-pane/logo.svg", tint: false };
 images.length = 0; header.render();
 assert.deepEqual(images, ["mods/review-pane/logo.svg"]);
-// Its status, the word its mod gives for its tab, with an agent's marks; another tab's isn't its own.
+
 const bare = header.render().items.length;
 sharedValues["review-pane.status"] = { a: "working" };
 assert.equal(header.render().items.length, bare);
@@ -149,7 +147,6 @@ for (const word of ["working", "blocked", "done"]) {
 }
 delete sharedValues["review-pane.status"];
 
-// A settled agent's done dot goes in both sidebar modes.
 props = { pane: "p2" }; pane.status = "done"; header.hovered = false;
 const dots = () => header.render().items.length;
 const shown = dots();
@@ -165,12 +162,11 @@ assert.equal(dots(), shown - 1, "snoozed too");
 terms[0].labels.snoozed = String(Date.now() - 1);
 assert.equal(dots(), shown, "woken, it is news again");
 delete terms[0].labels.snoozed;
-// A hidden Inbox doesn't clear the label, so the label alone can't say: a turn ended since it was settled is news.
+
 terms[0].labels.settled = "1:1"; terms[0].turn = 2;
 assert.equal(dots(), shown, "a new turn's done shows, the label still on");
 delete terms[0].labels.settled; delete terms[0].turn;
 
-// The buttons go with the pointer, even when the header's leave never comes (tip.js).
 {
   const hover = load(...MOD_FILES);
   const head = () => find(hover.render(), "pane-head-p2");
@@ -181,7 +177,7 @@ delete terms[0].labels.settled; delete terms[0].turn;
   pointer = { x: 50, y: 200 };
   tick();
   assert.equal(find(hover.render(), "ph-x-p2"), null, "off it with no leave reported, they go");
-  // Under a still pointer, no move yet: no box to go by, so the first move away decides.
+
   head().handlers.on_hover(true, cx);
   tick();
   assert.ok(find(hover.render(), "ph-x-p2"));
@@ -190,7 +186,6 @@ delete terms[0].labels.settled; delete terms[0].turn;
   assert.equal(find(hover.render(), "ph-x-p2"), null);
 }
 
-// The mode's owner closing ends the mode: a pane's × can close the pane it's on, and its timers go with it.
 {
   const owner = load(...MOD_FILES);
   sharedValues["t3-focus"] = owner.fs.me;
@@ -198,7 +193,6 @@ delete terms[0].labels.settled; delete terms[0].turn;
   assert.equal(sharedValues["t3-focus"], null);
 }
 
-// The buttons come with the keyboard on the header, the stop that gets there, and only in keyboard mode.
 {
   const quiet = load(...MOD_FILES);
   props = { pane: "p2" };

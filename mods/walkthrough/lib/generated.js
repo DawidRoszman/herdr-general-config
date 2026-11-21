@@ -1,12 +1,3 @@
-// Files a tool wrote rather than a person: lockfiles, bundles, codegen,
-// snapshots. They are kept out of what the model reads (a lockfile can outweigh
-// the whole change and says nothing about its intent) but never out of what the
-// reader sees: they show at the end, with everything no step covered.
-//
-// Matched by name only, and conservatively. Leaving real code out of a
-// walkthrough without saying so is the one failure this mod must not have, so
-// `src/lock.ts` and `codegen.py` stay in.
-
 const LOCKFILES = new Set([
   "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
   "deno.lock", "composer.lock", "Gemfile.lock", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock",

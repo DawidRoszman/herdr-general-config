@@ -1,16 +1,18 @@
-// Pure rules for the coordinator board: parsing board.json (its shape is in
-// coordinators/<context>/CLAUDE.md, section Board), joining herdr's live agent status, and finding a
-// task's space. Checked by `node board.test.mjs`.
-
 export const STAGES = ["starting", "implementing", "reviewing", "fixing", "pr-open", "waiting", "merged"];
 const DEFAULT_BASE = "develop";
 
-// The board's context: the coordinator whose space holds this pane, else the shown context.
-export function boardContext({ spaceId, coordinators, current }) {
-  return Object.keys(coordinators ?? {}).find((context) => coordinators[context] === spaceId) ?? current ?? null;
+export function boardScope({ spaceId, coordinators, current }) {
+  const key = Object.keys(coordinators ?? {}).find((key) => coordinators[key] === spaceId);
+  if (!key) return { profile: current ?? null, project: null };
+  const [profile, project] = key.split("/");
+  return { profile, project };
 }
 
-// { board } or { error }: a missing file, invalid JSON or a wrong shape is an error line, never a blank.
+export function boardSources(profile, only = null) {
+  return Object.entries(profile?.projects ?? {}).filter(([name, project]) => project.coordinator?.folder && (!only || name === only))
+    .map(([name, project]) => ({ project: name, label: project.label ?? name, folder: project.coordinator.folder }));
+}
+
 export function parseBoard(text) {
   if (text === null || text === undefined) return { error: "board.json is missing" };
   let board;
@@ -26,7 +28,6 @@ export function parseBoard(text) {
   return { board: { updated: board.updated ?? null, needsYou: board.needsYou ?? [], checked: board.checked ?? [], tasks: board.tasks ?? [], helpers: board.helpers ?? [] } };
 }
 
-// "12s", "5m", "3h 20m", "2d 4h": how long since an ISO time. Null when the time is unknown.
 export function age(since, now) {
   const at = Date.parse(since ?? "");
   if (Number.isNaN(at)) return null;
@@ -39,15 +40,12 @@ export function age(since, now) {
   return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
 }
 
-// "21:07": an ISO time's local hours and minutes. The app's JS engine ignores toLocaleTimeString's
-// options (it gives "09:07:31 PM"), so it is built by hand. Null when the time is unknown.
 export function clock(iso) {
   const at = new Date(iso ?? "");
   if (Number.isNaN(at.getTime())) return null;
   return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 }
 
-// The address herdr's agents() use: a remote task's bare "t7" is "machine/t7".
 export function agentAddress(address, machine) {
   if (!address) return null;
   return machine && !address.includes("/") ? `${machine}/${address}` : address;
@@ -60,7 +58,6 @@ const prLabel = (pr) => ({
   base: pr.base && pr.base !== DEFAULT_BASE ? pr.base : null,
 });
 
-// The panel's three sections. statusOf(address) is herdr's live agent status (or null).
 export function buildView(board, statusOf, now) {
   const tasks = board.tasks.map((task) => {
     const address = agentAddress(task.agent, task.machine);
@@ -92,7 +89,7 @@ export function buildView(board, statusOf, now) {
     agent: null,
   });
   const questions = board.needsYou.map(question);
-  // A blocked agent needs the person even while board.json lags behind.
+
   const blocked = [...tasks.map((task) => ({ owner: task.key, address: task.agent, status: task.status })),
     ...helpers.map((helper) => ({ owner: helper.name || helper.address, address: helper.address, status: helper.status }))]
     .filter((agent) => agent.status === "blocked")
@@ -101,10 +98,23 @@ export function buildView(board, statusOf, now) {
   return { updated: board.updated, needsYou, checked: board.checked.map(question), tasks, helpers };
 }
 
-// Try items (needsYou with kind "try": something to try by hand) are ticked off in the panel:
-// checkItem moves one by id to "checked" with checkedAt, uncheckItem moves it back into needsYou in
-// its place by "since". Both take board.json as parsed (raw: every other field is kept) and return
-// { board } (a new object, "updated" set to now) or { error }.
+export function combineViews(sections) {
+  const read = sections.filter((section) => section.view);
+  const tagged = (list) => read.flatMap(({ source, view }) => view[list].map((item) => ({
+    ...item,
+    project: source.label,
+    folder: source.folder,
+    uid: `${source.project}/${item.id ?? item.number}`,
+    taskRef: view.tasks.find((task) => task.key === item.task) ?? null,
+  })));
+  const updates = read.map(({ view }) => view.updated).filter((updated) => !Number.isNaN(Date.parse(updated ?? "")));
+  return {
+    needsYou: tagged("needsYou").map((item, index) => ({ ...item, number: index + 1 })),
+    checked: tagged("checked"),
+    updated: updates.sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1) ?? null,
+  };
+}
+
 export function checkItem(raw, id, now) {
   const needsYou = raw.needsYou ?? [], checked = raw.checked ?? [];
   const item = needsYou.find((entry) => entry?.id === id);
@@ -119,7 +129,7 @@ export function uncheckItem(raw, id, now) {
   if (!item) return { error: needsYou.some((entry) => entry?.id === id) ? `${id} is not checked` : `No checked item ${id}` };
   const { checkedAt: _checkedAt, ...back } = item;
   const since = Date.parse(back.since ?? "");
-  const at = needsYou.findIndex((entry) => Date.parse(entry?.since ?? "") > since); // NaN since: never greater, so last
+  const at = needsYou.findIndex((entry) => Date.parse(entry?.since ?? "") > since);
   const place = at < 0 ? needsYou.length : at;
   return { board: { ...raw, needsYou: [...needsYou.slice(0, place), back, ...needsYou.slice(place)], checked: checked.filter((entry) => entry !== item), updated: now } };
 }
@@ -127,7 +137,6 @@ export function uncheckItem(raw, id, now) {
 const sameMachine = (a, b) => (a ?? null) === (b ?? null);
 const isInside = (path, folder) => path === folder || (path ?? "").startsWith(`${folder}/`);
 
-// The space working on a task: same machine, and its folder (or a terminal's live folder) is the task's.
 export function taskSpace(task, allSpaces, allPanes) {
   if (!task.folder) return null;
   const onMachine = allSpaces.filter((space) => sameMachine(space.machine, task.machine));
@@ -138,7 +147,6 @@ export function taskSpace(task, allSpaces, allPanes) {
   return pane ? tabsOf.get(pane.tab) : null;
 }
 
-// PRs grouped by base, in order, so a shared non-develop base is said once: "#111 #39 → feat/x".
 export function prGroups(prs) {
   const groups = [];
   for (const pr of prs) {

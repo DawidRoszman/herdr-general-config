@@ -1,8 +1,3 @@
-// The notification history (a popup the status bar's bell opens): every notification the mods
-// posted through notifyAndLog and every agent alert (status-accounts records those), newest first.
-// Opening it marks them read; a click runs what the notification's own click would (go to the
-// agent, open the PR) and closes the popup.
-
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { props, closeOverlay, run, theme, shared, setShared } from "herdr";
@@ -10,7 +5,6 @@ import { NOTIFICATIONS, HISTORY_CLOSED } from "./notifylog.js";
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 
-// "now", "5m", "3h", "2d" since an ISO time.
 function age(iso, now = Date.now()) {
   const seconds = Math.max(0, (now - new Date(iso).getTime()) / 1000);
   if (seconds < 60) return "now";
@@ -26,7 +20,7 @@ export default class Notifications extends View {
     this.handle = cx.focus_handle();
     this.handle.focus();
     const all = shared(NOTIFICATIONS) ?? [];
-    this.unreadIds = new Set(all.filter((entry) => !entry.isRead).map((entry) => entry.id)); // still marked while it shows
+    this.unreadIds = new Set(all.filter((entry) => !entry.isRead).map((entry) => entry.id));
     if (this.unreadIds.size) setShared(NOTIFICATIONS, all.map((entry) => (entry.isRead ? entry : { ...entry, isRead: true })));
   }
 

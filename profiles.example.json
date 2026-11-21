@@ -10,10 +10,20 @@
       "machines": ["work-box"],
       "// folders": "On a shared machine: folders whose spaces are this profile's.",
       "folders": ["~/work"],
-      "// coordinator": "The folder (in the app home, or absolute) whose CLAUDE.md is this profile's coordinator's instructions.",
-      "coordinator": { "folder": "coordinators/example" },
-      "// agents": "reviewer: the agent that reviews for this profile (its program); leave it out for no reviewer. hc starts it through the template whose command runs it (hc templates). forbidden: programs an agent of this profile must not start.",
-      "agents": { "reviewer": "codex", "forbidden": ["opencode"] },
+      "// projects": "What this profile works on; the key is the project's name. Each has its own coordinator (an agent that starts and tracks its tasks), so one project's rules and reports never reach another's. jira: its Jira project keys. places: where it is, one per machine (no \"machine\": this computer); a space there shows under the project in the sidebar. coordinator.folder: the folder (in the app home, or absolute) whose CLAUDE.md is the coordinator's instructions and where it keeps board.json; best a folder of the project's home repo.",
+      "projects": {
+        "shop": {
+          "label": "Shop",
+          "jira": ["SHOP"],
+          "places": [
+            { "machine": "work-box", "root": "/home/jane/shop" },
+            { "root": "~/work/shop" }
+          ],
+          "coordinator": { "folder": "coordinators/example" }
+        }
+      },
+      "// agents": "reviewer: the agent that reviews for this profile (its program); leave it out for no reviewer. hc starts it through the template whose command runs it (hc templates). machines: per machine of this profile (\"local\": this computer), the only agents that may start there; an agent is a program any profile names here or as its reviewer, Claude Code's own subagents count as claude, and a machine left out (a sandbox) starts any agent.",
+      "agents": { "reviewer": "codex", "machines": { "local": ["claude"], "work-box": ["claude", "codex"] } },
       "// accounts": "provider -> its settings. A secret is {\"env\": \"NAME\"} (a variable of your login shell or ~/.profile) or {\"command\": [...]}, never the value.",
       "accounts": {
         "claude": { "configDir": "~/.claude-acme" },
@@ -28,7 +38,7 @@
       "color": "ansi4",
       "machines": ["home-box"],
       "folders": ["~/personal"],
-      "agents": { "forbidden": ["codex"] },
+      "agents": { "machines": { "local": ["claude", "opencode"], "home-box": ["claude", "opencode"] } },
       "accounts": {
         "// claude": "null: Claude Code's default config dir (~/.claude).",
         "claude": { "configDir": null },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { toCard, columns, branchFor, matches, isShown, clock, boardTasks, taskTarget, toDetails, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
+import { toCard, columns, branchFor, matches, isShown, clock, projectPlaces, boardTasks, taskTarget, toDetails, inOrder, movedOrder, codeFor, codeMismatch } from "./board.js";
 import { adfToMarkdown } from "./adf.js";
 
 const issue = (key, status, category, priority = "Medium", updated = "2026-11-01T00:00:00.000+0000", type = "Story") => ({
@@ -9,6 +9,11 @@ const issue = (key, status, category, priority = "Medium", updated = "2026-11-01
 assert.equal(clock(new Date(2026, 10, 9, 7, 5, 31)), "07:05");
 assert.equal(clock(new Date(2026, 10, 9, 21, 40)), "21:40");
 
+const shopPlaces = [{ machine: "box", root: "/srv/shop" }, { machine: null, root: "/home/jane/shop" }];
+assert.deepEqual(projectPlaces({ OLD: { machine: null, root: "/old" }, SHOP: { machine: null, root: "/stale" } },
+  { shop: { jira: ["SHOP", "WEB"], places: shopPlaces }, notes: { jira: ["NOTE"], places: [] }, blog: { places: [{ machine: null, root: "/blog" }] } }),
+  { OLD: [{ machine: null, root: "/old" }], SHOP: shopPlaces, WEB: shopPlaces }, "the profile's projects win; one without places or keys maps nothing");
+assert.deepEqual(projectPlaces(undefined, undefined), {});
 assert.equal(boardTasks(null).size, 0);
 assert.equal(boardTasks("{ nope").size, 0);
 assert.equal(boardTasks('{"tasks": {}}').size, 0);
@@ -43,7 +48,7 @@ assert.equal(branchFor({ key: "SHOP-7", summary: "Błąd: zła data (PL)!", type
 assert.equal(branchFor({ key: "SHOP-8", summary: "a very long summary that keeps going well past forty characters", type: "Task" }), "feat/SHOP-8-a-very-long-summary-that-keeps-going");
 assert.equal(branchFor({ key: "SHOP-9", summary: "ąę", type: "Task" }), "feat/SHOP-9-ae");
 assert.ok(matches(card, "shop-1") && !matches(card, "nope") && matches(card, ""));
-// An issue without project or updated fields.
+
 const fromAcli = toCard({ key: "SHOP-3", fields: { summary: "s", status: { name: "To Do", statusCategory: { key: "new" } }, priority: null, issuetype: { name: "Task" } } });
 assert.deepEqual([fromAcli.project, fromAcli.updated, fromAcli.priority], ["SHOP", "", ""]);
 assert.deepEqual(columns([fromAcli, { ...fromAcli, key: "SHOP-4" }])[0].cards.map((c) => c.key), ["SHOP-3", "SHOP-4"]);
@@ -97,14 +102,12 @@ assert.equal(details.description, "d");
 assert.deepEqual(details.comments, [{ id: "1", author: "Ala", created: "2026-11-05T10:00:00.000+0100", body: "c" }]);
 console.log("board.js ok");
 
-// Columns in the dragged order; a status new to it goes after.
 assert.deepEqual(inOrder(board, ["In Progress", "To Do"]).map((c) => c.name), ["In Progress", "To Do", "Code Review"]);
 assert.deepEqual(inOrder(board, []).map((c) => c.name), ["To Do", "Code Review", "In Progress"]);
 const shown = ["To Do", "Code Review", "In Progress"];
 assert.deepEqual(movedOrder(shown, ["Blocked"], "To Do", "In Progress"), ["Code Review", "In Progress", "To Do", "Blocked"], "right: past the target");
 assert.deepEqual(movedOrder(shown, [], "In Progress", "To Do"), ["In Progress", "To Do", "Code Review"], "left: before it");
 
-// An issue's code, and when its status disagrees with it.
 const prs = [{ branch: "feat/SHOP-110-search", state: "OPEN", isDraft: false }, { branch: "fix/SHOP-11", state: "MERGED", isDraft: false }];
 assert.deepEqual(codeFor("SHOP-11", prs, ["feat/SHOP-110-search"]), { prs: [prs[1]], hasBranch: false });
 assert.equal(codeFor("SHOP-110", prs, ["feat/SHOP-110-search"]).hasBranch, true);

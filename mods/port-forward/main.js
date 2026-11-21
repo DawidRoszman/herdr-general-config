@@ -1,21 +1,15 @@
-// Port-forward dialog: lists the ports listening on the focused space's machine
-// and toggles an ssh forward for each over that host's ControlMaster connection
-// (`ssh -O forward` / `ssh -O cancel`), so no extra terminal is needed.
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, InputState, Input } from "gpui-base";
-import { props, closeOverlay, theme, spaces, focused, exec, hc } from "herdr";
-import { parseListening, parseMasterPid, parseListeningLocalPorts, forwardSpec } from "./ports.js";
+import { props, closeOverlay, theme, spaces, focused, exec, hc, appHome, shared, checking } from "herdr";
+import { parseListening, parseMasterPid, parseListeningLocalPorts, parseListeningLocalPortsFromSs, forwardSpec, loopbackPort, sandboxOf, sandboxHostPorts } from "./ports.js";
+
+const SANDBOX = `${appHome()}/scripts/sandbox.mjs`;
 
 async function run(command, args, options) {
   const r = await exec(command, args, options);
   return { isOk: r.code === 0, out: r.stdout, err: (r.stderr || r.stdout).trim() };
 }
 
-// Starts a master that outlives the 10m ControlPersist default, because forwards
-// live in the master and should not vanish while nobody has a shell open there.
-// -f forks after login; the fork keeps stdout and stderr, so both go to /dev/null
-// and ssh's own errors go to a log that is printed only on failure.
 const START_MASTER = `log=$(mktemp)
 ssh -E "$log" -o BatchMode=yes -o ControlMaster=yes -o ControlPersist=yes -fN "$1" </dev/null >/dev/null 2>&1
 code=$?
@@ -28,9 +22,9 @@ export default class PortForward extends View {
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.listScroll = VirtualListScrollHandle.new();
-    this.machines = undefined; // undefined: loading
-    this.target = undefined; // the ssh host alias of the chosen machine
-    this.rows = undefined; // undefined: loading
+    this.machines = undefined;
+    this.target = undefined;
+    this.rows = undefined;
     this.forwarded = new Set();
     this.at = 0;
     this.isBusy = false;
@@ -39,18 +33,29 @@ export default class PortForward extends View {
     this.isSearching = false;
     this.search = InputState.new({ value: "", placeholder: "port, process or address" });
     this.search.on("change", (_e, cx) => { this.query = this.search.value().trim().toLowerCase(); this.moveTo(0); cx.notify(); });
-    // Enter is taken here, not in key(), so one press can never toggle twice.
+
     this.search.on("submit", (_e, cx) => this.pick(cx, this.at));
     this.search.on("focus", (_e, cx) => { this.isSearching = true; cx.notify(); });
     this.search.on("blur", (_e, cx) => { this.isSearching = false; cx.notify(); });
+    if (checking()) return;
     cx.spawn(async (cx) => {
       try {
         const listed = await hc(["machine", "ls", "--json"]);
         if (listed.code !== 0) throw new Error(listed.stderr.trim() || "hc machine ls failed");
-        this.machines = JSON.parse(listed.stdout).machines.filter((m) => !m.temporary);
+        const all = JSON.parse(listed.stdout).machines;
+        const { machine: asked, open } = props() ?? {};
+        const offMachines = new Set(shared("context")?.offMachines ?? []);
+        this.machines = all.filter((m) =>
+          !m.temporary
+          && !(m.via === true && String(m.target).includes("sandbox-via.sh"))
+          && (m.name === asked || !offMachines.has(m.name)));
         const space = spaces().find((s) => s.id === focused()?.space);
-        const current = this.machines.find((m) => m.name === space?.machine);
+        const sandbox = open ? sandboxOf(all.find((m) => m.name === asked && m.via === true)?.target) : null;
+        const host = sandbox && this.machines.find((m) => m.target === sandbox.host || m.name === sandbox.host);
+        const current = host ?? this.machines.find((m) => m.name === (asked ?? space?.machine));
         if (current) await this.choose(current);
+        if (open && !current) this.error = `Can't forward from ${asked}: neither an ssh machine in Herdr nor a sandbox on one.`;
+        else if (open) await this.forwardAndOpen(open, cx, sandbox?.name ?? null);
       } catch (error) {
         this.error = String(error);
         this.machines ??= [];
@@ -59,13 +64,13 @@ export default class PortForward extends View {
     });
   }
 
-  async choose(machine) {
+  async choose(machine, shouldReload = true) {
     this.machine = machine;
     this.target = machine.target;
     this.rows = undefined;
     this.clearSearch();
     this.moveTo(0);
-    await this.reload();
+    if (shouldReload) await this.reload();
   }
 
   backToMachines() {
@@ -96,9 +101,42 @@ export default class PortForward extends View {
     this.forwarded = await this.forwardedPorts();
     const remote = parseListening(listening.out);
     const remotePorts = new Set(remote.map((r) => r.port));
-    // Forwards whose service stopped stay visible so they can still be cancelled.
+
     const orphans = [...this.forwarded].filter((p) => !remotePorts.has(p)).map((port) => ({ port, address: "127.0.0.1", process: "not listening" }));
     this.rows = [...remote, ...orphans].sort((a, b) => a.port - b.port);
+  }
+
+  async forwardAndOpen(url, cx, sandbox) {
+    const port = loopbackPort(url);
+    if (port === null) { this.error = `Not a localhost link: ${url}`; return; }
+    if (sandbox || !this.forwarded.has(port)) {
+      this.isBusy = true;
+      cx.notify();
+
+      const error = sandbox
+        ? await this.forwardSandboxPort(port, sandbox)
+        : await this.toggle(this.rows?.find((r) => r.port === port) ?? { port, address: "127.0.0.1" });
+      this.isBusy = false;
+      if (error) { this.error = error; return; }
+    }
+    cx.open_url(url);
+    this.close();
+  }
+
+  async forwardSandboxPort(port, sandbox) {
+    const opened = await run(SANDBOX, ["port", "--machine", this.machine.name, "--name", sandbox, "--port", String(port)]);
+    const hostPort = Number(opened.out.trim());
+    if (!opened.isOk || !Number.isInteger(hostPort)) return `Could not open :${port} of ${sandbox} on ${this.machine.name}: ${opened.err}`;
+    const error = await this.ensureMaster();
+    if (error) return error;
+    const r = await run("ssh", ["-O", "forward", "-L", forwardSpec({ port, address: "127.0.0.1", remotePort: hostPort }), this.target]);
+    return r.isOk ? "" : `Could not forward :${port} from ${sandbox}: ${r.err}. If this Mac's :${port} already forwards elsewhere, stop it below.`;
+  }
+
+  async ensureMaster() {
+    if (await this.masterPid()) return "";
+    const started = await run("sh", ["-c", START_MASTER, "sh", this.target]);
+    return started.isOk ? "" : `Could not connect to ${this.target}: ${started.err}`;
   }
 
   async masterPid() {
@@ -106,28 +144,40 @@ export default class PortForward extends View {
     return check.isOk ? parseMasterPid(check.err) : null;
   }
 
-  // Local ports the master listens on: forwards added here and the host's LocalForward lines.
   async forwardedPorts() {
     const pid = await this.masterPid();
     if (!pid) return new Set();
-    const lsof = await run("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"]);
-    // lsof exits 1 when the master listens on nothing: that is an empty answer, not a failure.
-    return parseListeningLocalPorts(lsof.out);
+    const lsof = await run("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"]).catch(() => ({ isOk: false, out: "" }));
+    if (lsof.isOk || lsof.out) return parseListeningLocalPorts(lsof.out);
+
+    const ss = await run("ss", ["-ltnpH"]).catch(() => ({ isOk: false, out: "" }));
+    return ss.isOk ? parseListeningLocalPortsFromSs(ss.out, pid) : new Set();
   }
 
   async toggle(row) {
     const isForwarded = this.forwarded.has(row.port);
-    if (!isForwarded && !(await this.masterPid())) {
-      const started = await run("sh", ["-c", START_MASTER, "sh", this.target]);
-      if (!started.isOk) return `Could not connect to ${this.target}: ${started.err}`;
+    if (isForwarded) return this.cancel(row);
+    const error = await this.ensureMaster();
+    if (error) return error;
+    const r = await run("ssh", ["-O", "forward", "-L", forwardSpec(row), this.target]);
+    return r.isOk ? "" : `Could not forward :${row.port}: ${r.err}`;
+  }
+
+  async cancel(row) {
+    let lastError = "";
+    for (const address of new Set([row.address, "localhost", "127.0.0.1", "[::1]"])) {
+      const r = await run("ssh", ["-O", "cancel", "-L", forwardSpec({ port: row.port, address }), this.target]);
+      if (!(await this.forwardedPorts()).has(row.port)) return "";
+      lastError = r.err;
     }
-    const r = await run("ssh", ["-O", isForwarded ? "cancel" : "forward", "-L", forwardSpec(row), this.target]);
-    if (!r.isOk) {
-      return isForwarded
-        ? `Could not stop :${row.port} (${r.err}). A forward from ~/.ssh/config only stops with ssh -O exit ${this.target}.`
-        : `Could not forward :${row.port}: ${r.err}`;
+
+    const tables = await run("sh", ["-c", 'cat "$HOME"/.herdr/sandbox-ports/* 2>/dev/null; true'], { on: this.machine.name });
+    for (const remotePort of sandboxHostPorts(tables.out, row.port)) {
+      const r = await run("ssh", ["-O", "cancel", "-L", forwardSpec({ port: row.port, address: "127.0.0.1", remotePort }), this.target]);
+      if (!(await this.forwardedPorts()).has(row.port)) return "";
+      lastError = r.err;
     }
-    return "";
+    return `Could not stop :${row.port} (${lastError}). A forward from ~/.ssh/config only stops with ssh -O exit ${this.target}.`;
   }
 
   act(cx, work) {
@@ -164,11 +214,9 @@ export default class PortForward extends View {
     if (!item) return;
     this.at = index;
     if (this.target) this.act(cx, () => this.toggle(item));
-    else this.act(cx, async () => { await this.choose(item); return ""; });
+    else this.act(cx, async () => { await this.choose(item, false); return ""; });
   }
 
-  // Vim-style: "/" starts a search; while typing, only arrows move and Esc goes
-  // back to the list with the filter kept. Esc in the list closes.
   key(e, cx) {
     const count = this.items().length;
     const stroke = e.keystroke;
@@ -179,7 +227,7 @@ export default class PortForward extends View {
       else return;
     }
     else if (stroke === "/") {
-      // The box is only drawn while searching, so it can take focus after this frame.
+
       this.isSearching = true;
       cx.timer.after(0, () => this.search.focus());
     }
@@ -212,8 +260,7 @@ export default class PortForward extends View {
         .child(div().flex_none().w(16).text_color(markColor).child(mark))
         .child(div().flex_none().w(choosingMachine ? 140 : 64).truncate().font_semibold().text_color(t.foreground).child(label))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(detail));
-    // Builders, not elements: the virtual list asks for rows during layout and
-    // elements built earlier in render() are not drawn there.
+
     const items = this.items();
     const rows = choosingMachine
       ? items.map((m, i) => () => rowView(m.name, `${m.target} · ${m.state}`, "›", t.dim, i))
@@ -254,7 +301,7 @@ export default class PortForward extends View {
             isLoading || rows.length === 0
               ? div().p(10).text_color(isLoading ? t.muted : t.dim).child(isLoading ? "…" : empty)
               : v_virtual_list("pf-list", rows.length, 34, (i) => String(i), (range) => rows.slice(range.start, range.end).map((build) => build()))
-                  // Rows of a virtual list cannot hold handlers; the list reports which was clicked.
+
                   .on_item_click((key, cx) => this.pick(cx, Number(key)))
                   .track_scroll(this.listScroll)
                   .size_full(),

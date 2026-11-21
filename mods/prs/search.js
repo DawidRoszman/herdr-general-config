@@ -1,6 +1,3 @@
-// The "/" filter every list here has. Esc leaves the box and keeps the filter; esc again
-// clears it; after that the owner closes (escape() returns false).
-
 import { InputState } from "gpui-base";
 
 export class Search {
@@ -14,7 +11,7 @@ export class Search {
       onChange(cx);
       cx.notify();
     });
-    // Enter is taken here, not in the owner's key handler, so one press never acts twice.
+
     this.input.on("submit", (_e, cx) => onSubmit(cx));
     this.input.on("blur", (_e, cx) => {
       this.isTyping = false;
@@ -29,7 +26,7 @@ export class Search {
 
   open(cx) {
     this.isTyping = true;
-    // The box is drawn only while shown, so it can take focus after this frame.
+
     cx.timer.after(0, () => this.input.focus());
   }
 

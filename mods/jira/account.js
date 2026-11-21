@@ -1,13 +1,6 @@
-// The Jira account the board and scripts/start-task.mjs sign in with. Checked by `node account.test.mjs`.
-//
-// The profile's account when it has one (profiles.json: accounts.jira = site, email, token), read
-// through profiles.py, which resolves the token's reference. Else config.json's "site" and "email"
-// with ATLASSIAN_API_KEY from ~/.profile, as before there were profiles.
-
-const NO_ACCOUNT_EXIT = 3; // profiles.py account: the profile has no such account
+const NO_ACCOUNT_EXIT = 3;
 const NO_TOKEN_EXIT = 3;
-// Read from ~/.profile on every call: an app opened from the Dock doesn't get the login shell's
-// variables, and a changed token works without restarting.
+
 const PROFILE_FILE_TOKEN = `[ -f "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null; [ -n "$ATLASSIAN_API_KEY" ] || exit ${NO_TOKEN_EXIT}; printf %s "$ATLASSIAN_API_KEY"`;
 const TOKEN_HELP = "make one at https://id.atlassian.com/manage-profile/security/api-tokens";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -24,7 +17,6 @@ function utf8Bytes(text) {
   return bytes;
 }
 
-// Mods have no btoa or Buffer.
 export function base64(text) {
   const bytes = utf8Bytes(text);
   let out = "";
@@ -39,11 +31,6 @@ export function base64(text) {
 
 const signedIn = (site, email, token, from) => ({ site, email, authorization: `Basic ${base64(`${email}:${token}`)}`, from });
 
-/**
- * { site, email, authorization, from } for Jira's REST API; `from` says where the account is, for error messages.
- * config: mods/jira/config.json; profile: the profile to take the account from (null: none);
- * exec: (command, args) => Promise<{ code, stdout, stderr }>.
- */
 export async function signIn({ config, profile, profilesPy, exec }) {
   if (profile) {
     const r = await exec("python3", [profilesPy, "account", profile, "jira"]);

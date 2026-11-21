@@ -1,12 +1,6 @@
 {
   "email": "you@your-company.com",
   "site": "your-company.atlassian.net",
-  "projects": {
-    "PROJ": {
-      "machine": null,
-      "root": "/Users/you/git/your-multirepo-project"
-    }
-  },
   "hiddenStatuses": [],
   "statusStages": {
     "To Do": "todo",

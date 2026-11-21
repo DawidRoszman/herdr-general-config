@@ -1,6 +1,3 @@
-// Cross-repo PR review (a tab): one branch's PR in every repo of a multirepo project,
-// with Overview, Files, Checks and Commits, and the review actions.
-
 import { div, list, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { theme, run, settings, panes, focused, spaces, exec, shared, setShared, openOverlay, notify } from "herdr";
@@ -16,26 +13,20 @@ const TAB_LABELS = { overview: "Overview", files: "Files", checks: "Checks", com
 const ROW_HEIGHT = 30;
 const DIFF_ROW_HEIGHT = 20;
 const FILE_HEADER_HEIGHT = 34;
-// The diff is a virtual list: every row's height is known before it draws. A comment card's height
-// is estimated from its Markdown (markdownLines) at the diff's width; text past it is clipped.
-// Cards sit CARD.left / CARD.right in from the diff's edges, CARD.pad inside their border.
+
 const CARD = { left: 24, right: 12, pad: 12, rowPad: 6 };
 const COMMENT = { head: 18, line: 20, avatar: 22, gap: 12, reply: 32, char: 7.2, collapsed: 8 };
 const LINE_COMMENT_INPUT_HEIGHT = 84;
-const LINE_COMMENT_ERROR_HEIGHT = 72; // three lines of GitHub's error
-// The line comment box's buttons, right-aligned in its last row. A virtual list's rows can't have
-// handlers of their own, so a press there is placed by its distance from the diff's right edge:
-// edge is the card's inset, border and padding on that side.
+const LINE_COMMENT_ERROR_HEIGHT = 72;
+
 const LINE_COMMENT_BUTTONS = { edge: CARD.right + 1 + CARD.pad, gap: 8, comment: 96, cancel: 72, height: 28 };
 const AUTO_REFRESH_MS = 30000;
-// After a text box loses the keyboard (Cancel, Esc, a click elsewhere), its typist's next letters
-// must not become actions (d turns a PR into a draft): the action keys wait this long.
+
 const TEXT_LEFT_GUARD_MS = 1500;
-// The single keys that act (on GitHub, or open something); the rest only move around.
+
 const ACTION_KEYS = new Set(["a", "x", "c", "m", "d", "s", "f", "g", "b", "w", "shift-r", "shift-w"]);
 const REFRESH_FAILED = "Could not refresh";
-// A first load still unanswered after this is lost (a command started as Herdr came up never reports
-// back): the shown tab starts it again rather than say "Loading" for ever.
+
 const LOST_LOAD_MS = 90000;
 const COMPOSE = {
   approve: { label: "Approve", hint: "optional comment", isBodyRequired: false },
@@ -47,72 +38,69 @@ export class Review {
   constructor(props, cx) {
     this.props = props;
     this.handle = cx.focus_handle();
-    // Its key list lives in help-keys.json (also read by the keybinds tab), loaded once.
+
     this.keySections = [];
     this.handle.focus();
-    this.ownTab = null; // learnt at the first layout: a pane is laid out only while its tab shows
-    this.isStarted = false; // its loads and timers start at the first layout (start)
+    this.ownTab = null;
+    this.isStarted = false;
     this.isAutoRefreshing = false;
     this.scrolls = Object.fromEntries([...TABS, "diff"].map((name) => [name, VirtualListScrollHandle.new()]));
     this.search = new Search({ onChange: () => this.moveTo(0), onSubmit: (cx) => this.openItem(cx), onBlur: () => this.leftText() });
-    this.compose = null; // the action whose body is being written
-    this.reviewerPicker = null; // a ReviewerPicker while it shows
-    // A GitHub-style comment box: Markdown, several lines (enter is a new line), sent with cmd/ctrl-enter.
+    this.compose = null;
+    this.reviewerPicker = null;
+
     this.composeInput = TextareaState.new({ placeholder: "Leave a comment · Markdown: **bold**, `code`, ``` blocks, - lists, > quotes, | tables |, [links](url)" });
     this.composeInput.set_auto_grow(4, 14);
     this.composeInput.on("submit", (event, cx) => { if (event?.secondary) this.submitCompose(cx); });
     this.composeInput.on("blur", () => this.leftText());
     this.isComposePreview = false;
-    // A review comment on lines of the PR's diff: the selected lines, and the box under them.
-    this.lineSelection = null; // { path, anchor, focus }: indices into that file's diff rows; replaced on each change
+
+    this.lineSelection = null;
     this.lineCommentInput = TextareaState.new({ placeholder: "Comment on these lines · Markdown · ⌘↵ comment · esc cancel" });
     this.lineCommentInput.set_rows(4);
     this.lineCommentInput.on("focus", () => { this.isLineCommentTyping = true; });
     this.lineCommentInput.on("blur", () => { this.isLineCommentTyping = false; this.leftText(); });
     this.lineCommentInput.on("submit", (event, cx) => { if (event?.secondary) this.postLineComment(cx); });
-    this.lineCommentInput.on("change", (_e, cx) => cx.notify()); // Comment is enabled once there is text
-    this.viewed = readViewed(); // files marked viewed, per PR (pruneViewed); kept in this copy's localStorage
-    this.expandedThreads = new Set(); // long threads opened in full (their first comment's url)
-    this.diffWidth = 700; // the diff's width as last laid out, for comment card heights
+    this.lineCommentInput.on("change", (_e, cx) => cx.notify());
+    this.viewed = readViewed();
+    this.expandedThreads = new Set();
+    this.diffWidth = 700;
     this.isLineCommentTyping = false;
     this.isPostingLineComment = false;
     this.lineCommentError = "";
-    this.diffPress = null; // the last left press on the diff: { isShift, fromRight }, read by the row click after it
-    this.previewVersion = 0; // a new id for each preview, so the Markdown view never shows an older text
-    this.data = undefined; // { branch, task, prs }
+    this.diffPress = null;
+    this.previewVersion = 0;
+    this.data = undefined;
     this.prIndex = 0;
     this.tab = "overview";
     this.at = { overview: 0, files: 0, checks: 0, commits: 0, diff: 0 };
     this.isDiffFocused = false;
-    this.commit = null; // { oid, headline }: the Files tab shows this commit's diff instead of the PR's
-    this.diffs = new Map(); // diffKey -> Map(path -> rows) | Error
-    this.diffLoads = new Map(); // diffKey -> the request filling this.diffs, so asking twice waits for one
-    this.reviewerCandidates = new Map(); // slug -> who can review there, asked once per tab
-    this.pendingChanges = 0; // changes sent and not answered yet; a reload meanwhile would undo them on screen
-    this.highlightedDiffs = new WeakMap(); // a file's parsed rows -> the same rows colored by delta
-    this.highlightedPrDiffs = new WeakSet(); // a PR's diff whose files delta is coloring or colored
-    this.highlightVersion = 0; // counts colored files, so the stacked diff is rebuilt with their colors
-    this.stackedDiff = null; // { diff, query, version, view }: diffView()'s last answer
-    this.diffTop = 0; // the first diff row on screen, as the list last laid out
-    this.isFollowingDiffScroll = false; // the diff was scrolled by hand: the file list follows it
-    this.pendingConfirm = null; // { key, question, run(cx) }: an action that changes GitHub, waiting for Enter (askConfirm)
-    this.textLeftAt = 0; // when a text box last lost the keyboard (TEXT_LEFT_GUARD_MS)
+    this.commit = null;
+    this.diffs = new Map();
+    this.diffLoads = new Map();
+    this.reviewerCandidates = new Map();
+    this.pendingChanges = 0;
+    this.highlightedDiffs = new WeakMap();
+    this.highlightedPrDiffs = new WeakSet();
+    this.highlightVersion = 0;
+    this.stackedDiff = null;
+    this.diffTop = 0;
+    this.isFollowingDiffScroll = false;
+    this.pendingConfirm = null;
+    this.textLeftAt = 0;
     this.isBusy = false;
     this.error = "";
     this.notice = "";
-    // machine null is this Mac; project is a multirepo project's root, or with isRepo a plain repo's folder.
+
     const missing = ["project", "branch"].filter((name) => !props[name]).concat("machine" in props ? [] : ["machine"]);
     if (missing.length) this.error = `The review tab needs props { machine, project, branch, isRepo? }; missing ${missing.join(", ")}.`;
   }
 
-  // Started from the first layout's cx, not the constructor's: the constructor runs inside whatever
-  // opened the tab (run("tab.new") from an overlay: here.js, a toast), and that overlay closing ends
-  // the tasks and timers started there, so the first load would never end.
   start(cx) {
     if (this.isStarted) return;
     this.isStarted = true;
     cx.spawn(async (cx) => { this.keySections = await loadKeys("review"); cx.notify(); });
-    // focus() can't run in render, so a light timer does the claiming (no redraw).
+
     cx.timer.every(400, (cx) => { this.claimKeyboard(cx); this.refreshOnEnter(cx); });
     cx.timer.every(AUTO_REFRESH_MS, (cx) => this.autoRefresh(cx));
     cx.timer.every(10000, (cx) => this.retryLostLoad(cx));
@@ -123,8 +111,6 @@ export class Review {
     if (name === "focus") this.handle.focus();
   }
 
-  // ------------------------------------------------------------------- data
-
   get pr() {
     return this.data?.prs[this.prIndex];
   }
@@ -134,14 +120,10 @@ export class Review {
     return mrJson(this.target, ["pr-view", ...(this.props.branches ?? [this.props.branch]), this.props.isRepo ? "--repo" : "--project", this.props.project]);
   }
 
-  // An mr command that names only a repo slug, run with the project's direnv environment (mr --in), so
-  // gh acts as the account the project's .envrc picks, as pr-view does with --project.
   inProject(args) {
     return ["--in", this.props.project, ...args];
   }
 
-  // Shows what pr-view answered, on the same PR as before. A change's reload keeps the diffs: actions
-  // here don't change code, and loading them again would blank the Files tab.
   showView(data, { isKeepingDiffs = false } = {}) {
     const shown = this.pr && prKey(this.pr);
     this.data = data;
@@ -150,19 +132,18 @@ export class Review {
     if (!isKeepingDiffs) {
       this.diffs.clear();
       this.diffLoads.clear();
-      this.lineSelection = null; // its rows are gone; the box's text stays for the next selection
+      this.lineSelection = null;
     }
   }
 
   async load() {
     this.showView(await this.fetchView());
     if (!this.data.prs.length) return `No PR for ${this.props.branch} in any repo of the project.`;
-    const diffLoad = this.loadDiff(); // fetched ahead, so the Files tab opens at once
+    const diffLoad = this.loadDiff();
     if (this.tab === "files") await diffLoad;
     return "";
   }
 
-  // What the Files tab shows: the PR's diff, or one commit's (this.commit).
   diffKey() {
     return this.commit ? `${prKey(this.pr)}@${this.commit.oid}` : prKey(this.pr);
   }
@@ -171,7 +152,6 @@ export class Review {
     return this.pr ? this.diffs.get(this.diffKey()) : undefined;
   }
 
-  // The shown diff, requested once; asking again while it loads waits for the same request.
   loadDiff() {
     const pr = this.pr;
     if (!pr) return Promise.resolve();
@@ -184,7 +164,6 @@ export class Review {
     return this.diffLoads.get(key);
   }
 
-  // The Files list: the PR's files, or the shown commit's once its diff is here.
   fileItems(pr) {
     if (!this.commit) return pr.files.map((f) => ({ key: f.path, ...f, isViewed: isViewed(this.viewed, pr, f.path) }));
     const diff = this.shownDiff();
@@ -198,19 +177,18 @@ export class Review {
     return all.filter((item) => matches(item, this.search.query));
   }
 
-  // The listed files' diffs stacked, each under its header; rebuilt when the diff, the search or the colors change.
   diffView() {
     const diff = this.shownDiff();
     const note = (text) => ({ rows: [{ kind: "", text, key: "0" }], fileStarts: [] });
     if (diff === undefined) return note("Loading diff…");
     if (diff instanceof Error) return note(`Could not load the diff: ${diff.message}`);
     const cached = this.stackedDiff;
-    const comments = this.commit ? [] : this.pr.inlineComments; // threads sit on the PR's diff, not a commit's
+    const comments = this.commit ? [] : this.pr.inlineComments;
     const selection = this.lineSelection;
     if (cached?.diff === diff && cached.query === this.search.query && cached.version === this.highlightVersion
       && cached.comments === comments && cached.selection === selection && cached.viewed === this.viewed) return cached.view;
     const view = stackDiffs(this.items("files"), (file) => {
-      if (file.isViewed) return []; // folded to its header
+      if (file.isViewed) return [];
       const rows = diff.get(file.path);
       if (!rows) return [{ kind: "", text: "No text diff for this file (too large or binary)." }];
       const shown = withThreads(this.highlightedDiffs.get(rows) ?? rows, file.path, comments);
@@ -220,14 +198,10 @@ export class Review {
     return view;
   }
 
-  // While a PR's checks run (or GitHub works out whether it can merge), reloads quietly. Only while
-  // this tab shows, so open tabs in the background don't each poll GitHub; a hidden one catches up
-  // at its first tick once shown. Diffs are kept unless a head commit moved.
   autoRefresh(cx) {
     if (this.data?.prs.some(isSettling)) this.quietRefresh(cx);
   }
 
-  // Coming back to the tab (switched to it, or to its space) reloads quietly: it may be stale.
   refreshOnEnter(cx) {
     const isShown = this.isTabShown();
     const isEntered = isShown && !this.wasTabShown;
@@ -264,8 +238,6 @@ export class Review {
     return Boolean(this.ownTab) && spaces().find((s) => s.active)?.tabs.find((t) => t.active)?.id === this.ownTab;
   }
 
-  // ---------------------------------------------------------------- actions
-
   act(cx, work) {
     if (this.isBusy) return;
     this.isBusy = true;
@@ -283,8 +255,6 @@ export class Review {
     });
   }
 
-  // Shows the change at once (optimisticPr), sends it, then reloads in the background. A failure
-  // shows its error, and the reload puts back what GitHub has.
   sendChange(cx, pr, change, mrArgs, label) {
     const index = this.data.prs.findIndex((p) => prKey(p) === prKey(pr));
     if (index >= 0) this.data.prs[index] = optimisticPr(pr, change, this.data.viewer);
@@ -303,7 +273,7 @@ export class Review {
       }
       this.pendingChanges--;
       cx.notify();
-      if (this.pendingChanges) return; // the last change to answer reloads
+      if (this.pendingChanges) return;
       try {
         const data = await this.fetchView();
         if (!this.pendingChanges) this.showView(data, { isKeepingDiffs: true });
@@ -340,7 +310,6 @@ export class Review {
     });
   }
 
-  // GitHub's "Re-request review": asks someone who reviewed already to review again.
   reRequestReview(cx, pr, login) {
     const reviewers = [...requestedLogins(pr), login];
     this.sendChange(cx, pr, { reviewers }, ["pr-reviewers", pr.slug, String(pr.number), "--add", login], `re-request ${login}`);
@@ -363,7 +332,6 @@ export class Review {
     cx.timer.after(0, () => this.composeInput.focus());
   }
 
-  // Write or Preview: the preview is the text as GitHub will show it.
   setComposePreview(cx, isPreview) {
     this.isComposePreview = isPreview;
     if (isPreview) {
@@ -380,7 +348,7 @@ export class Review {
 
   submitCompose(cx) {
     const action = this.compose;
-    if (!action) return; // cmd-enter reaches both the box and the view: send once
+    if (!action) return;
     const body = this.composeInput.value().trim();
     if (COMPOSE[action].isBodyRequired && !body) {
       this.error = `${COMPOSE[action].label} needs a message.`;
@@ -390,8 +358,6 @@ export class Review {
     this.runAction(cx, action, body);
   }
 
-  // A click on a diff line selects it; a shift-click extends the selection from the line clicked
-  // first, within its hunk. Only on the PR's diff: a commit's lines can't be commented here.
   selectLine(cx, path, fileRow, isExtending) {
     if (this.commit) {
       this.notice = "Comment on lines from the Files tab (the PR's diff), not a commit's diff.";
@@ -404,8 +370,6 @@ export class Review {
     cx.timer.after(0, () => this.lineCommentInput.focus());
   }
 
-  // The keyboard goes back to the view, which keeps the action keys quiet for a moment (leftText):
-  // what was being typed into the box must not land on them.
   closeLineComment() {
     this.lineSelection = null;
     this.lineCommentError = "";
@@ -420,13 +384,11 @@ export class Review {
     this.closeLineComment();
   }
 
-  // Posts the box's text as one review comment on the selected lines at once (no pending review).
-  // A failure stays in the box with the text, to fix and send again.
   postLineComment(cx) {
     const selection = this.lineSelection;
     const pr = this.pr;
     const diff = this.shownDiff();
-    if (!selection || this.isPostingLineComment || !(diff instanceof Map)) return; // cmd-enter reaches the box and the view: post once
+    if (!selection || this.isPostingLineComment || !(diff instanceof Map)) return;
     const body = this.lineCommentInput.value().trim();
     const fail = (message) => { this.lineCommentError = message; cx.notify(); };
     if (!body) return fail("Write a comment first.");
@@ -451,19 +413,17 @@ export class Review {
     });
   }
 
-  // The posted comment, as pr-view lists inline comments (mr pr-comment).
   sendLineComment(pr, request) {
     return mrJson(this.target, this.inProject(["pr-comment", pr.slug, String(pr.number), "--request", JSON.stringify(request)]));
   }
 
-  // A row of the diff was clicked: a line selects (selectLine), the box's buttons act, other rows move the cursor.
   clickDiffRow(cx, key) {
     const { rows, fileStarts } = this.diffView();
     const row = rows[Number(key)];
     const press = this.diffPress ?? {};
     this.diffPress = null;
     if (row?.kind === "comment-actions") return this.pressLineCommentButton(cx, press.fromRight);
-    if (row?.kind === "comment-box") return; // the text box's own: caret, selection, focus
+    if (row?.kind === "comment-box") return;
     if (row?.kind === "thread") return this.toggleThread(row.comments);
     this.isDiffFocused = true;
     this.moveTo(Number(key));
@@ -471,8 +431,6 @@ export class Review {
     else this.handle.focus();
   }
 
-  // The strip's right end, up to halfway into the gap, is Comment (while there is text); from there
-  // across Cancel, Cancel.
   pressLineCommentButton(cx, fromRight) {
     const { edge, gap, comment, cancel } = LINE_COMMENT_BUTTONS;
     if (fromRight < 0) return;
@@ -481,14 +439,12 @@ export class Review {
     } else if (fromRight < edge + comment + gap + cancel) this.cancelLineComment();
   }
 
-  // A long thread's card opens in full, or folds back.
   toggleThread(comments) {
     if (!this.threadLayout(comments).isLong) return;
     const key = comments[0].url;
     if (!this.expandedThreads.delete(key)) this.expandedThreads.add(key);
   }
 
-  // A stacked PR merges through GitHub's stack merge, which takes the open PRs below it along.
   merge(cx) {
     const pr = this.pr;
     const below = mergedWith(pr);
@@ -503,8 +459,6 @@ export class Review {
       (cx) => this.runAction(cx, pr.isDraft ? "ready" : "draft"));
   }
 
-  // An action that changes GitHub asks first: Enter (or its button again) does it; Esc, or any other
-  // key, drops it. A stray key can then never merge, restack or draft a PR.
   askConfirm(cx, key, question, run) {
     if (this.pendingConfirm?.key === key) return this.confirmPending(cx);
     this.pendingConfirm = { key, question, run };
@@ -521,8 +475,6 @@ export class Review {
     this.textLeftAt = Date.now();
   }
 
-  // Rebases every open PR of the branch's stacks (in each repo) onto the one below and force-pushes
-  // the ones that moved, as GitHub's "Rebase stack" does, then reloads: code changed.
   restack(cx) {
     this.askConfirm(cx, `restack ${prKey(this.pr)}`, `Rebase each open PR of ${this.props.branch}'s stacks onto the one below, and force-push the ones that move?`,
       (cx) => this.runRestack(cx));
@@ -539,14 +491,11 @@ export class Review {
     });
   }
 
-  // The PR below (step -1) or above (+1) this one in its stack, in that branch's review tab.
   setViewed(viewed) {
     this.viewed = viewed;
     localStorage.setItem("viewed", JSON.stringify(viewed));
   }
 
-  // v on the Files tab: the selected file (the one under the diff's cursor while the diff has the
-  // keyboard) is marked viewed and its diff folds to its header, or it is unmarked and unfolds.
   toggleFileViewed() {
     if (this.commit) {
       this.notice = "Mark files viewed on the PR's Files tab, not in a commit's diff.";
@@ -560,7 +509,7 @@ export class Review {
     this.notice = `${isViewed(this.viewed, this.pr, file.path) ? "Viewed" : "Not viewed"}: ${file.path}`;
     this.at.files = fileIndex;
     this.scrolls.files.scroll_to_item(fileIndex);
-    // Its rows come or go: the cursor stays on its header.
+
     if (this.isDiffFocused) this.moveTo(this.diffView().fileStarts[fileIndex] ?? 0);
   }
 
@@ -582,7 +531,6 @@ export class Review {
       .catch((error) => notify({ title: `Could not open ${entry.headRefName}`, body: String(error.message ?? error), level: "warning" }));
   }
 
-  // The multirepo task's folder, the task made quietly when missing (ensureTaskFolder).
   async ensureTask() {
     if (this.data.task) return this.data.task;
     const { machine, project, branch } = this.props;
@@ -596,11 +544,9 @@ export class Review {
     return this.data.prs.map((pr) => pr.short);
   }
 
-  // Blueprint beside this review, on the branch's checkout (the multirepo task, ensureTask).
-  // With no agent in this tab, Blueprint has a headless Claude draw it.
   async showBlueprint(tab, pane) {
     const { machine, project, branch, isRepo } = this.props;
-    // A plain repo has no task to make: Blueprint uses whichever of its worktrees has the branch.
+
     if (!this.data.task && isRepo) return `Blueprint needs ${branch} checked out in ${project} (or one of its worktrees) on ${machineLabel(machine)}.`;
     await this.ensureTask();
     const existing = panes().find((p) => p.mod === "blueprint" && p.tab === tab);
@@ -614,21 +560,18 @@ export class Review {
     return "";
   }
 
-  // The branch's checkout in a space (openBranchCheckout).
   async openCheckout() {
     const { machine, project, branch, isRepo } = this.props;
     await openBranchCheckout({ machine, project, branch, isRepo, repos: this.repoShorts() }, (line) => { this.notice = line; });
     this.notice = "";
   }
 
-  // The review thread of the Overview's selected inline comment, or null.
   selectedThread() {
     if (this.tab !== "overview" || !this.pr) return null;
     const item = this.items()[this.at.overview];
     return item?.kind === "inline" ? threadOf(this.pr.inlineComments, Number(item.key.slice("inline-".length))) : null;
   }
 
-  // Sends prompt to Claude Code in the branch's checkout (askClaude), which opens that space.
   sendToClaude(cx, prompt, sent) {
     const { machine, project, branch, isRepo } = this.props;
     this.act(cx, async (cx) => {
@@ -649,9 +592,6 @@ export class Review {
     else this.sendToClaude(cx, watchPrompt(open), `Claude is watching ${open.map((pr) => `${pr.short} #${pr.number}`).join(", ")}.`);
   }
 
-  // The walkthrough mod over every PR of this review, read as one change: a plain repo's PR, or
-  // each linked repo's with paths under the repo's name. It reads the diffs with mr pr-diff, as
-  // the Files tab does, so a project on another machine works too.
   openWalkthrough() {
     const { machine, project, branch, isRepo } = this.props;
     const prs = this.data.prs.map((pr) => ({
@@ -664,8 +604,6 @@ export class Review {
     });
   }
 
-  // ------------------------------------------------------------- navigation
-
   selectPr(index) {
     this.prIndex = index;
     this.lineSelection = null;
@@ -676,7 +614,6 @@ export class Review {
     for (const name of Object.keys(this.at)) this.at[name] = 0;
   }
 
-  // commit: the Files tab shows that commit's diff (from the Commits tab); the tab bar shows the PR's.
   selectTab(cx, tab, commit = null) {
     this.tab = tab;
     this.commit = commit;
@@ -709,8 +646,6 @@ export class Review {
     this.moveTo(this.isDiffFocused ? Math.min(count - 1, Math.max(0, at + step)) : (at + step + count) % count);
   }
 
-  // Colors the shown PR's files one by one in the background, in diff order; each shows uncolored until delta answers.
-  // ponytail: one delta run per file; batch files into one run if big PRs color too slowly.
   highlightShownPr(cx) {
     const diff = this.shownDiff();
     if (!(diff instanceof Map) || this.highlightedPrDiffs.has(diff)) return;
@@ -748,7 +683,7 @@ export class Review {
     const stroke = e.keystroke;
     const pr = this.pr;
     const can = () => prActions(pr, this.data.viewer);
-    // "?" shows this view's keys; while they show, only ? and esc do anything.
+
     if (this.isShowingKeys || (isHelpKey(stroke) && !(this.compose || this.isLineCommentTyping || this.search.isTyping || this.reviewerPicker?.search.isTyping))) {
       if (!this.isShowingKeys || isHelpKey(stroke) || stroke === "escape") this.isShowingKeys = !this.isShowingKeys;
       cx.stop_propagation();
@@ -824,7 +759,7 @@ export class Review {
     else if (stroke === "y" && pr) this.copy(cx, pr.headRefName, "the branch name");
     else if (stroke === "shift-y" && pr) this.copy(cx, pr.url, "the PR's URL");
     else if (!pr || this.isBusy) return;
-    // As the header's buttons: a key whose button isn't shown does nothing (GitHub would refuse it).
+
     else if (stroke === "o") cx.open_url(pr.url);
     else if (stroke === "a" && can().canReview && !can().hasApproved) this.startCompose(cx, "approve");
     else if (stroke === "x" && can().canReview) this.startCompose(cx, "request-changes");
@@ -838,8 +773,6 @@ export class Review {
     cx.notify();
   }
 
-  // ----------------------------------------------------------------- render
-
   icon(name, size, color) {
     return svg(`mods/prs/icons/${name}.svg`).size(size).flex_none().text_color(color);
   }
@@ -852,7 +785,6 @@ export class Review {
       .child(div().text_size(12).font_semibold().child(prState(pr).replace(/^./, (c) => c.toUpperCase())));
   }
 
-  // A header button: an icon and a label; primary is filled, danger red.
   actionButton(id, icon, label, onClick, t, { isPrimary = false, isDanger = false, isDisabled = false, tooltip = "" } = {}) {
     const fill = isDanger ? t.blocked : isPrimary ? t.solid : t.raised;
     const text = isDisabled ? t.muted : isDanger || isPrimary ? t.solid_foreground : t.foreground;
@@ -952,7 +884,6 @@ export class Review {
         }))));
   }
 
-  // The shown PR's GitHub stack, base first; a click opens that layer's review.
   stackBar(pr, t) {
     const entries = [...pr.stack.entries].sort((a, b) => a.position - b.position);
     return h_flex().gap(6).items_center().flex_wrap()
@@ -971,7 +902,6 @@ export class Review {
       }));
   }
 
-  // Overview's right column: who reviews, what checks say, the other repos' PRs, the size.
   summary(pr, t) {
     const heading = (icon, text) => h_flex().gap(6).items_center().pt(4)
       .child(this.icon(icon, 13, t.dim)).child(div().text_size(11.5).font_semibold().text_color(t.muted).child(text));
@@ -1056,7 +986,6 @@ export class Review {
       .when(!isSelected, (el) => el.hover((s) => s.bg(t.hover)));
   }
 
-  // A check's icon and colour, the same in the Checks tab and the Overview's summary.
   checkLook(outcome, t) {
     return { "✓": ["check-circle", t.done], "✗": ["x-circle", t.blocked], "–": ["minus-circle", t.dim], "●": ["clock", t.working] }[checkMark(outcome)];
   }
@@ -1084,7 +1013,7 @@ export class Review {
       .when(isSelected && this.isDiffFocused, (el) => el.bg(t.hover))
       .child(div().flex_none().w(12).text_size(11).text_color(letter === "A" ? t.ansi2 : letter === "D" ? t.ansi1 : t.working).child(letter))
       .child(h_flex().flex_1().min_w(0)
-        // Narrow, the folder gives way well before the name (shrink weights 1000 to 1).
+
         .child(div().min_w(0).flex_shrink(1000).truncate().text_size(12).text_color(t.dim).child(parts.length ? `${parts.join("/")}/` : ""))
         .child(div().min_w(0).max_w(220).truncate().text_size(12).text_color(t.foreground).child(name)))
       .when(Boolean(file.isViewed), (el) => el.child(this.icon("check", 12, t.done)))
@@ -1104,14 +1033,12 @@ export class Review {
   diffRowHeight(row) {
     if (row.kind === "file") return FILE_HEADER_HEIGHT;
     if (row.kind === "thread") return this.threadLayout(row.comments).height;
-    // + 1: the card's top (box) or bottom (actions) border; without it the row clips the text box's bottom edge.
+
     if (row.kind === "comment-box") return CARD.rowPad + 1 + CARD.pad + COMMENT.head + 8 + LINE_COMMENT_INPUT_HEIGHT + (this.lineCommentError ? 8 + LINE_COMMENT_ERROR_HEIGHT : 0);
     if (row.kind === "comment-actions") return 8 + LINE_COMMENT_BUTTONS.height + CARD.pad + 1 + CARD.rowPad;
     return DIFF_ROW_HEIGHT;
   }
 
-  // A thread card's measures: each comment's body height (clipped while folded), whether it is long
-  // enough to fold, and the row's height.
   threadLayout(comments) {
     const isExpanded = this.expandedThreads.has(comments[0].url);
     const textWidth = this.diffWidth - CARD.left - CARD.right - 2 - 2 * CARD.pad - COMMENT.avatar - 10;
@@ -1123,16 +1050,12 @@ export class Review {
     return { bodies, isLong, isExpanded, height };
   }
 
-  // Initials in a circle: GitHub's avatars are web images, and image() draws only the app's files.
   avatar(login, t, size = COMMENT.avatar) {
     const initials = (login ?? "?").replace(/\[bot\]$/, "").split(/[-_.]/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
     return div().size(size).flex_none().rounded(size / 2).bg(`${t.accent}2e`).flex().items_center().justify_center()
       .text_size(size * 0.42).font_semibold().text_color(t.accent).child(initials);
   }
 
-  // A review thread under the line it ends on, as a card: the lines it is on, then each comment
-  // (initials, author, how long ago, its Markdown), the answers indented. A long one folds; a click
-  // on the card opens it.
   threadRow(row, t) {
     const { bodies, isLong, isExpanded, height } = this.threadLayout(row.comments);
     const [first] = row.comments;
@@ -1156,8 +1079,6 @@ export class Review {
         .when(isLong, (el) => el.child(div().h(COMMENT.head).text_size(12).font_medium().text_color(t.accent).child(isExpanded ? "Show less" : "Show more"))));
   }
 
-  // The box under the selected lines, as a card in two rows (the text, then its buttons): what it
-  // comments on (the file's name; its path on hover), the text box, and GitHub's error when it fails.
   lineCommentBoxRow(row, t) {
     const error = this.lineCommentError;
     const name = row.path.split("/").pop();
@@ -1173,8 +1094,6 @@ export class Review {
           .child(div().flex_1().min_w(0).h_full().overflow_hidden().text_size(12).text_color(t.blocked).child(error.replace(/\s*\n\s*/g, " · "))))));
   }
 
-  // The card's last row: a quiet hint, then Cancel and Comment at the right edge (pressLineCommentButton
-  // tells them apart). Comment is the primary button, dim until there is text and while posting.
   lineCommentActionsRow(t) {
     const { gap, comment, cancel, height } = LINE_COMMENT_BUTTONS;
     const isPosting = this.isPostingLineComment;
@@ -1198,7 +1117,7 @@ export class Review {
     if (row.kind === "comment-box") return this.lineCommentBoxRow(row, t);
     if (row.kind === "comment-actions") return this.lineCommentActionsRow(t);
     if (row.kind === "@") return div().w_full().px(12).h(DIFF_ROW_HEIGHT).flex_none().truncate().bg(t.raised).text_color(t.dim).child(row.text);
-    // A line that takes a comment shows a + in its gutter under the pointer (and on the key cursor's line).
+
     const canComment = !this.commit && Boolean(commentAnchor(row)) && !row.isLineSelected;
     return h_flex().w_full().h(DIFF_ROW_HEIGHT).flex_none().items_center()
       .when(row.kind === "+", (e) => e.bg(`${t.ansi2}18`))
@@ -1221,7 +1140,6 @@ export class Review {
       .child(text);
   }
 
-  // A virtual list with its scrollbar, rows built inside the list's callback.
   virtualList(id, items, height, rowFor, onClick, onLayout = () => {}) {
     return v_flex().relative().flex_1().min_h(0).min_w(0)
       .child(v_virtual_list(id, items.length, height, (i) => items[i].key ?? String(i), (range) => {
@@ -1258,7 +1176,7 @@ export class Review {
       const { rows, fileStarts } = this.diffView();
       const stickyHeader = rows[fileStarts[rows[this.diffTop]?.fileIndex]];
       const heights = rows.map((row) => this.diffRowHeight(row));
-      // A layout can't redraw the file list, so a wheel event does: it shows the file the last layout found on top.
+
       const followScroll = (range) => {
         this.diffTop = range.start;
         if (this.isFollowingDiffScroll) this.at.files = rows[range.start]?.fileIndex ?? this.at.files;
@@ -1269,20 +1187,19 @@ export class Review {
           .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(this.commit.headline))
           .child(div().flex_none().text_color(t.dim).child("esc: back to Commits · Files tab: the whole PR"))))
         .child(h_flex().flex_1().min_h(0)
-        // At most a third of a narrow tab, so the diff and its comment box keep room.
+
         .child(v_flex().w(340).max_w_1_3().flex_none().h_full().p(6).border_r(1).border_color(t.border)
           .child(this.virtualList("pr-files", items, 26, (file, i) => this.fileRow(file, i === at, t), pick)))
         .child(v_flex().id("pr-diff-area").relative().flex_1().min_w(0).h_full().font_family(settings().font_family ?? "JetBrains Mono").text_size(11.5)
           .on_size_change((size, cx) => {
-            const width = size.width / (settings().zoom ?? 1); // reported in zoomed pixels
+            const width = size.width / (settings().zoom ?? 1);
             if (Math.abs(width - this.diffWidth) < 1) return;
             this.diffWidth = width;
             cx.notify();
           })
-          // A press here stops before the view's own (which takes the keyboard): in the comment box it
-          // must stay with the text box, which took it already. A click on any other row takes it (clickDiffRow).
+
           .on_mouse_down("left", (e, cx) => {
-            // Positions come in zoomed pixels; the buttons are laid out in the px a mod writes.
+
             const fromRight = e.bounds && e.local_position ? (e.bounds.width - e.local_position.x) / (settings().zoom ?? 1) : -1;
             this.diffPress = { isShift: e.modifiers.shift, fromRight };
             cx.stop_propagation();
@@ -1296,7 +1213,7 @@ export class Review {
             this.clickDiffRow(cx, key);
             cx.notify();
           }, followScroll))
-          // The shown file's header stays on top, like GitHub's; it has no handlers, so the wheel still reaches the list.
+
           .when(Boolean(stickyHeader), (el) => el.child(div().absolute().top(0).left(0).right(0).child(this.fileHeaderRow(stickyHeader, t))))));
     }
     const rowFor = this.tab === "checks" ? (item, i) => this.checkRow(item, i === at, t) : (item, i) => this.commitRow(item, i === at, t);
@@ -1306,7 +1223,6 @@ export class Review {
     }));
   }
 
-  // The comment box: Write (Markdown source, growing with it) and Preview tabs, and a send button.
   composer(action, t) {
     const isPreview = this.isComposePreview;
     const body = this.composeInput.value();
@@ -1316,14 +1232,14 @@ export class Review {
     const preview = body.trim()
       ? TextView.markdown(`compose-preview-${this.previewVersion}`, body).text_size(13).text_color(t.foreground)
       : div().text_size(12.5).text_color(t.dim).child("Nothing to preview");
-    // A press in the box stays with it: the view's own press handler would take the keyboard back.
+
     return v_flex().id("compose-box").gap(6).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(`${action.label} ${this.pr.short} #${this.pr.number}: ${action.hint}`))
         .child(tab("compose-write", "Write", !isPreview, (cx) => this.setComposePreview(cx, false)))
         .child(tab("compose-preview", "Preview", isPreview, (cx) => this.setComposePreview(cx, true))))
       .child(isPreview
-        // The frame is a wrapper: on the scroll area itself, its bottom edge scrolls with the text.
+
         ? div().rounded(6).border(1).border_color(t.border).bg(t.background).overflow_hidden()
           .child(div().id("compose-preview-body").min_h(90).max_h(318).overflow_y_scrollbar().px(12).py(10).child(preview))
         : Textarea.new(this.composeInput).w_full().px(10).py(8).rounded(6).border(1).border_color(t.accent).bg(t.background).text_color(t.foreground).text_size(13))
@@ -1365,7 +1281,6 @@ export class Review {
       .child(div().text_size(11).text_color(t.dim).truncate().child(`? keys · ${hint}`));
   }
 
-  // Tells openReview this tab shows this branch; entries of tabs that are gone are dropped.
   publishTab() {
     const { machine, project, branch } = this.props;
     const tabs = new Set(spaces().flatMap((s) => s.tabs.map((t) => t.id)));
@@ -1373,8 +1288,6 @@ export class Review {
     setShared(OPEN_REVIEWS, Object.fromEntries([...kept, [this.ownTab, reviewKey(machine, project, branch)]]));
   }
 
-  // The tab this pane is in: the shown one at its first layout (a pane is laid out only while
-  // its tab shows; at init, focused() can still name the tab that was shown before).
   learnTab(cx) {
     this.start(cx);
     if (this.ownTab) return;
@@ -1383,10 +1296,6 @@ export class Review {
     this.onOwnTab?.(cx);
   }
 
-  // A new pane is Herdr's focused pane but doesn't hold the keyboard until clicked: take it
-  // when this pane becomes the focused one (opened, switched to). Only on that change: a
-  // palette or dialog opened over it leaves the pane focused and must keep its typing; when
-  // it closes Herdr sends "focus" (mod.json focusable), which hands the keyboard back.
   claimKeyboard(cx) {
     const isPaneFocused = panes().some((p) => p.mod === "prs" && p.tab === this.ownTab && p.focused);
     const isNewlyFocused = isPaneFocused && !this.wasPaneFocused;
@@ -1413,8 +1322,6 @@ export class Review {
   }
 }
 
-// One file's shown rows with the selected lines marked and the comment box under the last one.
-// The box goes after the threads already on that line.
 function withLineCommentBox(rows, path, range) {
   let at = rows.findIndex((row) => row.fileRow === range.end);
   while (rows[at + 1]?.kind === "thread") at++;
@@ -1426,8 +1333,6 @@ function withLineCommentBox(rows, path, range) {
   return [...marked.slice(0, at + 1), { kind: "comment-box", path, label }, { kind: "comment-actions" }, ...marked.slice(at + 1)];
 }
 
-// Where a merge lands: a stacked PR merges with the PRs below it into the stack's base.
-// The viewed marks this copy kept; a store that isn't JSON (written by hand) starts empty.
 function readViewed() {
   try {
     return JSON.parse(localStorage.getItem("viewed") ?? "{}") ?? {};

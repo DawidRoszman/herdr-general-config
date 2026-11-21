@@ -1,12 +1,8 @@
-# Starts the shared headless browser on this machine, unless it already runs, and prints
-# {"port", "state": "running" | "started"} or an error. Herdr's browser pane and the agents'
-# chrome-devtools-mcp (setup.sh) both attach to it on 127.0.0.1:$PORT.
 PORT=${HERDR_BROWSER_PORT:-9333}
 DIR="$HOME/.herdr/browser"
 alive() { curl -s --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1; }
 if alive; then echo "{\"port\":$PORT,\"state\":\"running\"}"; exit 0; fi
 
-# Chrome or Chromium: $HERDR_BROWSER, macOS's Chrome, Playwright's newest Chromium, then PATH.
 pick() {
   [ -n "$HERDR_BROWSER" ] && [ -x "$HERDR_BROWSER" ] && { echo "$HERDR_BROWSER"; return; }
   for b in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" "/Applications/Chromium.app/Contents/MacOS/Chromium"; do

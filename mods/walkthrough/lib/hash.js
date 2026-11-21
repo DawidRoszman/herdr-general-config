@@ -1,8 +1,3 @@
-// A small, deterministic string hash. Hunk ids and cache keys only need to
-// agree with themselves (one implementation decides them), not with any other
-// tool, so a fast non-cryptographic hash is enough and needs no host crypto.
-
-/** 53 bits of hash as 14 hex digits; `seed` gives an independent hash. */
 export function hash(text, seed = 0) {
   let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
   const s = String(text);
@@ -16,8 +11,6 @@ export function hash(text, seed = 0) {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
 }
 
-/** Eight hex digits: a hunk's identity inside one file. */
 export const shortHash = (text) => hash(text).slice(-8);
 
-/** Two independent hashes side by side, for keys that name files on disk. */
 export const longHash = (text) => hash(text, 1) + hash(text, 2);

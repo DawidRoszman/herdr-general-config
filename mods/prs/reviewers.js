@@ -1,8 +1,3 @@
-// The reviewer picker drawn over the review tab, for the shown PR: its requested reviewers come
-// ticked, then those who reviewed already (ticking one re-requests their review), then everyone
-// who can review in its repo. j/k move, space/x/click tick, / searches
-// (enter there ticks), enter sends the changes, esc cancels.
-
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { Search } from "./search.js";
@@ -11,14 +6,14 @@ import { requestedLogins, reviewerChoices, reviewerChanges, reviewVerdicts } fro
 const ROW_HEIGHT = 28;
 
 export class ReviewerPicker {
-  // Needs live host calls (input and scroll state), so it is made in a handler, never in render.
+
   constructor(pr, onSubmit) {
     this.pr = pr;
     this.onSubmit = onSubmit;
     this.requested = requestedLogins(pr);
-    this.verdicts = reviewVerdicts(pr); // who reviewed already: ticking them asks again
+    this.verdicts = reviewVerdicts(pr);
     this.ticked = new Set(this.requested);
-    this.choices = null; // null while the repo's people load
+    this.choices = null;
     this.error = "";
     this.at = 0;
     this.scroll = VirtualListScrollHandle.new();
@@ -53,8 +48,6 @@ export class ReviewerPicker {
     else this.ticked.add(login);
   }
 
-  // "close", "submit", true when the key was used, false to let it through (typing in the search).
-  // Keys it doesn't know are used up, so review actions (m, d, …) never fire under the picker.
   key(stroke, ownerHandle, cx) {
     if (this.search.isTyping) {
       if (stroke === "escape") this.search.escape(ownerHandle);

@@ -1,6 +1,3 @@
-// Herdr's key and mouse events as CDP Input commands. Pure: checked by `node input.test.mjs`.
-
-// GPUI key names -> [DOM key, DOM code, Windows virtual key code, text it types].
 const SPECIAL = {
   enter: ["Enter", "Enter", 13, "\r"],
   backspace: ["Backspace", "Backspace", 8],
@@ -17,18 +14,12 @@ const SPECIAL = {
   pagedown: ["PageDown", "PageDown", 34],
 };
 
-// Editing chords the page can't get from a headless key event alone: Chrome's own commands.
 const COMMANDS = { a: "selectAll", z: "undo", "shift-z": "redo", x: "cut", c: "copy" };
 
-// CDP's modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8.
 export function modifierBits(m = {}) {
   return (m.alt ? 1 : 0) | (m.control ? 2 : 0) | (m.platform ? 4 : 0) | (m.shift ? 8 : 0);
 }
 
-/**
- * What one key press sends: { insertText } for typed text, or { events: [CDP Input.dispatchKeyEvent
- * params] } for keys and chords, or null when the page has no use for it.
- */
 export function keyToCdp(event, isMac = true) {
   const m = event.modifiers ?? {};
   const isCommandChord = isMac ? m.platform : m.control;
@@ -51,18 +42,15 @@ export function keyToCdp(event, isMac = true) {
 
 const BUTTONS = { left: "left", right: "right", middle: "middle" };
 
-// A press, release or move at (x, y) in page pixels.
 export function mouseToCdp(type, event, x, y, pressedButton = "none") {
   const button = type === "mouseMoved" ? pressedButton : BUTTONS[event.button] ?? "left";
   return { type, x, y, button, buttons: button === "none" ? 0 : 1, clickCount: event.click_count ?? (type === "mouseMoved" ? 0 : 1), modifiers: modifierBits(event.modifiers) };
 }
 
-// A wheel or trackpad scroll: GPUI's delta is how far the content moves, CDP's how far the view does.
 export function wheelToCdp(event, x, y) {
   return { type: "mouseWheel", x, y, deltaX: -event.delta.x, deltaY: -event.delta.y, modifiers: modifierBits(event.modifiers) };
 }
 
-// What the address bar's text opens: a URL as typed, local addresses over http, else a search.
 export function addressToUrl(text) {
   const typed = text.trim();
   if (/^[a-z][a-z0-9+.-]*:/i.test(typed) && !/^(localhost|[\d.]+):\d/i.test(typed)) return typed;

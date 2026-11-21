@@ -1,9 +1,6 @@
-// Small pieces the walkthrough draws with.
-
 import { div } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
 
-/** kind: "solid" (the main action), "outline" or "ghost". A disabled button is dim and ignores clicks. */
 export function button(t, id, label, onClick, { kind = "outline", disabled = false, small = false, tooltip = null } = {}) {
   const solid = kind === "solid";
   const el = h_flex().id(id).flex_none().h(small ? 24 : 28).px(small ? 8 : 11).gap(6).items_center().justify_center()
@@ -20,22 +17,15 @@ export function button(t, id, label, onClick, { kind = "outline", disabled = fal
   return tooltip ? el.tooltip(tooltip) : el;
 }
 
-/** A small bordered label. */
 export const chip = (t, text, color, fill) => div().flex_none().px(6).h(18).flex().items_center().rounded(5).border_1()
   .border_color(color ?? t.border).when(Boolean(fill), (e) => e.bg(fill)).text_size(10.5).font_semibold().text_color(color ?? t.muted).child(text);
 
 const ROW = 30, ROW_WITH_HINT = 44, MENU_MAX = 360;
 
-/**
- * A picker's list: one row per option, the chosen one ticked, the highlighted
- * one (`active`, moved by the keyboard) filled. A virtual list, so the wheel
- * scrolls it and `scroll` (a VirtualListScrollHandle) keeps the highlight in
- * view; its rows take no handlers, so a click comes through `on_item_click`.
- */
 export function menu(t, id, items, onPick, { width = 280, active = -1, scroll = null } = {}) {
   const frame = v_flex().id(`${id}-frame`).w(width).p(4).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_lg()
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    // The list scrolls first; the wheel stops here instead of also scrolling the page under the menu.
+
     .on_scroll_wheel((_e, cx) => cx.stop_propagation());
   if (!items.length) return frame.child(div().p(8).text_size(12).text_color(t.dim).child("Nothing to pick."));
   const sizes = items.map((item) => (item.hint ? ROW_WITH_HINT : ROW));
@@ -55,7 +45,6 @@ export function menu(t, id, items, onPick, { width = 280, active = -1, scroll = 
   return frame.child(div().relative().w_full().h(height).child(list).child(Scrollbar.vertical(id).absolute().inset_0()));
 }
 
-/** A dropdown's face: its label and a caret. */
 export function picker(t, id, label, onClick, { disabled = false, tooltip = null, kind = "outline" } = {}) {
   return button(t, id, h_flex().gap(5).items_center().child(div().max_w(220).truncate().child(label)).child(div().text_color(t.dim).text_size(9).child("▼")), onClick, { small: true, disabled, tooltip, kind });
 }

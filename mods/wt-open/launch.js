@@ -1,5 +1,3 @@
-// Opens the shipped worktree dialog for the focused space, so a key can reach it:
-// keys.json's mod.open passes no props, and the dialog needs the space to find the repo.
 import { View, div } from "gpui-kit";
 import { props, openOverlay, closeOverlay, focused } from "herdr";
 

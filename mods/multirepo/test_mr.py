@@ -1,5 +1,3 @@
-"""Self-check for mr.py: python3 -I test_mr.py (no GitHub; local bare repos stand in for origin)."""
-
 import json
 import os
 import subprocess
@@ -9,9 +7,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import mr  # noqa: E402
+import mr
 
-# Pure helpers.
 assert mr.branch_slug("feat/SHOP-130-x") == "feat-SHOP-130-x"
 assert mr.title_from_branch("feat/SHOP-130-checkout-flow") == "feat(SHOP-130): checkout flow"
 assert mr.title_from_branch("fix/typo-in-readme") == "fix: typo in readme"
@@ -32,7 +29,6 @@ assert mr.split_repo_branches(["backend", "portal=fix/other-name"]) == (["backen
 assert mr.resolve_repos(["backend", "portal=fix/x", "backend"], ["acme-shop-backend", "acme-shop-portal"]) == (
     ["acme-shop-backend", "acme-shop-portal"], {"acme-shop-portal": "fix/x"})
 
-# gh runs in the project's direnv environment: --in wins, then --repo; a slug-only command has none.
 assert mr.gh_folder(mr.parser().parse_args(["--in", "/x/Proj", "pr-diff", "acme/api", "3"])) == Path("/x/Proj")
 assert mr.gh_folder(mr.parser().parse_args(["prs", "--repo", "/x/repo"])) == Path("/x/repo")
 assert mr.gh_folder(mr.parser().parse_args(["pr-diff", "acme/api", "3"])) is None
@@ -40,7 +36,6 @@ os.environ["MR_TEST_GONE"] = "1"
 mr.apply_env({"MR_TEST_SET": "a", "MR_TEST_GONE": None})
 assert os.environ["MR_TEST_SET"] == "a" and "MR_TEST_GONE" not in os.environ
 
-# Branches for one ticket: test/X-1 beside feat/X-1, never X-10 or another ticket.
 assert mr.ticket_key("feat/SHOP-110-cart-page") == "SHOP-110" and mr.ticket_key("main") is None
 assert mr.ticket_key("feat/T-1b") is None, "a letter after the number makes it another name"
 refs = ["refs/heads/main", "refs/remotes/origin/HEAD", "refs/remotes/origin/test/SHOP-110-e2e", "refs/heads/test/SHOP-110-e2e",
@@ -48,7 +43,6 @@ refs = ["refs/heads/main", "refs/remotes/origin/HEAD", "refs/remotes/origin/test
 assert mr.same_ticket_branches("feat/SHOP-110-cart-page", refs) == ["test/SHOP-110-e2e"]
 assert mr.same_ticket_branches("main", refs) == []
 
-# A repo GitHub refuses comes back with gh's reason, even when gh printed no JSON.
 real_run = subprocess.run
 subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 1, "<html>502</html>", "HTTP 502: Bad Gateway\nmore")
 try:
@@ -142,13 +136,11 @@ assert [c.get("workflowName", c.get("context")) for c in detail["statusCheckRoll
 assert detail["statusCheckRollup"][0]["workflowEvent"] == "pull_request"
 assert detail["comments"][0]["author"] == {"login": "a"}
 
-# Restack plan: merged layers drop out; the first open one goes onto the base, after the merged tip.
-layer = lambda position, state, head, oid: {"position": position, "pullRequest": {"state": state, "headRefName": head, "headRefOid": oid}}  # noqa: E731
+layer = lambda position, state, head, oid: {"position": position, "pullRequest": {"state": state, "headRefName": head, "headRefOid": oid}}
 assert mr.restack_plan("develop", [layer(3, "OPEN", "c", "3"), layer(1, "MERGED", "a", "1"), layer(2, "OPEN", "b", "2")]) == [
     {"branch": "b", "onto": "develop", "after": "1"}, {"branch": "c", "onto": "b", "after": "2"}]
 assert mr.restack_plan("develop", [layer(1, "OPEN", "a", "1")]) == [{"branch": "a", "onto": "develop", "after": None}]
 
-# A task outside its project's folder loads the project's direnv .envrc (the nearest above it) through its own.
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     (tmp / "work" / "shop").mkdir(parents=True)
@@ -167,7 +159,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not (tmp / "plain" / ".envrc").exists(), "no project .envrc, none written"
     mr.shutil.which, subprocess.run = real_which, real_run
 
-# End to end with a fake HOME so the registry and workspaces stay in the temp folder.
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp).resolve()
     env = {**os.environ, "HOME": str(tmp), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -205,7 +196,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert status["repos"][0]["dirty"] == 1
     refused = mrcmd("rm", cwd=task, check=False)
     assert refused.returncode == 1 and "uncommitted" in refused.stderr
-    # Something put in the task folder itself is work too; Finder's .DS_Store is not.
     (task / "notes.md").write_text("todo")
     (task / ".DS_Store").write_bytes(b"\0")
     stray = mrcmd("rm", cwd=task, check=False)
@@ -220,15 +210,12 @@ with tempfile.TemporaryDirectory() as tmp:
     mrcmd("push", cwd=task)
     assert json.loads(mrcmd("status", "--json", "--no-pr", cwd=task).stdout)["repos"][0]["unpushed"] == 0
 
-    # A task stacked on that one: backend builds on its branch, portal (never on it) on develop.
     child = tmp / ".herdr" / "projects" / "Proj" / "feat-T-1b"
     mrcmd("new", "feat/T-1b", "backend", "portal", "--on", "feat/T-1-thing", cwd=project)
     assert json.loads((child / ".mr-task.json").read_text())["on"] == "feat/T-1-thing"
     bases = {r["name"]: (r["base"], r["ahead"]) for r in json.loads(mrcmd("status", "--json", "--no-pr", cwd=child).stdout)["repos"]}
     assert bases == {"proj-backend": ("feat/T-1-thing", 0), "proj-portal": ("develop", 0)}, bases
     assert (child / "proj-backend" / "new.txt").exists()
-    # Layers that don't record their parent (made without --on, then rebuilt on it) are found from git,
-    # each on the nearest one below it.
     def loose_layer(branch: str, on: str) -> Path:
         folder = tmp / ".herdr" / "projects" / "Proj" / branch.replace("/", "-")
         mrcmd("new", branch, "backend", cwd=project)
@@ -251,7 +238,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert listed["tasks"][0]["repos"] == ["proj-backend", "proj-portal"]
     assert listed["shorts"] == {"helper": "helper", "proj-backend": "backend", "proj-portal": "portal"}
 
-    # A repo without the task's branch takes its one branch for the same ticket (test/ beside feat/).
     sh("git", "-C", str(project / "helper"), "push", "-q", "origin", "main:test/T-1-e2e")
     mrcmd("add", "helper", cwd=task)
     assert sh("git", "-C", str(task / "helper"), "branch", "--show-current").stdout.strip() == "test/T-1-e2e"
@@ -260,7 +246,6 @@ with tempfile.TemporaryDirectory() as tmp:
     own = {r["name"]: r["branch"] for r in json.loads(mrcmd("status", "--json", "--no-pr", cwd=task).stdout)["repos"]}
     assert own == {"proj-backend": "feat/T-1-thing", "proj-portal": "feat/T-1-thing", "helper": "test/T-1-e2e"}, own
 
-    # A repo whose branch someone named differently joins a task as repo=branch; its PRs belong to the task.
     sh("git", "-C", str(project / "helper"), "push", "-q", "origin", "main:odd/helper-name")
     mrcmd("new", "feat/T-3-odd", "backend", "helper=odd/helper-name", cwd=project)
     odd = tmp / ".herdr" / "projects" / "Proj" / "feat-T-3-odd"
@@ -272,7 +257,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert scope.branches_of("helper", ["feat/T-3-odd"]) == ["feat/T-3-odd", "odd/helper-name"]
     assert scope.branches_of("proj-backend", ["feat/T-3-odd"]) == ["feat/T-3-odd"]
     assert scope.task_for("odd/helper-name") == str(odd)
-    # pr-view for the task's branch asks GitHub for helper's own branch too, so the review shows its PR.
     import contextlib, io
     real_full_pr, real_slug = mr.full_pr, mr.github_slug
     mr.github_slug = lambda url: f"o/{Path(url).name.removesuffix('.git')}"
@@ -288,25 +272,21 @@ with tempfile.TemporaryDirectory() as tmp:
     mr.WORKSPACES = real_workspaces
     mrcmd("rm", cwd=odd)
 
-    # Cloning the project elsewhere from its manifest (the "new remote" path).
     clone_root = tmp / "elsewhere" / "Proj"
     mrcmd("clone", str(project / ".mr.json"), str(clone_root))
     assert sorted(p.name for p in clone_root.iterdir()) == [".mr.json", "helper", "proj-backend", "proj-portal"]
 
-    # gh is not reachable here, so rm sees no PR and keeps the branches.
     removed = mrcmd("rm", cwd=task)
     assert not task.exists(), removed.stdout
     assert "kept branch feat/T-1-thing" in removed.stdout
 
-    # A plain repo (--repo): not on GitHub here, so prs has nothing to watch and says why.
     plain = json.loads(mrcmd("prs", "--repo", str(project / "helper")).stdout)
     assert plain["isRepo"] and plain["prs"] == [] and plain["skipped"] == "not a GitHub repo" and plain["project"] == "helper"
 
-    # Restack: develop <- feat/A <- feat/B; A gets a review fix pushed, B is rebased onto it.
     for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
         os.environ[key] = env[key]
     backend = project / "proj-backend"
-    g = lambda repo, *args: sh("git", "-C", str(repo), *args).stdout.strip()  # noqa: E731
+    g = lambda repo, *args: sh("git", "-C", str(repo), *args).stdout.strip()
 
     def commit(repo, name, text):
         (repo / name).write_text(text)
@@ -325,14 +305,13 @@ with tempfile.TemporaryDirectory() as tmp:
     sh("git", "clone", "-q", "-b", "feat/A", str(tmp / "origin" / "proj-backend.git"), str(reviewer))
     commit(reviewer, "fix.txt", "fix")
     g(reviewer, "push", "-q", "origin", "feat/A")
-    stack = lambda: mr.restack_plan("develop", [layer(1, "OPEN", "feat/A", g(reviewer, "rev-parse", "feat/A")),  # noqa: E731
+    stack = lambda: mr.restack_plan("develop", [layer(1, "OPEN", "feat/A", g(reviewer, "rev-parse", "feat/A")),
                                                 layer(2, "OPEN", "feat/B", g(backend, "rev-parse", "origin/feat/B"))])
     assert mr.restack_layers(backend, stack()) == "restacked feat/B"
     assert g(backend, "rev-parse", "origin/feat/B") == g(wt_b, "rev-parse", "HEAD"), "the checkout follows"
     assert mr.is_ancestor(backend, g(reviewer, "rev-parse", "feat/A"), "origin/feat/B")
     assert g(backend, "rev-list", "--count", "origin/feat/A..origin/feat/B") == "1"
     assert mr.restack_layers(backend, stack()) == "up to date"
-    # A change to A that clashes with B's file: nothing is pushed and no scratch worktree is left.
     commit(reviewer, "b.txt", "clash")
     g(reviewer, "push", "-q", "origin", "feat/A")
     before = g(backend, "rev-parse", "origin/feat/B")

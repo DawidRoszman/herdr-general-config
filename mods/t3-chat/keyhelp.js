@@ -1,6 +1,3 @@
-// The "?" key list drawn over a view (a copy of prs/keyhelp.js: mods can't import across folders).
-// Sections: [{ title, rows: [[keys, what]] }], read from this mod's help-keys.json.
-
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { appHome, readTextFile } from "herdr";

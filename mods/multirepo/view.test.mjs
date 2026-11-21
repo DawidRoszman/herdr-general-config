@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, remoteCommand, stackOrder } from "./view.js";
+import { pickedRepos, repoArgs, changeBadge, baseLabel, prLabel, remoteCommand, stackOrder, sandboxPlace, taskName } from "./view.js";
 
 const names = ["helper-scripts-shop", "acme-shop-backend", "acme-shop-portal"];
 const shorts = { "helper-scripts-shop": "helper-scripts-shop", "acme-shop-backend": "backend", "acme-shop-portal": "portal" };
@@ -17,7 +17,7 @@ assert.equal(prLabel(null), "no PR");
 assert.equal(prLabel({ number: 7, state: "OPEN", isDraft: true }), "PR #7 draft");
 assert.equal(prLabel({ number: 7, state: "MERGED", isDraft: false }), "PR #7 merged");
 assert.equal(remoteCommand(["new", "feat/x", "it's"]), `python3 - 'new' 'feat/x' 'it'\\''s'`);
-// Stacks: the bottom where its first layer was, each layer after the one it builds on; recorded or found.
+
 const task = (branch, on = null, stackedOn = on) => ({ branch, root: `/t/${branch}`, on, stackedOn });
 const ordered = stackOrder([task("c", "b"), task("x"), task("a"), task("b", null, "a"), task("d", "c"), task("e", "gone")]);
 assert.deepEqual(ordered.map((t) => [t.branch, t.depth, t.stack.join(" ")]), [
@@ -26,3 +26,18 @@ assert.equal(ordered[2].parent, "a", "a parent found from git counts as one reco
 assert.deepEqual(stackOrder([task("p", "q"), task("q", "p")]).map((t) => t.branch), ["p", "q"], "a loop of parents still lists every task");
 assert.deepEqual(stackOrder([task("r"), task("s", "r"), task("t", "r")]).map((t) => t.depth), [0, 1, 1], "a fork: both under the one below");
 console.log("view.js ok");
+
+{
+  const shop = { places: [{ machine: "box", root: "/srv/shop" }], coordinator: { folder: "/Users/me/shop/coordinator" } };
+  const context = (machines) => ({ current: "work", profiles: { work: { agents: { machines }, projects: { shop, bare: { places: [{ machine: "box", root: "/srv/bare" }] } } } } });
+  assert.deepEqual(sandboxPlace(context({ box: [] }), "box", "/srv/shop"), { project: "shop", coordinator: "/Users/me/shop/coordinator", isSandboxFirst: true });
+  assert.equal(sandboxPlace(context({ box: ["claude"] }), "box", "/srv/shop").isSandboxFirst, false, "agents allowed there: the machine first");
+  assert.equal(sandboxPlace(context({}), "box", "/srv/shop").isSandboxFirst, false, "machine not held");
+  assert.equal(sandboxPlace(context({ box: [] }), null, "/srv/shop"), null, "this Mac holds no sandboxes");
+  assert.equal(sandboxPlace(context({ box: [] }), "box", "/srv/bare"), null, "no coordinator folder to start it from");
+  assert.equal(sandboxPlace(context({ box: [] }), "other", "/srv/shop"), null);
+  assert.equal(sandboxPlace(undefined, "box", "/srv/shop"), null, "no profiles");
+  assert.equal(taskName("feat/SHOP-148-input-validation"), "SHOP-148");
+  assert.equal(taskName("chore/cleanup"), "chore/cleanup");
+  console.log("sandboxPlace, taskName: ok");
+}

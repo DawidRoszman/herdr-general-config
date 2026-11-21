@@ -1,15 +1,11 @@
-// The one way a popup's list moves. scripts/sync.sh copies this to the mods that use it.
 import { div } from "gpui-kit";
 import { settings } from "herdr";
 
-// ↑/↓, round the ends; with nothing lit, ↓ is the first row and ↑ the last. The row to move to, or -1 for any other key.
 export function step(e, at, n) {
   if (!n || (e.key !== "down" && e.key !== "up")) return -1;
   return e.key === "down" ? (at + 1) % n : (at <= 0 ? n : at) - 1;
 }
 
-// A menu with no search field, as T3's Base UI menus: ↑/↓, Home, End, and typing a row's first letters (750ms apart at most);
-// the same letter again steps through the rows it starts. The row to move to, or -1 for any other key.
 export function menuJump(view, e, labels, at) {
   const moved = step(e, at, labels.length);
   if (moved >= 0) return moved;
@@ -27,15 +23,10 @@ export function menuJump(view, e, labels, at) {
   return -1;
 }
 
-// A list that keeps the highlight in view: a scroll area can't be told to scroll, and a virtual list's rows can't hold handlers.
-// Every row is `row` px apart and only those in view are drawn. `at`: the highlighted row, or -1 if it's not in this list.
-// `height`: the list's, when the caller knows it; else the caller sizes the list and it's measured, every row drawn until then.
-// `wheeled(keep, cx)`: the wheel moved the list; put the highlight on row `keep` (-1: it's not in this list), or the next frame scrolls back to it.
-/** @param {any} view @param {string} id @param {{ count: number, row: number, at?: number, height?: number, draw: any, wheeled?: any }} options */
 export function scrollList(view, id, { count, row, at = -1, height, draw, wheeled }) {
   const seen = height ?? view.listHeight?.[id], max = seen === undefined ? 0 : Math.max(0, count * row - seen);
   let top = Math.max(0, Math.min(view.scrollTop?.[id] ?? 0, max));
-  // The row the pointer lit stays where it is: brought wholly into view, the row under the pointer changes and the list follows the pointer.
+
   const pointed = view.pointerY?.[id] === undefined ? -1 : Math.floor((view.pointerY[id] + top) / row);
   if (at >= 0 && at < count && at !== pointed && seen !== undefined) top = Math.max(0, Math.min(top, at * row, max), (at + 1) * row - seen);
   view.scrollTop = { ...view.scrollTop, [id]: top };
@@ -50,9 +41,9 @@ export function scrollList(view, id, { count, row, at = -1, height, draw, wheele
     }))
     .on_mouse_move((e) => { view.pointerY = { ...view.pointerY, [id]: e.local_position.y / (Number(settings()?.zoom) || 1) }; })
     .on_hover((on) => { if (!on) view.pointerY = { ...view.pointerY, [id]: undefined }; })
-    // From the scroll as it is now: a trackpad sends several events between two renders.
+
     .on_scroll_wheel((e, cx) => {
-      // Herdr hands a wheel to what's under a popup too.
+
       cx.stop_propagation();
       const from = view.scrollTop[id], next = Math.max(0, Math.min(from - e.delta.y / (Number(settings()?.zoom) || 1), max));
       if (next === from) return;

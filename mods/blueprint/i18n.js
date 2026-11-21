@@ -1,10 +1,3 @@
-// UI text in English (the default), Korean and Japanese. The language follows
-// Claude Code's `language` setting (~/.claude/settings.json): the agent next to
-// Blueprint answers in it. Anything else, or no setting, is English.
-//
-// What goes to the agent ("In Blueprint I pointed at ...") stays English: the
-// Blueprint skill recognises that wording. The person's own note goes as typed.
-
 export const LANGS = ["en", "ko", "ja"];
 
 export function pickLang(value) {
@@ -14,8 +7,6 @@ export function pickLang(value) {
   return "en";
 }
 
-// Shortcut keys typed with a Korean (2-set) or Japanese (kana) input source on:
-// the same physical keys, as the characters they type.
 export const KEY_ALIASES = { "ㄷ": "e", "ㄹ": "f", "い": "e", "は": "f" };
 
 const TEXT = {

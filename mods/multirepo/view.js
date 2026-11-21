@@ -1,12 +1,5 @@
-// Pure helpers for the multirepo dialog. Checked by `node view.test.mjs`.
-
-// The shared key the dialog stamps when a task was made, changed or removed; the Projects tab reloads on it.
 export const CHANGED = "multirepo.changed";
 
-// Repos named after the branch when a task is started ("feat/x backend portal=fix/other"), as picked
-// repos: a word picks the repo whose short name (mr ls's "shorts") or full name it is, else it's unknown;
-// "repo=branch" also names the branch that repo takes (one someone named differently), in branches.
-// Nothing is guessed: mr new matches loosely, the picker only ticks what is plainly meant.
 export function pickedRepos(words, names, shorts) {
   const picked = [];
   const unknown = [];
@@ -23,19 +16,16 @@ export function pickedRepos(words, names, shorts) {
   return { picked: [...new Set(picked)], unknown, branches };
 }
 
-// The repo words mr new / mr add take: "name" or "name=branch" for a repo with a branch of its own.
 export function repoArgs(names, branches) {
   return names.map((name) => (branches[name] ? `${name}=${branches[name]}` : name));
 }
 
-// "+2 ↑1 ●3" for one repo's status; empty when it matches its base.
 export function changeBadge(status) {
   return [status.ahead && `+${status.ahead}`, status.behind && `-${status.behind}`, status.unpushed && `↑${status.unpushed}`, status.dirty && `●${status.dirty}`]
     .filter(Boolean)
     .join(" ");
 }
 
-// "on test/X-1 · vs develop" for a repo on a branch of its own in the task, else "vs develop".
 export function baseLabel(repo, taskBranch) {
   return [repo.branch && repo.branch !== taskBranch ? `on ${repo.branch}` : "", `vs ${repo.base}`].filter(Boolean).join(" · ");
 }
@@ -45,16 +35,10 @@ export function prLabel(pr) {
   return `PR #${pr.number} ${pr.isDraft && pr.state === "OPEN" ? "draft" : pr.state.toLowerCase()}`;
 }
 
-// Quotes each argument for the remote shell ssh hands the command to.
 export function remoteCommand(args) {
   return ["python3", "-", ...args].map((a) => (a === "python3" || a === "-" ? a : `'${a.replaceAll("'", "'\\''")}'`)).join(" ");
 }
 
-// A project's tasks in stack order: each stack's bottom where its first layer was listed, then each layer
-// right after the one it builds on (depth first, as the sidebar nests spaces). Each task comes with:
-//   parent: the branch it builds on (mr's stackedOn, else its recorded on), or null;
-//   depth: how many listed layers are below it;
-//   stack: its whole stack's branches, bottom first; [] when it is in none.
 export function stackOrder(tasks) {
   const parentOf = (task) => task.stackedOn ?? task.on ?? null;
   const listed = new Set(tasks.map((task) => task.branch));
@@ -77,6 +61,18 @@ export function stackOrder(tasks) {
     const layers = layersFrom(task, []);
     visit(task, 0, layers.length > 1 || parentOf(task) ? layers : []);
   }
-  for (const task of tasks) visit(task, 0, []); // parents in a loop: listed as they come
+  for (const task of tasks) visit(task, 0, []);
   return out;
 }
+
+export function sandboxPlace(context, machine, root) {
+  const profile = context?.profiles?.[context.current];
+  if (!profile || !machine) return null;
+  for (const [project, { places = [], coordinator }] of Object.entries(profile.projects ?? {})) {
+    if (!coordinator?.folder || !places.some((p) => p.machine === machine && p.root === root)) continue;
+    return { project, coordinator: coordinator.folder, isSandboxFirst: profile.agents?.machines?.[machine]?.length === 0 };
+  }
+  return null;
+}
+
+export const taskName = (branch) => /[A-Z][A-Z0-9]*-\d+/.exec(branch)?.[0] ?? branch;

@@ -1,11 +1,3 @@
-// A browser pane. It shows the shared headless Chrome on the space's machine (launch.sh starts it
-// on 127.0.0.1:9333) as a live screencast; clicks, typing and scrolling go to the page. Agents
-// drive the same browser through chrome-devtools-mcp (setup.sh), so you and they see one page:
-// when an agent opens a tab, the pane follows it.
-//
-// props: { machine? } (null: this computer; omitted: the focused space's machine).
-// A remote machine's browser is reached through an ssh tunnel (ssh -f -L) to a local port.
-
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { exec, hc, appHome, readTextFile, theme, spaces, focused, props, settings, panes, run } from "herdr";
@@ -13,31 +5,24 @@ import { writeFile, unlink, mkdir } from "fs/promises";
 import { Cdp, decodeBase64 } from "./cdp.js";
 import { keyToCdp, mouseToCdp, wheelToCdp, addressToUrl } from "./input.js";
 
-const BROWSER_PORT = 9333; // launch.sh's, on every machine
+const BROWSER_PORT = 9333;
 const TUNNEL_PORTS = { first: 19300, count: 600 };
-// Herdr reloads a changed image only under mods/, and a file written in a mod's own folder reloads
-// the mod: so a folder of its own under mods/ that is no mod (no main.js).
+
 const FRAMES = "mods/browser-frames";
-// Frame files rewritten in turn, all drawn, newest on top: Herdr reloads a rewritten image a moment
-// later, so the oldest is rewritten while the newer ones cover it (no flicker), and the image cache
-// holds this many images, not one per frame.
+
 const FRAME_SLOTS = ["a", "b", "c", "d"];
-// At most one frame this often: each file then stays unchanged for FRAME_MS × the other slots
-// (~250 ms), long enough for Herdr to reload it; faster, every slot is mid-reload and the view blinks.
+
 const FRAME_MS = 80;
-const LIST_MS = 1000; // how often the tab list (and an agent's new tab) is looked at
-const MOVE_MS = 30; // mouse moves sent at most this often
-const WHEEL_MS = 33; // wheel ticks (a trackpad sends ~120 a second) summed and sent at most this often
-// While the page moves, frames stream small (remote ones cross an ssh tunnel); once it has been still
-// for SETTLE_MS, one full-size screenshot replaces them, so a still page is sharp.
+const LIST_MS = 1000;
+const MOVE_MS = 30;
+const WHEEL_MS = 33;
+
 const MOVING_FRAMES = { local: { scale: 1, quality: 55 }, remote: { scale: 0.75, quality: 45 } };
 const STILL_QUALITY = 85;
 const SETTLE_MS = 300;
-// Frames right after that screenshot are its own echo (taking it repaints): not shown, so the sharp
-// frame stays, and not counted as movement, so it isn't taken again and again.
+
 const ECHO_MS = 400;
-// Decoding a frame in the mod's JavaScript takes ~30 ms of Herdr's own thread; base64(1) does it in
-// another process. The frame goes as an argument, so it must fit one (macOS: 1 MiB for them all).
+
 const DECODE = 'printf %s "$1" | base64 -D > "$2.part" && mv "$2.part" "$2"';
 const MAX_NATIVE_FRAME = 900_000;
 
@@ -54,7 +39,6 @@ async function sshTarget(machine) {
   return found.target;
 }
 
-// The same local port for a machine every time, so a tunnel made earlier is found again.
 function tunnelPort(machine) {
   let hash = 0;
   for (const c of machine) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
@@ -73,28 +57,28 @@ export default class Browser extends View {
   init(_props, cx) {
     const given = props() ?? {};
     this.machine = "machine" in given ? given.machine : shownMachine();
-    this.id = Math.random().toString(36).slice(2, 8); // this pane's frame files
+    this.id = Math.random().toString(36).slice(2, 8);
     this.handle = cx.focus_handle();
     this.address = InputState.new({ placeholder: "Search or type a URL (localhost:3000 opens over http)" });
     this.address.on("submit", (_e, cx) => this.navigate(cx, addressToUrl(this.address.value())));
     this.isEditingAddress = false;
     this.address.on("focus", () => { this.isEditingAddress = true; });
     this.address.on("blur", () => { this.isEditingAddress = false; });
-    this.port = null; // where this machine's browser answers, here
-    this.pages = []; // the browser's tabs, from /json/list
-    this.seenPages = null; // ids already listed: a new one (an agent's) is followed
+    this.port = null;
+    this.pages = [];
+    this.seenPages = null;
     this.targetId = null;
     this.cdp = null;
-    this.frames = []; // the last two frames' paths, older first: both drawn, newest on top
+    this.frames = [];
     this.frameCount = 0;
     this.pendingFrame = null;
     this.isWritingFrame = false;
     this.viewSize = null;
     this.pressedButton = "none";
     this.lastMoveAt = 0;
-    this.wheel = null; // { x, y, deltaX, deltaY } waiting to be sent
+    this.wheel = null;
     this.status = "Starting the browser…";
-    this.notice = ""; // what "Connect agents" answered
+    this.notice = "";
     this.error = "";
     cx.spawn(async (cx) => {
       try {
@@ -114,7 +98,6 @@ export default class Browser extends View {
     return this.machine ?? "this computer";
   }
 
-  // Starts (or finds) the browser on the machine, and for a remote one, the tunnel to it.
   async startBrowser() {
     const script = await readTextFile(`${appHome()}/mods/browser/launch.sh`);
     const started = await exec("sh", ["-c", script], { on: this.machine ?? undefined });
@@ -124,7 +107,7 @@ export default class Browser extends View {
     if (await isListening(port)) return port;
     this.status = `Connecting to ${this.machine}'s browser…`;
     const target = await sshTarget(this.machine);
-    // -f puts ssh in the background once the tunnel is up; its output is dropped so exec returns.
+
     const tunnel = `ssh -f -N -o BatchMode=yes -o ExitOnForwardFailure=yes -L 127.0.0.1:${port}:127.0.0.1:${BROWSER_PORT} "$1" >/dev/null 2>&1 </dev/null`;
     await exec("sh", ["-c", tunnel, "sh", target]);
     if (!(await isListening(port))) throw new Error(`Could not reach ${this.machine}'s browser through ssh (port ${port}).`);
@@ -136,7 +119,6 @@ export default class Browser extends View {
     return list.filter((t) => t.type === "page");
   }
 
-  // The tabs; follows a tab that just appeared (an agent opened it) or a closed shown one.
   async refreshPages(cx) {
     let pages;
     try {
@@ -170,9 +152,8 @@ export default class Browser extends View {
     this.cdp = cdp;
     cx.spawn(async (cx) => {
       await cdp.run();
-      if (this.cdp !== cdp) return; // replaced on purpose (another tab, a resize)
-      // Closed under us (the tab crashed or closed, Chrome restarted): attach again, to the same
-      // tab if it is still there; the next tab list does it otherwise.
+      if (this.cdp !== cdp) return;
+
       this.cdp = null;
       const again = (await this.listPages().catch(() => [])).find((p) => p.id === this.targetId);
       if (again) await this.attach(cx, again).catch((error) => { this.error = String(error.message ?? error); });
@@ -200,9 +181,6 @@ export default class Browser extends View {
     this.cdp = null;
   }
 
-  // The browser window sized so the page is as big as the pane, and frames to match. Headless
-  // Chrome screencasts its window (an emulated viewport isn't streamed), so the agent sees the
-  // same viewport you do.
   async fitPage(cx) {
     const cdp = this.cdp;
     if (!cdp || !this.viewSize) return;
@@ -221,7 +199,6 @@ export default class Browser extends View {
     }
   }
 
-  // A full-size screenshot once nothing has changed for SETTLE_MS (each new frame starts the wait again).
   settle(cx) {
     const token = (this.settleToken = (this.settleToken ?? 0) + 1);
     cx.timer.after(SETTLE_MS, () => {
@@ -236,7 +213,6 @@ export default class Browser extends View {
     });
   }
 
-  // Frames arrive faster than files get written: only the newest waiting one is written.
   queueFrame(cx, data) {
     this.pendingFrame = data;
     if (this.isWritingFrame) return;
@@ -248,7 +224,7 @@ export default class Browser extends View {
           this.pendingFrame = null;
           const n = ++this.frameCount;
           const startedAt = Date.now();
-          // The slot not on top; the one under it is written while the top one covers it.
+
           const path = `${FRAMES}/${this.id}-${FRAME_SLOTS[n % FRAME_SLOTS.length]}.jpg`;
           await this.writeFrame(`${appHome()}/${path}`, data);
           const wait = FRAME_MS - (Date.now() - startedAt);
@@ -304,7 +280,6 @@ export default class Browser extends View {
     await this.refreshPages(cx);
   }
 
-  // Registers the browser as chrome-devtools-mcp for the machine's Claude Code and Codex (setup.sh).
   connectAgents(cx) {
     this.notice = `Connecting ${this.machineLabel}'s agents…`;
     cx.spawn(async (cx) => {
@@ -344,8 +319,6 @@ export default class Browser extends View {
     }
     cx.stop_propagation();
   }
-
-  // ----------------------------------------------------------------- render
 
   icon(name, t) {
     return svg(`mods/browser/icons/${name}.svg`).size(14).flex_none().text_color(t.muted);
@@ -387,14 +360,10 @@ export default class Browser extends View {
       .child(this.button("new-tab", "plus", "New tab · cmd-t", (cx) => cx.spawn(async (cx) => this.newTab(cx)), t));
   }
 
-  // Where a pointer event is in page pixels (the page is laid out at the view's size).
   at(e) {
     return e.local_position ? { x: Math.round(e.local_position.x), y: Math.round(e.local_position.y) } : null;
   }
 
-  // A browser opened as its own tab (cmd-alt-i, the palette) becomes the space's second tab, after
-  // the chat. Learnt at the first layout: a pane is laid out only while its tab shows. A browser
-  // split beside another pane stays where it is.
   settleTab() {
     const tab = spaces().find((s) => s.active)?.tabs.find((t) => t.active);
     if (!tab) return;
@@ -403,7 +372,7 @@ export default class Browser extends View {
   }
 
   view(t) {
-    // Over the page only while there is no page to show; otherwise errors sit in a bar above it.
+
     const message = this.frames.length ? "" : this.error || this.status || "Waiting for the page…";
     return div().id("browser-view").relative().flex_1().min_h(0).overflow_hidden().bg("#ffffff").track_focus(this.handle)
       .on_size_change((size, cx) => {
@@ -430,7 +399,6 @@ export default class Browser extends View {
         .child(div().text_size(12.5).text_color(this.error ? t.blocked : t.muted).child(message))));
   }
 
-  // Sums wheel ticks and sends them together, so a fast scroll is a few events, not hundreds.
   scroll(e, cx) {
     const p = this.at(e);
     if (!p) return;

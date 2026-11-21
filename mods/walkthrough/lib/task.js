@@ -1,23 +1,11 @@
-// The task a change was made for, to match the change against: the prompt an
-// agent was answering, a pull request's description, a commit message, the
-// prompts sent to agents while the change was made, or the reader's own words.
-// Plain functions over text; reading git, gh and transcripts is engine.js's.
-//
-// The task is material for the model to read, never instructions to it, and
-// never shown to anyone the reader didn't choose: a walkthrough posted to a
-// pull request carries the mapping only when the task was that pull request's
-// own description.
-
 import { unwrap } from "./turns.js";
 import { hash } from "./hash.js";
 
-// Long enough for a detailed prompt or a pull request template filled in; short enough that a
-// pasted log cannot crowd out the diff.
 export const MAX_TASK_CHARS = 6000;
 export const MAX_MESSAGE_CHARS = 2000;
-// Prompts listed for a change made over many: the first states the task, the latest refine it.
+
 export const MAX_MESSAGES = 20;
-// Earlier prompts of a turn's session, given so "yes, do that" can be read.
+
 export const MAX_CONTEXT = 3;
 export const MAX_CONTEXT_CHARS = 1500;
 
@@ -27,19 +15,13 @@ export const TASK_MODES = [
   { key: "off", name: "Off", about: "No task: the walkthrough only orders and explains" },
 ];
 
-/** A stored choice → { mode, text }, whatever the store held. */
 export function taskChoice(saved) {
   const mode = TASK_MODES.some((m) => m.key === saved?.mode) ? saved.mode : "auto";
   return { mode, text: typeof saved?.text === "string" ? saved.text.slice(0, MAX_TASK_CHARS) : "" };
 }
 
-/** Claude Code's folder name for a project: every character but a letter or a digit becomes "-". */
 export const projectSlug = (path) => String(path ?? "").replace(/[^A-Za-z0-9]/g, "-");
 
-/**
- * Whether a message asks for nothing a diff could show: empty, a bare slash
- * command, a command's echo or output, Claude Code's own notices, an interruption.
- */
 export function isNoise(text) {
   const t = String(text ?? "").trim();
   if (!t) return true;
@@ -50,26 +32,17 @@ export function isNoise(text) {
   return false;
 }
 
-/** At most `max` characters, cut at the end with a mark. */
 export function clip(text, max) {
   const t = String(text ?? "").trim();
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
-/** The text of a user message's content: a string, or its text blocks; a tool result is no message. */
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content) || content.some((b) => b?.type === "tool_result")) return "";
   return content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
 }
 
-/**
- * Claude Code transcript lines → what a person typed into an agent working in
- * `top`, since `since` (ms), oldest first. Subagents' prompts, tool results,
- * meta lines, compaction summaries and commands are left out; a resumed
- * session's copied history is counted once.
- * @returns {{ at: number, text: string, session: string | null }[]}
- */
 export function parseTranscript(text, { top = null, since = 0 } = {}) {
   const out = [];
   const seen = new Set();
@@ -78,7 +51,7 @@ export function parseTranscript(text, { top = null, since = 0 } = {}) {
     let j;
     try { j = JSON.parse(line); } catch { continue; }
     if (j?.type !== "user" || j.isSidechain || j.isMeta || j.isCompactSummary || j.isVisibleInTranscriptOnly) continue;
-    // Newer versions say who wrote it; a hook or another program isn't the person.
+
     if (j.origin?.kind && j.origin.kind !== "human") continue;
     const cwd = typeof j.cwd === "string" ? j.cwd : "";
     if (top && cwd !== top && !cwd.startsWith(`${top}/`)) continue;
@@ -94,10 +67,6 @@ export function parseTranscript(text, { top = null, since = 0 } = {}) {
   return out.sort((a, b) => a.at - b.at);
 }
 
-/**
- * Prompts → one text, oldest first, each numbered. Past MAX_TASK_CHARS the
- * first stays (it usually states the task) and the newest that fit follow it.
- */
 export function joinMessages(messages, max = MAX_TASK_CHARS) {
   const items = messages.map((m) => clip(m.text, MAX_MESSAGE_CHARS)).filter(Boolean);
   if (items.length <= 1) return items[0] ?? "";
@@ -117,10 +86,6 @@ export function joinMessages(messages, max = MAX_TASK_CHARS) {
   return [first, left ? `(${left} message${left === 1 ? "" : "s"} in between left out)` : "", ...kept].filter(Boolean).join("\n\n");
 }
 
-/**
- * A pull request's description as a task: HTML comments (templates' hints)
- * and any walkthrough pasted into it (Copy as Markdown marks its bounds) left out.
- */
 export function cleanDescription(body) {
   return String(body ?? "")
     .replace(/<!--\s*walkthrough\s*-->[\s\S]*?(<!--\s*\/walkthrough\s*-->|$)/gi, "")
@@ -130,14 +95,8 @@ export function cleanDescription(body) {
     .trim();
 }
 
-// The subject git (or GitHub) writes for a merge says which branch came in, not what it does.
 const MERGE_SUBJECT = /^Merge (pull request #\d+ from \S+|(remote-tracking )?branch '[^']*'( of \S+)?( into \S+)?|branches .+|commit '[^']*'( into \S+)?|tag '[^']*'( into \S+)?)$/;
 
-/**
- * A commit message as a task: its trailers (Signed-off-by, Co-Authored-By, …)
- * left out, and a merge's generated subject, so a merged pull request's title
- * (its body) is what remains.
- */
 export function cleanCommitMessage(message) {
   let lines = String(message ?? "").replace(/\r\n/g, "\n").trimEnd().split("\n");
   if (MERGE_SUBJECT.test(lines[0]?.trim() ?? "")) lines = lines.slice(1);
@@ -146,16 +105,6 @@ export function cleanCommitMessage(message) {
   return lines.join("\n").trim();
 }
 
-/**
- * What the task is, or null for none. `from` says where it came from, `label`
- * says so to the reader, `about` says so to the model; `context` (a turn's
- * earlier prompts) only helps read it.
- *
- * @param {{ mode?: string, own?: string, source?: any,
- *   turn?: any, turns?: any[], pr?: { number: number, title?: string, body?: string } | null,
- *   commit?: string | null, prompts?: { at: number, text: string }[] | null, since?: string }} input
- * @returns {{ from: string, label: string, short: string, about: string, text: string, context: string } | null}
- */
 export function resolveTask({ mode = "auto", own = "", source = null, turn = null, turns = [], pr = null, commit = null, prompts = null, since = "the last commit" } = {}) {
   if (mode === "off") return null;
   const task = (from, label, short, about, text, context = "") => {
@@ -167,7 +116,7 @@ export function resolveTask({ mode = "auto", own = "", source = null, turn = nul
     case "turn": {
       const prompt = turn?.prompt ?? source.prompt ?? "";
       if (isNoise(prompt)) return null;
-      // A turn's own prompt can be "yes, the second one": the session's earlier prompts say what it means.
+
       const earlier = turn?.session
         ? turns.filter((t) => t.session === turn.session && t.id !== turn.id && t.started < turn.started && !isNoise(t.prompt)).sort((a, b) => a.started - b.started).slice(-MAX_CONTEXT)
         : [];
@@ -200,29 +149,12 @@ export function resolveTask({ mode = "auto", own = "", source = null, turn = nul
   }
 }
 
-/** Which task a walkthrough was written for: "" for none. Tells a walkthrough's task from the one found now. */
 export const taskKey = (task) => (task ? hash(`${task.from}\n${task.text}\n${task.context ?? ""}`) : "");
 
-/**
- * What a task adds to a cache key: "" for none, so a walkthrough without one
- * keeps the key it had. Prompts sent to agents grow with every message (a
- * "thanks", the walkthrough's own Send), so a walkthrough matched against them
- * is keyed by that kind of task alone: it stays the walkthrough of this code,
- * matched against the prompts as they were when it was written.
- */
 export const taskCacheKey = (task) => (!task ? "" : task.from === "prompts" ? "prompts" : taskKey(task));
 
-/** A repository's path as it stands inside Claude Code's JSON, to find its lines with grep -F. */
 export const jsonPath = (path) => JSON.stringify(String(path ?? "")).slice(1, -1);
 
-/**
- * The listing script engine.js runs for transcripts: $0 the folder-name
- * prefix, $1 since (seconds), $2 the repository as JSON writes it. Only lines
- * of sessions in the repository (or below it) are kept, before anything is
- * cut, so a sibling folder sharing the prefix can't crowd them out. An image's
- * data is emptied rather than the line cut, so a prompt sent with a
- * screenshot keeps its words.
- */
 export const TRANSCRIPTS = `root="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 [ -d "$root" ] || exit 0
 for d in "$root/$0"*; do

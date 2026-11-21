@@ -1,5 +1,3 @@
-// Drives the Projects tab's keys against a real mr.py on a throwaway project (test-project.sh in a
-// temporary HOME): node projects.test.mjs. The app's modules are stood in for by test-stubs/.
 import { register } from "node:module";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -19,7 +17,6 @@ assert.equal(made.status, 0, made.stderr);
 const PROJECT = `${HOME}/.herdr/mr-test/AcmeShop`;
 const TASKS = `${HOME}/.herdr/projects/AcmeShop`;
 
-// The view's command loop (nextCommand) never ends, so "settled" is: no task finished for a while.
 let finished = 0;
 const timers = [];
 const cx = {
@@ -46,7 +43,6 @@ assert.deepEqual(view.tasks().map((t) => [t.depth, t.stack.length]), [[0, 2], [1
 assert.ok(view.details.get(view.selected().root)?.repos, "the selected task's repos are loaded");
 tab.render(cx);
 
-// j/k move and load the task's detail; the stacked task's detail renders.
 await key("j");
 assert.equal(view.selected().branch, "feat/SHOP-132-cart-ui");
 assert.deepEqual(view.details.get(view.selected().root).repos.map((r) => r.name), ["acme-shop-backend"]);
@@ -56,7 +52,6 @@ assert.equal(view.at, 0);
 await key("k");
 assert.equal(view.at, 2, "k wraps around");
 
-// Search narrows; esc leaves the box, esc again clears it, and esc never closes the tab.
 await key("/");
 assert.ok(view.isTyping);
 view.input.type("typo", cx);
@@ -69,7 +64,6 @@ assert.equal(state.runs.length, 0);
 await key("escape");
 assert.equal(state.runs.length, 0, "esc with nothing to clear does nothing");
 
-// Each action opens the dialog at its step, on this project.
 const task = view.selected();
 await key("n");
 assert.deepEqual(lastOverlay(), { machine: null, project: PROJECT, newTask: "" });
@@ -84,12 +78,10 @@ assert.equal(lastOverlay().removeTask, task.root);
 await key("v");
 assert.deepEqual(state.runs.at(-1), ["tab.new", { name: "PR SHOP-130", mod: "prs", props: { view: "review", machine: null, project: PROJECT, branch: task.branch } }]);
 
-// o opens the task's workspace: a space on its folder with claude, a terminal and nvim.
 await key("o");
 assert.deepEqual(state.herdrDo.map(([command]) => command), ["space.new", "tab.new", "tab.new", "tab.move", "tab.move", "tab.move", "space.select", "tab.select"]);
 assert.equal(state.herdrDo[0][1].folder, task.root);
 
-// The dialog's change stamp reloads the list: a task made meanwhile shows up.
 spawnSync("python3", [new URL("./mr.py", import.meta.url).pathname, "new", "feat/SHOP-150-made-elsewhere", "portal", "--project", PROJECT], { env: { ...process.env, HOME }, encoding: "utf8" });
 assert.equal(branches().length, 3);
 state.shared[CHANGED] = Date.now();
@@ -98,7 +90,6 @@ assert.equal(branches().length, 4);
 assert.ok(view.details.get(view.selected().root)?.repos, "details are loaded again after a reload");
 tab.render(cx);
 
-// r reloads too; [ and ] do nothing with one project.
 await key("r");
 assert.equal(branches().length, 4);
 await key("]");

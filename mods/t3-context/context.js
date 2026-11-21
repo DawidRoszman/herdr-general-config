@@ -1,28 +1,40 @@
-// Pure rules for whose lists a space or an agent shows in. Checked by `node context.test.mjs`.
-// Which profile a machine, a folder or an account belongs to is profiles.py's answer (match).
-
-// machine -> the profile it is dedicated to; any other machine is shared.
-export function machineProfiles(profiles) {
-  return Object.fromEntries(Object.entries(profiles).flatMap(([name, profile]) => profile.machines.map((machine) => [machine, name])));
+export function machineProfiles(profiles, hosts = {}) {
+  const own = Object.fromEntries(Object.entries(profiles).flatMap(([name, profile]) => profile.machines.map((machine) => [machine, name])));
+  const sandboxes = Object.entries(hosts).filter(([, host]) => own[host]).map(([sandbox, host]) => [sandbox, own[host]]);
+  return { ...own, ...Object.fromEntries(sandboxes) };
 }
 
-// The shown profile: the saved one while it exists, else the first; null without profiles.
+export function sandboxHosts(machines) {
+  return Object.fromEntries(machines.flatMap((machine) => {
+    const via = machine.via === true ? /sandbox-via\.sh' '([^']+)' '([^']+)'$/.exec(machine.target ?? "") : null;
+    const host = via && machines.find((other) => other.via !== true && other.target === via[1]);
+    return host ? [[machine.name, host.name]] : [];
+  }));
+}
+
 export function shownProfile(saved, names) {
   return names.includes(saved) ? saved : names[0] ?? null;
 }
 
-// A space: its coordinator's profile, else the one matched for its machine or folder.
-// Null while unknown: shown in every profile.
-export function spaceContext({ space, names, coordinators, matched }) {
-  return names.find((name) => coordinators[name] === space.id) ?? matched ?? null;
+export const coordinatorKey = (profile, project) => `${profile}/${project}`;
+export const coordinatorPlace = (key) => { const [profile, project] = key.split("/"); return { profile, project }; };
+
+export function liveCoordinators(saved, profiles) {
+  return Object.fromEntries(Object.entries(saved).filter(([key]) => {
+    const { profile, project } = coordinatorPlace(key);
+    return Boolean(profiles[profile]?.projects?.[project]?.coordinator);
+  }));
 }
 
-// An agent: the profile matched for its machine or its own process, else its space's.
+export function spaceContext({ space, coordinators, matched }) {
+  const key = Object.keys(coordinators).find((key) => coordinators[key] === space.id);
+  return (key && coordinatorPlace(key).profile) ?? matched ?? null;
+}
+
 export function agentContext({ matched, spaceProfile }) {
   return matched ?? spaceProfile ?? null;
 }
 
-// Ids whose profile is known and not the shown one: lists hide them.
 export function offContext(contextById, current) {
   return Object.entries(contextById).filter(([, context]) => context && context !== current).map(([id]) => id);
 }

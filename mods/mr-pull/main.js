@@ -1,9 +1,3 @@
-// `mr pull` for the task workspace the focused terminal is in (palette: "Pull task repos"), or for
-// props { machine, folder } (the Projects tab; machine null is this Mac): every repo of the task
-// fast-forwards from its upstream, one line per repo here. The multirepo mod's
-// mr.py runs on the space's machine over ssh (mods can't import across folders, so the call is
-// repeated here as in the prs mod).
-
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { props, closeOverlay, exec, hc, appHome, focused, spaces, theme, window } from "herdr";
@@ -23,12 +17,10 @@ async function sshTarget(machineName) {
   return machine.target;
 }
 
-// Python 3 here: Windows has the py launcher (its python3 can be the Store's stub), elsewhere python3.
 function python() {
   return window()?.platform === "windows" ? ["py", "-3"] : ["python3"];
 }
 
-// mr's output even when it fails: the lines say which repo did not pull.
 async function mrPull(target, folder) {
   const args = ["pull", "--task", folder];
   const [command, ...pythonArgs] = python();

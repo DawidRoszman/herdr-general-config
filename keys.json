@@ -124,15 +124,8 @@
     "cmd-alt-r": "t3-panels.reveal",
     "cmd-n": "t3-panels.new-space",
     "cmd-shift-t": "t3-panels.new-tab",
-    "cmd-alt-n": {
-      "command": "tab.new",
-      "args": {
-        "mod": "t3-chat",
-        "props": {
-          "view": "chat"
-        }
-      }
-    },
+    "cmd-alt-n": "t3-panels.new-claude",
+    "cmd-shift-a": "t3-panels.new-claude",
     "ctrl-alt-tab": "t3-context.next"
   }
 }

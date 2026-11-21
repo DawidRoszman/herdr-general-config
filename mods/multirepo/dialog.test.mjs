@@ -1,5 +1,3 @@
-// Drives the multirepo dialog's keyboard flows against a real mr.py on a throwaway project (test-project.sh
-// in a temporary HOME): node dialog.test.mjs. The app's modules are stood in for by test-stubs/.
 import { register } from "node:module";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -11,14 +9,13 @@ register("./test-stubs/loader.mjs", import.meta.url);
 const { state } = await import("./test-stubs/herdr.mjs");
 const { default: Multirepo } = await import("./main.js");
 
-const HOME = realpathSync(mkdtempSync(join(tmpdir(), "mr-dialog-"))); // mr resolves paths: /var is /private/var on macOS
+const HOME = realpathSync(mkdtempSync(join(tmpdir(), "mr-dialog-")));
 state.home = HOME;
 const made = spawnSync("sh", [new URL("./test-project.sh", import.meta.url).pathname], { env: { ...process.env, HOME }, encoding: "utf8" });
 assert.equal(made.status, 0, made.stderr);
 const PROJECT = `${HOME}/.herdr/mr-test/AcmeShop`;
 const TASKS = `${HOME}/.herdr/projects/AcmeShop`;
 
-// A Context: tasks are tracked so a test can wait for them; timers are run by hand.
 const pending = new Set();
 const timers = [];
 const cx = {
@@ -29,9 +26,9 @@ const cx = {
 };
 const settle = async () => { while (pending.size) await Promise.all([...pending]); };
 const key = async (stroke) => { dialog.key({ keystroke: stroke }, cx); await settle(); };
-// A long command ran as a job: the next poll sees it finished.
+
 const finishJob = async () => { for (const tick of timers) tick(cx); await settle(); };
-const labels = () => dialog.items().map((item) => item.name ?? item.branch ?? item); // repos carry a branch too
+const labels = () => dialog.items().map((item) => item.name ?? item.branch ?? item);
 
 state.props = { machine: null, project: PROJECT, overlay: "ov1" };
 const dialog = new Multirepo();
@@ -41,7 +38,6 @@ assert.equal(dialog.level, "tasks", `${dialog.error} ${JSON.stringify(dialog.pro
 assert.deepEqual(labels(), ["feat/SHOP-130-checkout-flow", "feat/SHOP-132-cart-ui", "fix/SHOP-7-typo-in-readme"]);
 dialog.render(cx);
 
-// Search narrows the list; esc leaves the box, esc again clears it.
 await key("/");
 assert.equal(dialog.inputMode, "search");
 dialog.input.type("cart", cx);
@@ -56,7 +52,6 @@ assert.equal(dialog.level, "tasks", `${dialog.error} ${JSON.stringify(dialog.pro
 assert.equal(dialog.at, 1, "back lands on the task that was open");
 assert.equal(dialog.query, "", "back clears the search");
 
-// A new task: branch and repos typed, the picker ticks the ones it knows, enter creates it as a job.
 await key("n");
 assert.equal(dialog.inputMode, "new");
 dialog.input.set_value("feat/SHOP-140-wishlist portal nope");
@@ -86,7 +81,6 @@ assert.ok(labels().includes("feat/SHOP-140-wishlist"));
 assert.equal(labels()[dialog.at], "feat/SHOP-140-wishlist", "the new task is selected");
 assert.ok(state.shared["multirepo.changed"], "the Projects tab is told");
 
-// Its repos: the ticked one on the branch, the rest linked.
 await key("l");
 assert.equal(dialog.level, "repos");
 assert.deepEqual(labels(), ["acme-shop-backend"]);
@@ -96,8 +90,6 @@ assert.match(dialog.notice, /no PR yet/);
 assert.equal(dialog.error, "");
 dialog.render(cx);
 
-// Add repos from the repos level: only the ones the task lacks are offered; b gives one a branch of its
-// own (named differently by someone else); adding runs as a job.
 await key("a");
 assert.equal(dialog.level, "pick");
 assert.deepEqual(labels(), ["acme-shop-portal", "helper-scripts"]);
@@ -122,7 +114,6 @@ assert.equal(dialog.items().find((r) => r.name === "helper-scripts").branch, "fe
 await key("h");
 assert.equal(labels()[dialog.at], "feat/SHOP-140-wishlist", "back lands on the task after its list reloaded");
 
-// Stacking: the parent's repos come ticked; h leaves without a task.
 await key("s");
 assert.equal(dialog.stackOn.branch, "feat/SHOP-140-wishlist");
 dialog.input.set_value("feat/SHOP-141-child");
@@ -136,7 +127,6 @@ assert.equal(dialog.level, "tasks");
 assert.equal(dialog.stackOn, null);
 assert.equal(labels()[dialog.at], "feat/SHOP-140-wishlist", "leaving the picker stays on the task");
 
-// Removing asks first; esc keeps the task; x again removes it, and its spaces are closed.
 await key("x");
 assert.equal(dialog.confirmRemove, `${TASKS}/feat-SHOP-140-wishlist`);
 dialog.render(cx);
@@ -149,7 +139,6 @@ await finishJob();
 assert.match(dialog.notice, /Removing feat\/SHOP-140-wishlist: done/);
 assert.ok(!labels().includes("feat/SHOP-140-wishlist"));
 
-// Unpushed work refuses a plain remove and says which key forces it.
 assert.equal(labels()[dialog.at], "feat/SHOP-130-checkout-flow");
 await key("x");
 await key("x");
@@ -158,7 +147,6 @@ assert.match(dialog.error, /would lose work/);
 assert.match(dialog.error, /shift-x removes it anyway/);
 assert.ok(labels().includes("feat/SHOP-130-checkout-flow"));
 
-// Esc with nothing pending closes the dialog.
 await key("escape");
 assert.deepEqual(state.closedOverlays, ["ov1"]);
 

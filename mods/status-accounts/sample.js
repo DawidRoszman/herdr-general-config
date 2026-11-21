@@ -1,8 +1,3 @@
-// The pure half of system.js: the sampling script's output as figures, and how
-// figures show.
-// Checked by `node sample.test.mjs`.
-
-// macOS's cpu figure takes top a second to measure, so samples are 2 s apart.
 export const SAMPLE_MS = 2000;
 
 export const SCRIPT = `
@@ -30,11 +25,9 @@ esac
 df -Pk "$HOME" | tail -1 | sed 's/^/disk /'
 `;
 
-// Which hwmon sensors are the cpu and the gpu (Linux), by driver name.
 const CPU_SENSORS = ["k10temp", "coretemp", "zenpower", "cpu_thermal", "acpitz"];
 const GPU_SENSORS = ["amdgpu", "nvidia", "nouveau", "radeon"];
 
-// `17G`, `7.1G`, `512M`: binary units, one decimal under 10.
 export function bytes(n) {
   const units = ["B", "K", "M", "G", "T", "P"];
   let u = 0;
@@ -44,22 +37,16 @@ export function bytes(n) {
 
 export const pct = (v) => `${Math.round(v * 100)}%`;
 
-// A use's colour: blue, yellow from 70%, red from 90%.
 export function level(t, v) {
   return v >= 0.9 ? t.ansi1 : v >= 0.7 ? t.ansi3 : t.ansi4;
 }
 
-// A temperature's colour: blue, yellow from 70 °C, red from 85 °C.
 export function heat(t, celsius) {
   return celsius >= 85 ? t.ansi1 : celsius >= 70 ? t.ansi3 : t.ansi4;
 }
 
 const SIZE = { K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
 
-/**
- * The script's output as figures: { os, ticks: [{ idle, total }] (Linux: all cpus then each core),
- * cpu (macOS: 0..1), load, mem, disk, temps: { cpu, gpu } in °C or null }.
- */
 export function parseSample(text) {
   const out = { os: null, ticks: [], cpu: null, load: null, mem: null, disk: null, temps: { cpu: null, gpu: null } };
   const meminfo = {};
@@ -99,7 +86,7 @@ export function parseSample(text) {
         const temp = JSON.parse(line.slice(7)).temp ?? {};
         out.temps.cpu = hottest(out.temps.cpu, temp.cpu_temp_avg);
         out.temps.gpu = hottest(out.temps.gpu, temp.gpu_temp_avg);
-      } catch (_) { /* a partial line: no temperature this time */ }
+      } catch (_) {  }
     } else if (line.startsWith("disk ")) {
       const [, , total, used, free, , ...path] = words;
       if (Number(total)) out.disk = { used: Number(used) * 1024, free: Number(free) * 1024, total: Number(total) * 1024, path: path.join(" ") };
@@ -109,7 +96,7 @@ export function parseSample(text) {
     out.mem = { used: meminfo.MemTotal - meminfo.MemAvailable, total: meminfo.MemTotal, available: meminfo.MemAvailable,
       swapUsed: meminfo.SwapTotal - meminfo.SwapFree, swapTotal: meminfo.SwapTotal };
   } else if (memsize) {
-    // Activity Monitor's "memory used": app memory, wired and compressed.
+
     const used = ((vm.active ?? 0) + (vm["wired down"] ?? 0) + (vm["occupied by compressor"] ?? 0)) * pageSize;
     out.mem = { used, total: memsize, available: memsize - used, swapUsed: swap?.used ?? 0, swapTotal: swap?.total ?? 0 };
   }

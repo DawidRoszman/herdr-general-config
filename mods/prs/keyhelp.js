@@ -1,11 +1,7 @@
-// The "?" key list drawn over a view. Sections: [{ title, rows: [[keys, what]] }].
-// (jira and multirepo carry a copy: mods can't import across folders.)
-
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { appHome, readTextFile } from "herdr";
 
-// A view's key list, from this mod's help-keys.json (the keybinds tab reads the same file).
 export async function loadKeys(viewId) {
   try {
     const views = JSON.parse(await readTextFile(`${appHome()}/mods/prs/help-keys.json`)).views;

@@ -34,7 +34,7 @@
             "mod": "t3-context"
           },
           "size": {
-            "px": 78
+            "px": 40
           }
         },
         {
@@ -341,5 +341,15 @@
   "traffic_lights": [
     16,
     12
+  ],
+  "floating": [
+    {
+      "id": "agent-restore",
+      "content": {
+        "mod": "agent-restore"
+      },
+      "edge": "bottom",
+      "align": "end"
+    }
   ]
 }

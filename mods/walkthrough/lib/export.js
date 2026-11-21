@@ -1,16 +1,9 @@
-// A walkthrough as Markdown, to paste where people read changes: a pull
-// request's description, a review comment, a chat. Steps keep their order,
-// weights and notes; the code itself stays out, since wherever this is pasted
-// the diff is already beside it.
-
 import { fileTotals } from "./walkthrough.js";
 
 const NOTE_LABEL = { choice: "Decision", upkeep: "Upkeep", gap: "Limitation", divergence: "Divergence", untested: "Untested" };
 
-/** Model text on one line, for a heading, a bold title or a list item. */
 const line = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
-/** A path in backticks, whatever backticks it holds. */
 const code = (s) => {
   const t = String(s);
   const fence = "`".repeat((t.match(/`+/g) ?? []).reduce((n, m) => Math.max(n, m.length), 0) + 1);
@@ -19,15 +12,8 @@ const code = (s) => {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/**
- * @param {ReturnType<typeof import("./walkthrough.js").overlay>} view the walkthrough over the diff as it is now
- * @param {{ title: string, summary: string }} walkthrough the stored walkthrough
- * @param {{ what?: string, model?: string, language?: string, cost?: number | null }} meta
- * @param {ReturnType<typeof import("./walkthrough.js").overlayAsks>} [task] the task's requests over the same view; null leaves them out
- * @param {string} [taskLabel] where the task came from, for the reader
- */
 export function toMarkdown(view, walkthrough, { what = "", model = "", language = "", cost = null } = {}, task = null, taskLabel = "") {
-  // The bounds let a walkthrough pasted into a pull request's description be left out when that description is read as a task.
+
   const out = [MARK_START, `## ${line(walkthrough.title) || "Walkthrough"}`, ""];
   if (walkthrough.summary?.trim()) out.push(walkthrough.summary.trim(), "");
   const about = [what && line(what), model, language, typeof cost === "number" ? `$${cost.toFixed(cost < 0.1 ? 3 : 2)}` : ""].filter(Boolean);
@@ -63,7 +49,6 @@ export const MARK_START = "<!-- walkthrough -->", MARK_END = "<!-- /walkthrough 
 
 const stepList = (steps) => (steps.length === 1 ? `step ${steps[0].position}` : `steps ${steps.map((s) => s.position).join(", ")}`);
 
-/** The task's requests, each with where it shows up; then the steps no request points at. */
 function taskMarkdown(task, label) {
   const out = ["### Task", ""];
   if (label) out.push(`<sub>${line(label)}</sub>`, "");
@@ -81,4 +66,3 @@ function taskMarkdown(task, label) {
   if (task.outside.length) out.push(`Not tied to any request: ${stepList(task.outside)}.`, "");
   return out;
 }
-

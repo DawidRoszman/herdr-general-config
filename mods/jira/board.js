@@ -1,5 +1,3 @@
-// Pure helpers for the Jira board. Checked by `node board.test.mjs`.
-
 import { adfToMarkdown } from "./adf.js";
 
 export const JQL = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
@@ -7,7 +5,6 @@ export const FIELDS = ["summary", "status", "priority", "issuetype", "project", 
 const CATEGORY_ORDER = { new: 0, indeterminate: 1, done: 2 };
 const PRIORITY_ORDER = { Highest: 0, High: 1, Medium: 2, Low: 3, Lowest: 4 };
 
-// Jira's issue JSON, flattened to what a card shows.
 export function toCard(issue) {
   const f = issue.fields;
   return {
@@ -22,7 +19,6 @@ export function toCard(issue) {
   };
 }
 
-// One column per status: to do first, then in progress; cards by priority, then most recently updated.
 export function columns(cards) {
   const byStatus = new Map();
   for (const card of cards) {
@@ -35,22 +31,17 @@ export function columns(cards) {
     .map((column) => ({ ...column, cards: column.cards.sort((a, b) => rank(a.priority) - rank(b.priority) || b.updated.localeCompare(a.updated)) }));
 }
 
-// The columns in the order the person dragged them into (status names); a status not in it yet
-// goes after them, where columns() put it.
 export function inOrder(board, order) {
   const at = (name) => (order.includes(name) ? order.indexOf(name) : order.length);
   return [...board].sort((a, b) => at(a.name) - at(b.name));
 }
 
-// The order once `from` is dropped on `to`, among the shown columns: past it going right, before it
-// going left, as a tab lands. Statuses not shown now keep their place after them.
 export function movedOrder(shown, order, from, to) {
   const names = shown.filter((name) => name !== from);
   names.splice(names.indexOf(to) + (shown.indexOf(from) < shown.indexOf(to) ? 1 : 0), 0, from);
   return [...names, ...order.filter((name) => !shown.includes(name))];
 }
 
-// SHOP-110 "Search filters" -> feat/SHOP-110-search-filters (fix/ for bugs), as mr titles PRs from it.
 export function branchFor(card) {
   const ascii = card.summary.replace(/[łŁ]/g, "l").normalize("NFD").replace(/[̀-ͯ]/g, "");
   const words = ascii.toLowerCase().match(/[a-z0-9]+/g) ?? [];
@@ -64,18 +55,14 @@ export function branchFor(card) {
   return `${kind}/${card.key}${slug ? `-${slug}` : ""}`;
 }
 
-// Statuses listed in config.json "hiddenStatuses" (work waiting on others) stay off the board unless asked for.
 export function isShown(card, hiddenStatuses, isShowingHidden) {
   return isShowingHidden || !hiddenStatuses.includes(card.status);
 }
 
-// "21:07": a time's local hours and minutes. The app's JS engine ignores toLocaleTimeString's
-// options (it gives "09:07:31 PM"), so it is built by hand.
 export function clock(date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-// What the details panel asks Jira for, and the issue shaped for it.
 export const DETAIL_FIELDS = ["summary", "status", "assignee", "reporter", "priority", "issuetype", "parent", "labels", "description", "comment", "subtasks", "issuelinks", "created", "updated"];
 
 const person = (user) => user?.displayName ?? "Unassigned";
@@ -105,11 +92,15 @@ export function toDetails(issue) {
   };
 }
 
-// A branch named after an issue: feat/SHOP-110-search-filters is SHOP-110's, not SHOP-11's.
 export const keyPattern = (key) => new RegExp(`(^|[^A-Za-z0-9])${key}(?![0-9])`, "i");
 
-// The coordinator's board.json tasks by issue key. A missing, unreadable or other-shaped file has
-// none: the board is a hint on the cards, never an error on them.
+export function projectPlaces(configProjects, profileProjects) {
+  const fromConfig = Object.entries(configProjects ?? {}).map(([key, places]) => [key, [places].flat()]);
+  const fromProfile = Object.values(profileProjects ?? {}).filter((project) => project.places?.length)
+    .flatMap((project) => (project.jira ?? []).map((key) => [key, project.places]));
+  return Object.fromEntries([...fromConfig, ...fromProfile]);
+}
+
 export function boardTasks(text) {
   let tasks;
   try {
@@ -120,8 +111,6 @@ export function boardTasks(text) {
   return new Map((Array.isArray(tasks) ? tasks : []).filter((task) => typeof task?.key === "string" && task.key).map((task) => [task.key, task]));
 }
 
-// Where an issue's task runs: a space on a branch named after it, else the coordinator board's
-// task's space (its folder on its machine), else that task's agent. Null when it has no task.
 export function taskTarget(key, task, spaces) {
   const pattern = keyPattern(key);
   const isOnTaskMachine = (space) => (space.machine ?? null) === (task?.machine ?? null);
@@ -132,15 +121,11 @@ export function taskTarget(key, task, spaces) {
   return null;
 }
 
-// Where the code is for an issue: the PRs and multirepo task branches named after its key.
 export function codeFor(key, prs, branches) {
   const pattern = keyPattern(key);
   return { prs: prs.filter((pr) => pattern.test(pr.branch)), hasBranch: branches.some((branch) => pattern.test(branch)) };
 }
 
-// Why an issue's Jira status disagrees with its code, or "". stage is what config.json
-// "statusStages" calls the status: todo, progress, review or testing.
-// prs: { state: OPEN | MERGED | CLOSED, isDraft }, as `mr prs` lists them (merged ones for 3 days).
 export function codeMismatch(stage, code) {
   const open = code.prs.filter((pr) => pr.state === "OPEN");
   const isInReview = open.some((pr) => !pr.isDraft);

@@ -1,12 +1,3 @@
-// Mermaid flowchart subset -> { title, dir, nodes: Map<id, node>, edges: [] }.
-//
-// Nodes:  id[rect]  id(round)  id([stadium])  id[(cylinder)]  id((circle))  id{diamond}
-//         "Title<br/>subtitle" splits into title and sub.
-// Edges:  -->  ---  -.->  -.-  ==>   with |label|, or "-- label -->" / "-. label .->".
-// Blueprint extras stay plain Mermaid: "class a,b done|active|current", the code a
-// box stands for as `%% code: id path:line` (or click id "path:line"), and a
-// frontmatter title. Each node keeps the line it is written on (1-based, in src).
-
 const SHAPES = [
   ["([", "])", "stadium"],
   ["[(", ")]", "cylinder"],
@@ -31,8 +22,6 @@ const unquote = (s) => {
   return s.length > 1 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
 };
 
-// Characters written as entities, the HTML way (&lt; &#60;) or Mermaid's
-// (#lt; #60;): agents use both to keep < > " out of the syntax.
 const NAMED = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'", nbsp: " " };
 export function decode(s) {
   if (!s || !/[&#]/.test(s)) return s;
@@ -44,7 +33,7 @@ export function parseFlowchart(src) {
   const g = { title: null, dir: "LR", nodes: new Map(), edges: [], src };
   const raw = src.split("\n");
   const lines = raw.map((l) => l.trim());
-  let i = Math.max(0, lines.findIndex(Boolean)); // blank lines may come first
+  let i = Math.max(0, lines.findIndex(Boolean));
   if (lines[i] === "---") {
     for (i++; i < lines.length && lines[i] !== "---"; i++) {
       const m = lines[i].match(/^title:\s*(.+)$/);
@@ -60,7 +49,7 @@ export function parseFlowchart(src) {
       continue;
     }
     if (!line || line.startsWith("%%")) continue;
-    // The header; with no direction Mermaid draws top to bottom.
+
     if ((m = line.match(/^(?:flowchart|graph)(?:\s+(LR|RL|TB|TD|BT)\b.*|\s*)$/))) {
       g.dir = m[1] === "LR" || m[1] === "RL" ? "LR" : "TB";
       continue;
@@ -88,7 +77,6 @@ function node(g, id) {
   return n;
 }
 
-// One node at s[pos] (with its shape, if written there): [id, next pos] or null.
 function readNode(g, s, pos, at) {
   const m = /^\s*(\w+)/.exec(s.slice(pos));
   if (!m) return null;
@@ -97,7 +85,7 @@ function readNode(g, s, pos, at) {
   const n = node(g, id);
   for (const [open, close, shape] of SHAPES) {
     if (!s.startsWith(open, pos)) continue;
-    // A quoted label may hold the closing bracket: a["arr[0]"], a("f()").
+
     const q = /^\s*"/.exec(s.slice(pos + open.length));
     const shut = q ? s.indexOf('"', pos + open.length + q[0].length) : -1;
     const end = s.indexOf(close, shut >= 0 ? shut + 1 : pos + open.length);
@@ -110,7 +98,6 @@ function readNode(g, s, pos, at) {
   return [id, pos];
 }
 
-// "a --> b -->|x| c": a chain of nodes joined by edges.
 function statement(g, s, at) {
   let r = readNode(g, s, 0, at);
   while (r) {

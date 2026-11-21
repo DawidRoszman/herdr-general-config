@@ -1,6 +1,3 @@
-// A Chrome DevTools Protocol client over one WebSocket: send(method, params) answers with the
-// result, on(method, handler) gets events. run(cx) reads messages until the socket closes.
-
 import { WebSocket } from "websocket";
 
 export class Cdp {
@@ -11,10 +8,10 @@ export class Cdp {
   constructor(socket) {
     this.socket = socket;
     this.nextId = 1;
-    this.pending = new Map(); // id -> { resolve, reject, method }
-    this.handlers = new Map(); // event method -> handler(params)
+    this.pending = new Map();
+    this.handlers = new Map();
     this.isClosed = false;
-    this.writes = Promise.resolve(); // one message on the socket at a time: overlapping writes break the stream
+    this.writes = Promise.resolve();
   }
 
   on(method, handler) {
@@ -34,7 +31,6 @@ export class Cdp {
     });
   }
 
-  // Reads until the socket closes; then fails what is still waiting and resolves.
   async run() {
     try {
       for (;;) {
@@ -63,8 +59,6 @@ export class Cdp {
   }
 }
 
-// A binary message as text. Not String.fromCharCode(...bytes): a screencast frame is hundreds of
-// kilobytes, past how many arguments a call may take.
 export function decodeUtf8(bytes) {
   if (typeof TextDecoder !== "undefined") return new TextDecoder().decode(bytes);
   let text = "";
@@ -83,7 +77,6 @@ const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 const VALUE = new Uint8Array(128);
 for (let i = 0; i < ALPHABET.length; i++) VALUE[ALPHABET.charCodeAt(i)] = i;
 
-// Base64 (a screencast frame) to bytes; the runtime has no atob.
 export function decodeBase64(text) {
   const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
   const bytes = new Uint8Array((text.length * 3) / 4 - padding);
